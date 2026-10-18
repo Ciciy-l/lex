@@ -11,6 +11,7 @@
  */
 
 import type { AutoReviewUserIntent } from './agents/shared/auto-review-decision.js';
+import type { AgentSessionPresentation } from './agents/presentation.js';
 import { randomUUID } from 'node:crypto';
 import { ToolLoopGuard } from './agents/shared/loop-guard.js';
 import { AsyncUserQuestions } from './agents/shared/async-user-questions.js';
@@ -434,6 +435,11 @@ export class Session {
   readonly remoteHostId: string | null;
 
   private readonly handle: AgentSessionHandle;
+
+  /** Views share the live task's native runtime; they do not own its lifecycle. */
+  get presentation(): AgentSessionPresentation | undefined {
+    return this.handle.presentation;
+  }
   private readonly logger: Logger;
   /** 视觉桥钩子（层 B）。缺省 = 未启用，send 完全跳过。 */
   private readonly visionBridge: VisionBridgeHook | undefined;
