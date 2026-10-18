@@ -98,6 +98,40 @@ Harness latest-download/auto-update policy is a separate PR.
 
 ## Claude native gate: Windows, 2026-10-18
 
+### Task ownership and packaged semantic transport
+
+`AgentPresentationRuntime` now gives a live task its own terminal generation,
+bounded output replay and attachment-specific input lease. Detaching all views
+leaves the native driver alive; takeover fences the old writer. An uncertain
+write cannot be replayed with the same sequence. A missing output prefix is
+reported as a gap, not rendered as a complete terminal screen. Screen snapshot
+recovery and host/UI binding are still separate implementation work.
+
+The packaged Claude Mod and authenticated host side channel are in
+`native-mod-source.ts` and `native-bridge.ts`. Commands retain one ID across
+transport retries; events are acknowledged in order. Native callbacks are
+session/generation-bound, separately identified, and retired even when the
+retirement arrives before its HTTP request. Changed payloads cannot reuse an
+answered identity. Neither a credential nor a host execution path is sent to a
+renderer. These components are not yet selected by the production agent.
+
+Run `node scripts/agent-presentation/claude-bridge-probe.mjs` for the actual
+packaged source and host transport, with the same isolated native/provider
+assertions as the earlier fixture. `--scenario=permission-gui` and
+`--scenario=permission-tui` cover single-answer decisions. Managed Windows Claude
+2.1.296 passed the 18 identity/control checks and nine checks in each permission
+scenario. The native compiler and plugin test also passed; each probe exited
+and removed its owned temporary profile. Pure tests cover lost receipts,
+retirement ordering, replay fencing, queue bounds and stream pass-through.
+
+This does not close the remaining adapter gates. In separate actual-native
+attachment probes, both image-path text and `PromptSubmitAttachment` metadata
+through `$.prompt.submit` completed without image bytes reaching the provider.
+Reading the image inside the Mod did not insert it into the model conversation.
+The native composer did send the same fixture image. Do not silently substitute
+a text-only GUI submission for an attachment, or claim this transport alone
+preserves all SDK policies, subscription refresh, parallel approvals or SSH.
+
 The opt-in probe is `node scripts/agent-presentation/claude-native-probe.mjs`.
 Additional scenarios are `--scenario=permission`, `--scenario=abort`, and
 `--scenario=stream-option`. The last scenario intentionally checks a rejected

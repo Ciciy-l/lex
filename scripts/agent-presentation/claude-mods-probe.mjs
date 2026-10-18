@@ -17,7 +17,7 @@ const require = createRequire(import.meta.url);
 const model = 'claude-sonnet-4-6';
 const prompts = ['LEX_MODS_FIRST', 'LEX_MODS_QUEUED', 'LEX_MODS_NATIVE', 'LEX_MODS_ABORT', 'LEX_MODS_AFTER'];
 
-export function fixturePrompt(messages) {
+export function fixturePrompt(messages, pluginName = 'lex-mods-probe') {
   // Tool continuations have a newer user-role result, but no new human prompt.
   // Do not search past a different user input (including a title request).
   for (const user of [...(messages ?? [])].reverse()) {
@@ -25,14 +25,14 @@ export function fixturePrompt(messages) {
     const content = typeof user.content === 'string' ? [{ type: 'text', text: user.content }] : user.content ?? [];
     const blocks = content.filter((b) => b.type === 'text').map((b) => b.text);
     const prompt = prompts.find((p) => blocks.some((text) => text === p
-      || text.startsWith('The lex-mods-probe plugin sent a message:\n' + p + '\n\n')));
+      || text.startsWith('The ' + pluginName + ' plugin sent a message:\n' + p + '\n\n')));
     if (prompt) return prompt;
     if (!content.some((b) => b.type === 'tool_result')
       || !content.every((b) => b.type === 'tool_result' || (b.type === 'text' && b.text.startsWith('<system-reminder>')))) return;
   }
 }
 
-export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', scenario = 'controls' } = {}) {
+export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', scenario = 'controls', bridgeFactory } = {}) {
   if (!['api-key', 'auth-token'].includes(auth)) throw new Error('Unknown fixture auth kind');
   if (!['controls', 'identity', 'permission-gui', 'permission-tui', 'permission-deny-rule'].includes(scenario)) throw new Error('Unknown fixture scenario');
   const permissionScenario = scenario.startsWith('permission-');
@@ -51,6 +51,10 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
   const pending = new Set();
   const terminalState = { mode: 'text' };
   let terminal;
+  // Optional real transport uses the same provider, native process and assertions.
+  // The historical fixture remains a separate baseline, not production evidence.
+  const bridge = bridgeFactory ? await bridgeFactory({ nativeSessionId, report, now }) : undefined;
+  const pluginName = bridge?.pluginName ?? 'lex-mods-probe';
   const server = createServer((req, res) => {
     const task = (async () => {
       let raw = '';
@@ -69,7 +73,7 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
       }
       if (req.url?.includes('count_tokens')) { res.end(JSON.stringify({ input_tokens: 100 })); return; }
       if (!req.url?.startsWith('/v1/messages')) { res.writeHead(404); res.end(); return; }
-      const prompt = fixturePrompt(body.messages);
+      const prompt = fixturePrompt(body.messages, pluginName);
       const afterTool = (body.messages ?? []).some((m) => Array.isArray(m.content) && m.content.some((b) => b.type === 'tool_result'));
       const isMain = prompt !== undefined;
       report.requests.push({ at: now(), model: body.model, isMain, prompt,
@@ -113,7 +117,8 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
       mkdir(path.join(plugin, '.claude-plugin'), { recursive: true }), mkdir(path.join(plugin, 'hooks'), { recursive: true })]);
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     const endpoint = 'http://127.0.0.1:' + server.address().port;
-    const env = { ...isolatedEnvironment(process.env, home, endpoint), LEX_MODS_ENDPOINT: endpoint, LEX_MODS_TOKEN: token };
+    const env = { ...isolatedEnvironment(process.env, home, endpoint), LEX_MODS_ENDPOINT: endpoint, LEX_MODS_TOKEN: token,
+      ...(bridge ? await bridge.start() : {}) };
     if (auth === 'auth-token') { env.ANTHROPIC_AUTH_TOKEN = env.ANTHROPIC_API_KEY; delete env.ANTHROPIC_API_KEY; }
     await writeFile(path.join(config, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true, theme: 'dark',
       customApiKeyResponses: { approved: ['sk-ant-api03-lex-native-probe-not-a-real-key'.slice(-20)], rejected: [] },
@@ -121,9 +126,9 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
     const settings = path.join(config, 'settings.json');
     await writeFile(settings, JSON.stringify({ permissions: { defaultMode: 'default',
       ...(scenario === 'permission-deny-rule' ? { deny: ['Write'] } : {}) } }));
-    await writeFile(path.join(plugin, '.claude-plugin/plugin.json'), JSON.stringify({ name: 'lex-mods-probe', version: '0.0.1', description: 'Synthetic presentation feasibility fixture', author: { name: 'Lex contributors' } }));
+    await writeFile(path.join(plugin, '.claude-plugin/plugin.json'), JSON.stringify({ name: pluginName, version: '0.0.1', description: 'Synthetic presentation feasibility fixture', author: { name: 'Lex contributors' } }));
     await writeFile(path.join(plugin, 'hooks/hooks.json'), JSON.stringify({ modules: ['./register.ts'] }));
-    const moduleSource = await readFile(new URL('./claude-mods-fixture.mjs', import.meta.url), 'utf8');
+    const moduleSource = bridge?.source ?? await readFile(new URL('./claude-mods-fixture.mjs', import.meta.url), 'utf8');
     await writeFile(path.join(plugin, 'hooks/register.ts'), moduleSource);
     await mkdir(path.join(plugin, 'tests'));
     await writeFile(path.join(plugin, 'tests/register.test.ts'), await readFile(new URL('./claude-mods-native.test.ts', import.meta.url)));
@@ -153,7 +158,8 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
       if (issued.has(command.id)) return;
       issued.add(command.id);
       report.commands.push({ at: now(), ...command });
-      commands.push(command);
+      if (bridge) bridge.send(command);
+      else commands.push(command);
     };
     const eventFor = (kind, predicate) => report.events.find((e) => e.kind === kind && predicate(e.value));
     const complete = (prompt) => eventFor('turn.complete', (v) => !v.agentId && v.answer === prompt + '_RESULT CONTINUED' && v.reason === 'answer');
@@ -269,6 +275,7 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
       if (!report.exit) terminal.kill();
       for (let i = 0; i < 50 && !report.exit; i++) await delay(100);
     }
+    await bridge?.close();
     server.closeAllConnections(); await new Promise((resolve) => server.close(resolve));
     await Promise.allSettled([...pending]);
     // Read only this run's isolated transcript, after native shutdown flushed it.
@@ -294,7 +301,7 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
           report.checks.submissionIdentity = submits.length === 4 && submits.every((command) => {
             const matches = rows.filter((e) => e.value.submissionId === command.id);
             return matches.length === 1 && matches[0].value.origin.kind === 'plugin'
-              && matches[0].value.origin.name === 'lex-mods-probe';
+              && matches[0].value.origin.name === pluginName;
           });
           report.checks.nativeInputHasNoBridgeSubmission = rows.some((e) => e.value.door === 'prompt'
             && e.value.origin.kind === 'composer' && !e.value.submissionId);
@@ -302,10 +309,10 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
             const row = { sessionId: event.sessionId, ...event.value, message: event.value.result.message };
             const command = submits.find((c) => c.id === event.value.submissionId);
             const binding = command ? { sessionId: event.sessionId, nativeMessageId: row.uuid,
-              submissionId: command.id, pluginName: 'lex-mods-probe',
+              submissionId: command.id, pluginName,
               originalContent: [{ type: 'text', text: command.text }] } : undefined;
             return { uuid: row.uuid, submissionId: command?.id,
-              projection: projectClaudeNativeMessage(row, 'lex-mods-probe', binding) };
+              projection: projectClaudeNativeMessage(row, pluginName, binding) };
           });
           report.checks.builtInGuiProjection = submits.every((command) => {
             const display = report.guiMessages.find((m) => m.submissionId === command.id)?.projection;
