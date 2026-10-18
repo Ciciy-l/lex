@@ -175,6 +175,59 @@ unverified. The official [app-server documentation](https://learn.chatgpt.com/do
 labels WebSocket transport experimental and unsupported; native version and
 protocol compatibility must therefore remain explicit product gates.
 
+## Pi and OMP native gates: Windows, 2026-10-18
+
+Run `node scripts/agent-presentation/extension-native-probe.mjs --engine=pi` or
+`--engine=omp` explicitly. Tested managed Pi `1.2.0` and OMP `18.10.4` inside
+their original interactive terminal with a fixture-only native extension. The
+extension uses the engine's semantic `sendUserMessage`, events and `ctx.abort`;
+it does not paste GUI prompts into the terminal. An authenticated loopback
+side channel transports fixture commands/events, alongside a fake Anthropic
+provider. Only the original terminal input case uses PTY keyboard input.
+
+Both final runs establish six facts:
+
+- Structured `message_update` text deltas arrive before provider completion.
+- All observed extension events retain one native session ID and process ID.
+- A GUI follow-up submitted during generation executes after the first reply.
+- A message from the original terminal editor appears in structured user events.
+- The original native terminal displays the generated response.
+- Semantic abort closes an intentionally unfinished provider response; the
+  process remains alive and reports idle with no pending input.
+
+Provider stream completion is not native completion. The probe waits for fresh
+idle/queue status acknowledgments rather than assuming the first idle query
+must already be true. Pi also emits `agent_settled`; that remains the production
+finality boundary. OMP native metadata prefixes are preserved by the engine and
+excluded only from fixture-prompt classification, not rewritten in production.
+
+OMP requires its synthetic provider in `models.yml` before CLI model selection;
+registering it from the extension factory alone was too late. Its isolated
+`config.yml` disables setup wizard/splash/update checks for this experiment.
+Before this fixture setup was corrected, four exploratory runs entered native
+provider onboarding and opened browsers using the temporary profile. No login
+was completed. The task-owned browser roots were identified by their children’s
+exact temporary-profile paths and closed. The subsequent recursive cleanup was
+denied by automatic approval policy; four residual fixture directories remain
+recorded in the external checkpoint. Do not describe those exploratory runs as
+pure loopback successes. Final runs did not enter onboarding, both exited and
+removed their own temporary profiles. Earlier failure evidence is retained.
+
+Raw final evidence is `ci-logs/pi-native-presentation-final2.json` and
+`ci-logs/omp-native-presentation-final2.json`, outside the repository. Pure
+fixture-classification and incremental terminal-observation tests are adjacent
+to the probes. The terminal helper only filters diagnostic text; it is not an
+ANSI screen emulator or a source of authoritative conversation events.
+
+These results support the native extension route, **not full production
+adapters**. Tool permission races, extension UI preservation, queued draft
+ownership, attachment/compaction/history mapping, existing Lex bridge behavior,
+backpressure/reconnect, Device Link, SSH and non-Windows platforms remain
+unverified. The test extension awaits local event delivery for evidence; a
+production bridge must not let a slow or absent GUI stall the native engine.
+All-four-engine exposure and RC gates remain closed because the Claude native
+interface gap above is unresolved.
+
 ## Upstream reference
 
 VelaTerm reference: `vlinx-io/VelaTerm` at
