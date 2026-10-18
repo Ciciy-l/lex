@@ -1142,9 +1142,11 @@ describe('AppServerHost descendant thread routing', () => {
     );
     expect(commandExecutionApproval).toHaveBeenCalledWith(
       expect.objectContaining({ threadId: 'child-thread' }),
+      { requestId: 'server-command' },
     );
     expect(fileChangeApproval).toHaveBeenCalledWith(
       expect.objectContaining({ threadId: 'child-thread' }),
+      { requestId: 'server-file' },
     );
     expect(mcpServerElicitation).toHaveBeenCalledWith(
       expect.objectContaining({ threadId: 'child-thread' }),

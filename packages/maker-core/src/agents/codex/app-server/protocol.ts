@@ -657,17 +657,20 @@ export interface FileChangeRequestApprovalParams {
 /**
  * v2.rs CommandExecutionApprovalDecision (camelCase serde):
  *   accept | acceptForSession | decline | cancel
- *   (acceptWithExecpolicyAmendment / applyNetworkPolicyAmendment 是结构变体, 我们不实现)
+ *   原生界面可回传服务器提供的精确 execpolicy/network amendment 结构变体。
  *
  * v2.rs FileChangeApprovalDecision:
  *   accept | acceptForSession | decline | cancel
  *
- * Phase 2 我们只发 accept/decline/cancel; acceptForSession 留 Phase 5+ ("Allow for session" 按钮)。
+ * GUI 复用普通决策；结构变体由原生审批协调器校验并保留，规则由原生服务持有。
  */
 export type ApprovalDecision = 'accept' | 'acceptForSession' | 'decline' | 'cancel';
 
 export interface CommandExecutionRequestApprovalResponse {
-  decision: ApprovalDecision;
+  /** Native frontend may explicitly select an exact server-proposed rule amendment. */
+  decision: ApprovalDecision
+    | { acceptWithExecpolicyAmendment: { execpolicy_amendment: string[] } }
+    | { applyNetworkPolicyAmendment: { network_policy_amendment: { host: string; action: 'allow' | 'deny' } } };
 }
 
 export interface FileChangeRequestApprovalResponse {

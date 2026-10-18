@@ -1,3 +1,4 @@
+import { CodexNativeApprovals, type CodexNativeApprovalRequest, type CodexNativeApprovalResponse } from './native-approvals.js';
 import { CODEX_NATIVE_TURN, CodexNativeInputAdmission, type CodexNativeSendOptions, type CodexNativeSessionHandle } from './native-input.js';
 import { syncCodexArchiveState } from './archive-state.js';
 import { normalizeAutoReviewUserIntent, createAutoReviewActionContext, type AutoReviewUserIntent } from '../shared/auto-review-decision.js';
@@ -7392,6 +7393,17 @@ assertRouteCurrent();
       onSystemDenied?: (reason: string) => void;
     }
     const pendingApprovals = new Map<string, PendingEntry>();
+    const nativeApprovals = new CodexNativeApprovals();
+    const nativeApprovalRequests = new Map<string | number, { requestId: string; threadId: string; resolved: boolean }>();
+    async function withNativeApprovalRequest<T>(params: { threadId: string; itemId: string; approvalId?: string | null },
+      meta: { requestId: string | number } | undefined, call: () => Promise<T>): Promise<T> {
+      if (!meta) return call();
+      if (nativeApprovalRequests.has(meta.requestId)) throw new Error('Duplicate native approval identity');
+      const owner = { requestId: params.approvalId ?? params.itemId, threadId: params.threadId, resolved: false };
+      nativeApprovalRequests.set(meta.requestId, owner);
+      try { return await call(); }
+      finally { if (nativeApprovalRequests.get(meta.requestId) === owner) nativeApprovalRequests.delete(meta.requestId); }
+    }
     const seenGuardianReviewIds = new Set<string>();
     const userInputBroker = new CodexInteractionBroker<ToolRequestUserInputResponse>();
     const dynamicToolBroker = new CodexInteractionBroker<DynamicToolCallResponse>();
@@ -7639,8 +7651,12 @@ assertRouteCurrent();
         autoReviewAction?: ReviewableAction;
         hostAutoApprove?: boolean;
         itemId?: string;
+        nativeRequest?: CodexNativeApprovalRequest;
       },
-    ): Promise<{ decision: ApprovalDecision; reason?: string }> {
+    ): Promise<{ decision: ApprovalDecision; reason?: string; nativeResponse?: CodexNativeApprovalResponse }> {
+      let nativeResponse: CodexNativeApprovalResponse | undefined;
+      const nativeOwner = opts?.nativeRequest ? nativeApprovalRequests.get(opts.nativeRequest.id) : undefined;
+      if (nativeOwner?.resolved || closed) return { decision: 'decline' };
       // Reasons stay inside Cindy for Host-owned dynamic tool results. Stock Codex
       // approval responses cannot carry them into native exec/patch tool output.
       const timingPauseId = `approval:${kind}:${requestId}`;
@@ -7767,13 +7783,16 @@ assertRouteCurrent();
             forcePrompt = true;
           }
         }
+        if (nativeOwner?.resolved) return 'decline';
         const routedRequest =
           forcePrompt && approvalRequest.kind === 'permission'
             ? { ...approvalRequest, suggestions: undefined }
             : approvalRequest;
         return await new Promise<ApprovalDecision>((resolve) => {
+          let nativePrompt: { close(): void } | undefined;
           const entry: PendingEntry = {
             resolve: (decision, reason) => {
+              nativePrompt?.close();
               if (reason) denialReason = formatPermissionDenial('system', reason);
               resolve(decision);
             },
@@ -7790,10 +7809,27 @@ assertRouteCurrent();
             if (entry.settled) return;
             entry.settled = true;
             pendingApprovals.delete(requestId);
+            nativePrompt?.close();
             // A stale/custom UI may still return a session grant. Forced policy
             // confirmation applies to this call only and must never persist.
             resolve(forcePrompt && d === 'acceptForSession' ? 'accept' : d);
           };
+          if (opts?.nativeRequest) {
+            try { nativePrompt = nativeApprovals.open(opts.nativeRequest, { allowPersistent: !forcePrompt,
+              accept: (response, behavior, session) => {
+                if (entry.settled) return;
+                nativeResponse = response;
+                if (behavior === 'deny') {
+                  denialReason = formatPermissionDenial('user');
+                  reportMcpDenial('user');
+                }
+                finalize(behavior === 'deny' ? 'decline' : session ? 'acceptForSession' : 'accept');
+                eventQueue.push({ type: 'interaction_dismissed', data: { requestId, reason: 'native_answered',
+                  resolvedAs: behavior, nativePermissionScope: session ? 'session'
+                    : typeof response.decision === 'object' ? 'persistent' : 'once' }, source: 'codex' });
+              },
+            }); } catch { finalize('decline'); return; }
+          }
           dispatchInteraction(routedRequest)
             .then((decision) => {
               if (entry.settled) return;
@@ -7831,7 +7867,7 @@ assertRouteCurrent();
             });
         });
       });
-      return { decision, ...(decision === 'decline' ? { reason: denialReason } : {}) };
+      return { decision, ...(decision === 'decline' ? { reason: denialReason } : {}), ...(nativeResponse ? { nativeResponse } : {}) };
     }
 
     /**
@@ -8787,6 +8823,7 @@ assertRouteCurrent();
     // ── ServerRequest handlers (Phase 2 approval, Phase 5 dismiss-on-mode-change) ──
     const commandExecutionApproval = async (
       params: CommandExecutionRequestApprovalParams,
+      meta?: { requestId: import("./app-server/protocol.js").JsonRpcId },
     ): Promise<CommandExecutionRequestApprovalResponse> => {
       if (reviewMode) return { decision: 'decline' };
       // buffered/墓碑 turn 的审批请求不得上 UI (codex R12 P1) — 孤儿直接拒。
@@ -8861,12 +8898,14 @@ assertRouteCurrent();
               : { cwdUnknown: true }),
         },
         itemId: params.itemId,
+        ...(meta ? { nativeRequest: { id: meta.requestId, method: 'item/commandExecution/requestApproval' as const, params } } : {}),
       });
-      return { decision: decision.decision };
+      return decision.nativeResponse ?? { decision: decision.decision };
     };
 
     const fileChangeApproval = async (
       params: FileChangeRequestApprovalParams,
+      meta?: { requestId: import("./app-server/protocol.js").JsonRpcId },
     ): Promise<FileChangeRequestApprovalResponse> => {
       if (reviewMode) return { decision: 'decline' };
       // buffered/墓碑 turn 的审批请求不得上 UI (codex R12 P1) — 孤儿直接拒。
@@ -8907,8 +8946,9 @@ assertRouteCurrent();
             : { kind: 'other' }
           : { kind: 'file-write', path: params.grantRoot ?? undefined },
         itemId: params.itemId,
+        ...(meta ? { nativeRequest: { id: meta.requestId, method: 'item/fileChange/requestApproval' as const, params } } : {}),
       });
-      return { decision: decision.decision };
+      return { decision: typeof decision.nativeResponse?.decision === 'string' ? decision.nativeResponse.decision : decision.decision };
     };
 
     function recordFromUnknown(value: unknown): Record<string, unknown> | null {
@@ -9879,7 +9919,10 @@ assertRouteCurrent();
     };
 
     function handleServerRequestResolved(params: ServerRequestResolvedNotification['params']): void {
-      const requestId = String(params.requestId);
+      const nativeOwner = nativeApprovalRequests.get(params.requestId);
+      if (nativeOwner && nativeOwner.threadId !== params.threadId) return;
+      if (nativeOwner) nativeOwner.resolved = true;
+      const requestId = nativeOwner?.requestId ?? String(params.requestId);
       const uiRequestId = serverInteractionId(params.requestId);
       const pendingApproval = pendingApprovals.get(requestId);
       let approvalCancelled = false;
@@ -12960,8 +13003,8 @@ assertRouteCurrent();
           source: 'codex',
         });
       },
-      commandExecutionApproval,
-      fileChangeApproval,
+      commandExecutionApproval: (params, meta) => withNativeApprovalRequest(params, meta, () => commandExecutionApproval(params, meta)),
+      fileChangeApproval: (params, meta) => withNativeApprovalRequest(params, meta, () => fileChangeApproval(params, meta)),
       mcpServerElicitation,
       permissionsApproval,
       serverRequestResolved: handleServerRequestResolved,
@@ -12988,6 +13031,7 @@ assertRouteCurrent();
       if (closed) return;
       closed = true;
       nativeAdmission?.close();
+      nativeApprovals.close();
       await startup.remoteRoute?.release();
       cancelInteractionContinuation('session_closed', true);
       resetCodexGenerationTiming(translatorRt);
@@ -13032,6 +13076,7 @@ assertRouteCurrent();
     nativeAdmission = new CodexNativeInputAdmission(
       () => closed ? '<closed>' : threadId, (message, options) => handle.send(message, options));
     const handle: CodexNativeSessionHandle = {
+      attachNativeApprovalFrontend(receive) { assertCurrentHost("native approval frontend"); return nativeApprovals.attach(receive); },
       setNativeInputResolver(resolver, media) { nativeAdmission!.bind(resolver, media); },
       acceptNativeTurn(request) {
         assertCurrentHost('native turn admission');

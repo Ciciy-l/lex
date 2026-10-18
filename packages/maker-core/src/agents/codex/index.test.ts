@@ -35058,3 +35058,109 @@ describe('Codex native model context overrides', () => {
 });
 
 function intentText(value: unknown): string { return typeof value === "string" ? value : JSON.stringify(value); }
+
+describe('native frontend approval ownership', () => {
+  async function fixture(deps: Partial<AgentDeps> = {}, permissionMode: 'ask' | 'auto' = 'ask') {
+    const agent = new CodexAgent(createDeps({}, deps));
+    const host = installFakeHost(agent, method => method === Method.TurnStart ? { turn: { id: 'native-approval-turn' } } : undefined);
+    const handle = await agent.startSession({ sessionId: 'native-approval', model: 'gpt-5.4', workingDir: '/repo', permissionMode }) as CodexNativeSessionHandle;
+    const events: AgentEvent[] = [];
+    const drained = (async () => { for await (const event of handle.events()) events.push(event); })();
+    let answer!: (decision: InteractionDecision) => void;
+    const resolver = vi.fn(() => new Promise<InteractionDecision>(resolve => { answer = resolve; }));
+    handle.setInteractionResolver(resolver);
+    const prompts: import('./native-approvals.js').CodexNativeApprovalEvent[] = [];
+    const native = handle.attachNativeApprovalFrontend(event => prompts.push(event));
+    await handle.send({ type: 'user', content: 'run fixture command' });
+    const handlers = host.getThreadHandlers()!;
+    const params = { threadId: 'start-thread-id', turnId: 'native-approval-turn', itemId: 'native-item', approvalId: 'native-approval-item',
+      command: 'fixture-command', cwd: '/repo', availableDecisions: ['accept', 'cancel', 'acceptForSession'] };
+    return { agent, host, handle, events, resolver, prompts, native, handlers, params,
+      answer: (value: InteractionDecision) => answer(value),
+      start: () => handlers.commandExecutionApproval!(params, { requestId: 72 }),
+      close: async () => { await handle.close(); await drained; await agent.dispose(); } };
+  }
+  it('native frontend cannot override a host shell denial', async () => {
+    const f = await fixture({ getShellCommandPolicy: () => ({ decision: 'deny', reason: 'fixture host refusal' }) });
+    try { expect(await f.start()).toEqual({ decision: 'decline' });
+      expect(f.prompts).toEqual([]); expect(f.resolver).not.toHaveBeenCalled();
+      expect(f.native.answer(72, { decision: 'accept' })).toBe(false);
+    } finally { await f.close(); }
+  });
+  it('native frontend answer closes the GUI prompt and late GUI denial cannot change it', async () => {
+    const f = await fixture();
+    try { const result = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      expect(f.native.answer(72, { decision: 'accept' })).toBe(true);
+      expect(await result).toEqual({ decision: 'accept' });
+      f.answer({ kind: 'permission', behavior: 'deny' }); await Promise.resolve();
+      expect(f.native.answer(72, { decision: 'cancel' })).toBe(false);
+      await vi.waitFor(() => expect(f.events).toContainEqual(expect.objectContaining({ type: 'interaction_dismissed',
+        data: expect.objectContaining({ requestId: 'native-approval-item', reason: 'native_answered',
+          resolvedAs: 'allow', nativePermissionScope: 'once' }) })));
+      expect(f.prompts.map(e => e.kind)).toEqual(['request', 'resolved']);
+    } finally { await f.close(); }
+  });
+  it('native frontend receives GUI refusal as retirement and cannot answer afterward', async () => {
+    const f = await fixture();
+    try { const result = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      f.answer({ kind: 'permission', behavior: 'deny' }); expect(await result).toEqual({ decision: 'decline' });
+      expect(f.native.answer(72, { decision: 'accept' })).toBe(false);
+      expect(f.prompts.map(e => e.kind)).toEqual(['request', 'resolved']);
+    } finally { await f.close(); }
+  });
+  it('native frontend cannot revive a server-resolved numeric request with a different product approval ID', async () => {
+    const f = await fixture();
+    try { const result = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      f.handlers.serverRequestResolved!({ threadId: f.params.threadId, requestId: 72 });
+      expect(await result).toEqual({ decision: 'decline' }); expect(f.native.answer(72, { decision: 'accept' })).toBe(false);
+      f.answer({ kind: 'permission', behavior: 'allow' }); await Promise.resolve();
+      expect(f.prompts.map(e => e.kind)).toEqual(['request', 'resolved']);
+    } finally { await f.close(); }
+  });
+  it('native frontend cannot act before Auto review or after a cancellation during review', async () => {
+    let review!: (value: { verdict: 'ask'; reason: string }) => void;
+    const reviewer = vi.fn<AutoReviewDelegate>(() => new Promise(resolve => { review = resolve; }));
+    const f = await fixture({ reviewAutoPermissionAction: reviewer }, 'auto');
+    try { const result = f.start(); await vi.waitFor(() => expect(reviewer).toHaveBeenCalledOnce());
+      expect(f.prompts).toEqual([]); expect(f.native.answer(72, { decision: 'accept' })).toBe(false);
+      f.handlers.serverRequestResolved!({ threadId: f.params.threadId, requestId: 72 });
+      review({ verdict: 'ask', reason: 'fixture needs user confirmation' });
+      expect(await result).toEqual({ decision: 'decline' }); expect(f.prompts).toEqual([]); expect(f.resolver).not.toHaveBeenCalled();
+    } finally { await f.close(); }
+  });
+  it('native frontend file approval retains the same single-answer lifecycle', async () => {
+    const f = await fixture();
+    try { const result = f.handlers.fileChangeApproval!({ threadId: f.params.threadId, turnId: f.params.turnId,
+        itemId: 'file-item', changes: [{ path: '/repo/fixture.txt', kind: { type: 'add' } }] }, { requestId: 73 });
+      await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      expect(f.native.answer(73, { decision: 'acceptForSession' })).toBe(true);
+      expect(await result).toEqual({ decision: 'acceptForSession' });
+      f.answer({ kind: 'permission', behavior: 'deny' });
+      expect(f.prompts.map(e => e.kind)).toEqual(['request', 'resolved']);
+      await vi.waitFor(() => expect(f.events).toContainEqual(expect.objectContaining({ type: 'interaction_dismissed',
+        data: expect.objectContaining({ requestId: 'file-item', resolvedAs: 'allow', nativePermissionScope: 'session' }) })));
+    } finally { await f.close(); }
+  });
+  it('native denial of a network rule reaches the server unchanged and records denial', async () => {
+    const f = await fixture();
+    const decision = { applyNetworkPolicyAmendment: { network_policy_amendment: { host: 'example.test', action: 'deny' as const } } };
+    try {
+      const result = f.handlers.commandExecutionApproval!({ ...f.params, availableDecisions: [decision, 'cancel'] }, { requestId: 74 });
+      await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      expect(f.native.answer(74, { decision })).toBe(true);
+      expect(await result).toEqual({ decision });
+      await vi.waitFor(() => expect(f.events).toContainEqual(expect.objectContaining({ type: 'interaction_dismissed',
+        data: expect.objectContaining({ resolvedAs: 'deny', nativePermissionScope: 'persistent' }) })));
+    } finally { await f.close(); }
+  });
+  it('Auto human handoff permits only this call in the native frontend', async () => {
+    const f = await fixture({ reviewAutoPermissionAction: async () => ({ verdict: 'ask', reason: 'Confirm this command' }) }, 'auto');
+    try {
+      const result = f.start();
+      await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      expect(f.native.answer(72, { decision: 'acceptForSession' })).toBe(false);
+      expect(f.native.answer(72, { decision: 'accept' })).toBe(true);
+      expect(await result).toEqual({ decision: 'accept' });
+    } finally { await f.close(); }
+  });
+});

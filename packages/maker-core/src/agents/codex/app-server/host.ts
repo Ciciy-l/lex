@@ -202,10 +202,12 @@ export interface ThreadEventHandlers {
   /** server 要求审批 shell 命令执行。 */
   commandExecutionApproval?: (
     params: CommandExecutionRequestApprovalParams,
+    meta?: ServerRequestMeta,
   ) => Promise<CommandExecutionRequestApprovalResponse>;
   /** server 要求审批文件改动。 */
   fileChangeApproval?: (
     params: FileChangeRequestApprovalParams,
+    meta?: ServerRequestMeta,
   ) => Promise<FileChangeRequestApprovalResponse>;
   mcpServerElicitation?: (
     params: McpServerElicitationRequestParams,
@@ -690,7 +692,7 @@ export class AppServerHost {
 
     // ServerRequest handlers (Phase 2 approval) — 同样在 initialize 前注册,
     // 防 server 在握手过程中就发出 approval (虽然实际不会, 但 defensive)。
-    client.setRequestHandler(Method.CommandExecutionRequestApproval, async (rawParams) => {
+    client.setRequestHandler(Method.CommandExecutionRequestApproval, async (rawParams, meta) => {
       const params = rawParams as CommandExecutionRequestApprovalParams;
       const resolvedHandlers = this.resolveRequestHandlers(params.threadId);
       const handlers = resolvedHandlers instanceof Promise
@@ -704,7 +706,7 @@ export class AppServerHost {
         return { decision: 'decline' };
       }
       try {
-        return await handlers.commandExecutionApproval(params);
+        return await handlers.commandExecutionApproval(params, { requestId: meta.id });
       } catch (e) {
         this.logger.error('commandExecutionApproval handler threw → decline', {
           threadId: params.threadId,
@@ -714,7 +716,7 @@ export class AppServerHost {
       }
     });
 
-    client.setRequestHandler(Method.FileChangeRequestApproval, async (rawParams) => {
+    client.setRequestHandler(Method.FileChangeRequestApproval, async (rawParams, meta) => {
       const params = rawParams as FileChangeRequestApprovalParams;
       const resolvedHandlers = this.resolveRequestHandlers(params.threadId);
       const handlers = resolvedHandlers instanceof Promise
@@ -728,7 +730,7 @@ export class AppServerHost {
         return { decision: 'decline' };
       }
       try {
-        return await handlers.fileChangeApproval(params);
+        return await handlers.fileChangeApproval(params, { requestId: meta.id });
       } catch (e) {
         this.logger.error('fileChangeApproval handler threw → decline', {
           threadId: params.threadId,

@@ -1,3 +1,4 @@
+import type { CodexNativeApprovalEvent, CodexNativeApprovalFrontend } from './native-approvals.js';
 import { isDeepStrictEqual } from 'node:util';
 import type { UserContentBlock, UserMessage } from '../../types/common.js';
 import { TurnDispatchRejectedError, TurnDispatchUnconfirmedError, type SendOptions, type AgentSessionHandle } from '../base-agent.js';
@@ -19,6 +20,7 @@ export interface CodexNativeTurnRequest {
 }
 /** Engine-specific host handle; this never becomes an IPC shape. */
 export interface CodexNativeSessionHandle extends AgentSessionHandle {
+  attachNativeApprovalFrontend(receive: (event: CodexNativeApprovalEvent) => void): CodexNativeApprovalFrontend;
   acceptNativeTurn(request: CodexNativeTurnRequest): Promise<TurnStartResponse>;
 }
 

@@ -258,7 +258,7 @@ function harness() {
       noteProgress: vi.fn(() => true),
     },
     handleAgentIslandInteractionDismissed: vi.fn(),
-    clearPendingInteraction: vi.fn(() => null),
+    clearPendingInteraction: vi.fn<SessionEventDependencies['clearPendingInteraction']>(() => null),
     defaultDecisionForPending: vi.fn(),
     persistInteractionDecision: vi.fn(),
     broadcastToAllWindows: effects.fn('broadcast'),
@@ -1325,5 +1325,52 @@ describe('usage through the production event pipeline', () => {
       money: expect.objectContaining({ kind: 'value-estimate' }),
     }));
     await h.dispose();
+  });
+});
+
+describe('native approval retirement preserves the actual product decision', () => {
+  it.each(['allow', 'deny'] as const)('persists the native %s rather than a default dismissal', async behavior => {
+    const h = harness(); const resolve = vi.fn();
+    const request = { kind: 'permission' as const, requestId: 'owned-approval', toolName: 'exec', input: {} };
+    h.deps.clearPendingInteraction.mockReturnValue({ kind: 'permission', resolve, request, persistId: 'owned-history' });
+    try {
+      h.emit(event('interaction_dismissed', { requestId: request.requestId, reason: 'native_answered', resolvedAs: behavior, nativePermissionScope: 'once' }));
+      expect(resolve).toHaveBeenCalledExactlyOnceWith({ kind: 'permission', behavior });
+      expect(h.deps.defaultDecisionForPending).not.toHaveBeenCalled();
+      expect(h.deps.persistInteractionDecision).toHaveBeenCalledExactlyOnceWith('task', 'owned-history', 'permission', request, { kind: 'permission', behavior });
+      expect(h.deps.broadcastToAllWindows).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ sessionId: 'task', resolvedAs: behavior }));
+    } finally { await h.dispose(); }
+  });
+  it('keeps an explicit native session grant session-scoped in history', async () => {
+    const h = harness(); const resolve = vi.fn();
+    h.deps.clearPendingInteraction.mockReturnValue({ kind: 'permission', resolve,
+      request: { kind: 'permission', requestId: 'owned', toolName: 'exec', input: {} } });
+    try { h.emit(event('interaction_dismissed', { requestId: 'owned', reason: 'native_answered', resolvedAs: 'allow', nativePermissionScope: 'session' }));
+      expect(resolve).toHaveBeenCalledExactlyOnceWith({ kind: 'permission', behavior: 'allow',
+        permissionUpdates: [{ type: 'codexSessionApproval', destination: 'session' }] });
+    } finally { await h.dispose(); }
+  });
+  it('does not reinterpret legacy or malformed dismissals as native approval', async () => {
+    const h = harness(); const resolve = vi.fn();
+    h.deps.clearPendingInteraction.mockReturnValue({ kind: 'permission', resolve,
+      request: { kind: 'permission', requestId: 'owned', toolName: 'exec', input: {} } });
+    h.deps.defaultDecisionForPending.mockReturnValue({ kind: 'permission', behavior: 'deny' });
+    try { for (const data of [{ reason: 'mode_changed', resolvedAs: 'allow' }, { reason: 'native_answered', resolvedAs: 'invented' }]) {
+      h.emit(event('interaction_dismissed', { requestId: 'owned', ...data }));
+    }
+      expect(h.deps.defaultDecisionForPending).toHaveBeenCalledTimes(2);
+      expect(resolve.mock.calls.every(([decision]) => decision.behavior === 'deny')).toBe(true);
+    } finally { await h.dispose(); }
+  });
+  it('does not interpret another engine dismissal as a Codex native answer', async () => {
+    const h = harness(); const resolve = vi.fn();
+    h.deps.clearPendingInteraction.mockReturnValue({ kind: 'permission', resolve,
+      request: { kind: 'permission', requestId: 'owned', toolName: 'exec', input: {} } });
+    h.deps.defaultDecisionForPending.mockReturnValue({ kind: 'permission', behavior: 'deny' });
+    try {
+      h.emit(event('interaction_dismissed', { requestId: 'owned', reason: 'native_answered', resolvedAs: 'allow' }, { source: 'claude-code' }));
+      expect(h.deps.defaultDecisionForPending).toHaveBeenCalledOnce();
+      expect(resolve).toHaveBeenCalledExactlyOnceWith({ kind: 'permission', behavior: 'deny' });
+    } finally { await h.dispose(); }
   });
 });

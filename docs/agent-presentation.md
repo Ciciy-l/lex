@@ -842,6 +842,29 @@ the temporary-home PATH-alias warning and the deliberate `fullAdapterProven:fals
 No actual provider credentials, live account or user profile were used.
 
 
+### Codex native approval ownership
+
+The native frontend shares command/file approvals with the existing Agent policy.
+The host's shell policy, Auto reviewer and forced single-call confirmation run
+before an approval becomes visible to a native frontend. One existing host RPC
+callback owns the answer; the first GUI or TUI response retires all other views.
+Numeric server request IDs are tracked separately from product approval/item IDs,
+including server cancellation while review is in progress. Native rule amendments
+must exactly match a server-advertised option. Network deny amendments stay denials;
+forced confirmation cannot create a session or persistent grant.
+
+Main's existing interaction dismissal path records the actual native allow/deny
+and any explicit session grant instead of replacing it with a default refusal.
+Persistent native rules remain owned by Codex, not copied into Lex's permissions.
+The added dismissal metadata uses existing events and is ignored by old consumers.
+
+The isolated native approval probe records GUI/TUI/GUI turns on one process and
+thread, three host responses, only the TUI-approved command executing, and a late
+GUI denial having no effect. It uses a fake provider and a fixture gateway;
+production PTY/gateway registration and MainIPC/UI/remote acceptance remain open.
+MCP elicitation, extended permissions and native questions still require their
+corresponding shared-response integration before exposing the full adapter.
+
 ## Upstream reference
 
 VelaTerm reference: `vlinx-io/VelaTerm` at
