@@ -30,6 +30,7 @@
     "expand": "展开",
     "automationOriginNamed": "由自动化「{{name}}」发送",
     "automationOrigin": "由自动化发送",
+    "nativePluginSource": "插件：{{name}}",
     "modelMismatch": "本轮由 {{actual}} 响应，而非所选的 {{selected}}（服务端临时降级）",
     "copyStateCopying": "复制中",
     "copyStateCopied": "已复制",

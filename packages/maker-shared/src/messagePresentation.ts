@@ -19,6 +19,32 @@ import {
   type PresentationLocalizer,
 } from './presentationLocalization';
 
+/** Host-authored provenance of one accepted native input, persisted with its GUI row. */
+export interface NativeMessageSource {
+  version: 1;
+  engine: 'claude-code';
+  sessionId: string;
+  messageId: string;
+  origin: { kind: string; name?: string };
+  /** Only the authenticated built-in bridge may mint this exact-row association. */
+  bridge?: { sessionId: string; messageId: string; submissionId: string; pluginName: string };
+}
+
+/** Display only. The host must strip this metadata from all client write paths. */
+export function nativeMessagePluginSource(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const source = value as Partial<NativeMessageSource>;
+  const name = source.origin?.name;
+  if (source.version !== 1 || source.engine !== 'claude-code' || source.origin?.kind !== 'plugin'
+    || typeof name !== 'string' || !name || name.length > 512 || /[\u0000-\u001f\u007f]/.test(name)) return undefined;
+  const bridge = source.bridge;
+  if (name === 'lex-native-bridge' && bridge?.pluginName === name
+    && typeof source.sessionId === 'string' && source.sessionId.length > 0 && bridge.sessionId === source.sessionId
+    && typeof source.messageId === 'string' && source.messageId.length > 0 && bridge.messageId === source.messageId
+    && typeof bridge.submissionId === 'string' && bridge.submissionId.length > 0) return undefined;
+  return name;
+}
+
 export type MessageFoldHeaderChevronPosition = 'leading' | 'trailing';
 
 export type MessageFoldHeaderVariant = 'card' | 'plain';

@@ -1,4 +1,5 @@
 import type { ClaudeBridgeEvent, ClaudeNativeCommand } from './native-bridge.js';
+import type { NativeMessageSource } from '@cindy/maker-shared/message-presentation';
 import { CLAUDE_NATIVE_BRIDGE_PLUGIN_NAME } from './native-mod-source.js';
 import { projectClaudeNativeMessage, type ClaudeBridgeSubmission, type ClaudeMessageProjection, type ClaudeNativeMessageRow } from './native-message-projection.js';
 
@@ -16,6 +17,18 @@ export interface ClaudeNativeUserMessage {
   display: ClaudeMessageProjection;
   /** Persist beside the native row; only this authenticated association hides the built-in source. */
   submission?: ClaudeBridgeSubmission;
+}
+
+/** Persist only identity/provenance here; native transcript owns unmodified content. */
+export function claudeNativeMessageSource(message: ClaudeNativeUserMessage): NativeMessageSource {
+  const { row, submission } = message;
+  const projection = projectClaudeNativeMessage(row, CLAUDE_NATIVE_BRIDGE_PLUGIN_NAME, submission);
+  return { version: 1, engine: 'claude-code', sessionId: row.sessionId, messageId: row.uuid, origin: { ...row.origin },
+    ...(submission && row.origin.kind === 'plugin' && projection.pluginSource === undefined ? {
+      bridge: { sessionId: submission.sessionId, messageId: submission.nativeMessageId,
+        submissionId: submission.submissionId, pluginName: submission.pluginName },
+    } : {}),
+  };
 }
 
 interface PendingSubmission {

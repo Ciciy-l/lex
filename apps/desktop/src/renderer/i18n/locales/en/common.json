@@ -9380,6 +9380,7 @@
       "attachmentSourceMissing": "Cannot save attachment because the source file no longer exists",
       "attachmentSaveFailed": "Cannot save attachment. Check the destination folder permissions and retry",
       "automationSent": "Sent by automation",
+      "nativePluginSource": "Plugin: {{name}}",
       "automationSentNamed": "Sent by automation \"{{name}}\"",
       "automationViewTask": "View automation task",
       "orcaFromLead": "Message from Lead",

@@ -27,6 +27,17 @@ function message(patch: Partial<RemoteMessage> & Pick<RemoteMessage, 'id' | 'rol
 }
 
 describe('normalizeRemoteMessages', () => {
+  it('keeps plugin provenance on phone GUI after remote history reload', () => {
+    const source = { version: 1, engine: 'claude-code', sessionId: 'native', messageId: 'row',
+      origin: { kind: 'plugin', name: 'lex-native-bridge' },
+      bridge: { sessionId: 'native', messageId: 'row', submissionId: 'host-input', pluginName: 'lex-native-bridge' } };
+    const rows = [source, { ...source, bridge: undefined },
+      { ...source, origin: { kind: 'plugin', name: 'external-plugin' } }].map((nativeSource, index) =>
+      message({ id: 'row-' + index, role: 'user', content: 'original body', agentMeta: { nativeSource } }));
+    const mapped = normalizeRemoteMessages(JSON.parse(JSON.stringify(rows)));
+    expect(mapped.map(message => message.nativePluginSource)).toEqual([undefined, 'lex-native-bridge', 'external-plugin']);
+    expect(mapped.map(message => message.body)).toEqual(['original body', 'original body', 'original body']);
+  });
   beforeAll(async () => {
     await i18n.changeLanguage('zh-CN');
   });

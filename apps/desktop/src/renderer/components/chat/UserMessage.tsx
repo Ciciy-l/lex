@@ -199,6 +199,7 @@ interface UserMessageProps {
   automationOrigin?: MessageAutomationOrigin;
   /** Hook 来源元数据;存在时渲染左对齐 Cindy 署名任务卡片(替代右对齐气泡)。 */
   hookSource?: ImMessageSource;
+  nativePluginSource?: string;
   /** /goal 目标设定/更新标记:在气泡上方渲一个「目标 / 目标已更新」徽标。 */
   goalBadge?: { updated: boolean };
   /** 订阅槽①:本条消息被意识钩子拦下(未发出)。存在时气泡下方渲一条 error
@@ -941,6 +942,7 @@ export function UserMessage({
   isLastUserMessage,
   automationOrigin,
   hookSource,
+  nativePluginSource,
   goalBadge,
   blockedByGhost,
 }: UserMessageProps) {
@@ -1482,6 +1484,14 @@ export function UserMessage({
             点击跳转自动化页并 focus 对应条目(与侧边栏自动化分组"编辑"同款 query
             机制);任务已删除时 SchedulerPage 的 focus 兜底会自动回退到列表首条。 */}
             {automationOrigin && <AutomationOriginBadge automationOrigin={automationOrigin} />}
+            {nativePluginSource && (
+              <span className="inline-flex max-w-full rounded-full px-2 py-0.5 text-11"
+                style={{ backgroundColor: 'var(--surface-chip)', color: 'var(--text-secondary)' }}>
+                <span className="min-w-0 truncate" title={nativePluginSource}>
+                  {t('chat.userMessage.nativePluginSource', { name: nativePluginSource })}
+                </span>
+              </span>
+            )}
             {/* /goal 目标设定/更新:气泡上方右对齐渲一个徽标(不进气泡、不入 copyText)。 */}
             {goalBadge && (
               <span

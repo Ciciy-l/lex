@@ -208,6 +208,20 @@ afterEach(() => {
 });
 
 describe('isLocalSentUserMessage (#2194)', () => {
+  it('restores external plugin sources from durable history and hides only an exact built-in association', () => {
+    const source = { version: 1 as const, engine: 'claude-code' as const, sessionId: 'native', messageId: 'row',
+      origin: { kind: 'plugin', name: 'lex-native-bridge' },
+      bridge: { sessionId: 'native', messageId: 'row', submissionId: 'host-input', pluginName: 'lex-native-bridge' } };
+    const rows = [source, { ...source, bridge: undefined },
+      { ...source, origin: { kind: 'plugin', name: 'external-plugin' } }].map((nativeSource, index) => ({
+      id: 'row-' + index, clientId: 'row-' + index, sessionId: 'task', role: 'user' as const,
+      content: 'original body', toolUseId: null, agentMeta: { nativeSource }, createdAt: '2026-10-18T00:00:00Z',
+    }));
+    const mapped = makerChatStore.__mapServerMessagesForTest(JSON.parse(JSON.stringify(rows)));
+    expect(mapped.map(message => message.nativePluginSource)).toEqual([undefined, 'lex-native-bridge', 'external-plugin']);
+    expect(mapped.map(message => message.content)).toEqual(['original body', 'original body', 'original body']);
+  });
+
   it('本端 sendMessage 发出的 user 消息登记为本端发送', async () => {
     const sid = `local-${Math.random().toString(36).slice(2, 8)}`;
 

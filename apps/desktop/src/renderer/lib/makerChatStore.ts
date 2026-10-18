@@ -1,5 +1,6 @@
 import { readResponseSpeedSnapshot, stopResponseSpeed, retryResponseSpeed, resumeResponseSpeed, mergeResponseSpeedStatus, type ResponseSpeedSnapshot } from '@cindy/maker-shared/usage-format';
 import type { ImMessageSource } from '../../shared/imMessageSource';
+import { nativeMessagePluginSource } from '@cindy/maker-shared/message-presentation';
 
 import { readRemoteHistoryCache, remoteHistoryCacheWriter } from './remoteHistoryCache';
 /**
@@ -468,6 +469,8 @@ export interface ChatMessage {
   delivery?: 'turn' | 'steer';
   /** Hook 来源元数据(IM 平台 + 用户干净原文 + thread 上下文),UserMessage 据此渲染 Cindy 任务卡片。 */
   hookSource?: ImMessageSource;
+  /** Display source of an external native plugin; built-in association is projected by identity. */
+  nativePluginSource?: string;
   /** /goal 目标设定/更新标记:该 user 消息是目标文案,renderer 在气泡上方渲「目标 / 目标已更新」徽标。 */
   goalBadge?: { updated: boolean };
   /** F7.2: ask_user message fields */
@@ -17647,6 +17650,7 @@ function mapServerMessages(serverMsgs: Message[]): ChatMessage[] {
       // Both ingress paths share the Desktop card, but local IM must not opt
       // older Mobile clients into legacy Hook/system-card semantics.
       const hookSource = m.agentMeta?.imSource ?? m.agentMeta?.hookSource;
+      const nativePluginSource = nativeMessagePluginSource(m.agentMeta?.nativeSource);
       return {
         clientId: m.clientId,
         role: m.role,
@@ -17671,6 +17675,7 @@ function mapServerMessages(serverMsgs: Message[]): ChatMessage[] {
         ...(delivery === 'turn' || delivery === 'steer' ? { delivery } : {}),
         ...(goalObjective ? { goalBadge: goalObjective } : {}),
         ...(hookSource ? { hookSource } : {}),
+        ...(nativePluginSource ? { nativePluginSource } : {}),
         // 子代理内部的 user 行(SDK parent_tool_use_id):投影给计划归属判定,
         // 否则 maker-shared 会把它当成"用户开新话题"切断主线程计划 session。
         // 只提升 SDK tool-parent 形态:legacy Claude 导入把 transcript 链边

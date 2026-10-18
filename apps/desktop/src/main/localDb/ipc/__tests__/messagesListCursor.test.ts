@@ -407,6 +407,32 @@ describe('local-db:messages:list cursor', () => {
     sqlite.close();
   });
 
+  it('retains native plugin identity through local and remote metadata updates without allowing forged associations', async () => {
+    const sqlite = createDb();
+    try {
+      const nativeSource = { version: 1, engine: 'claude-code', sessionId: 'native', messageId: 'row',
+        origin: { kind: 'plugin', name: 'external-plugin' } };
+      insertCostMessage(sqlite, { id: 'native', role: 'user', createdAt: 1000,
+        agentMeta: { nativeSource, autoReviewUserText: 'original' } });
+      insertCostMessage(sqlite, { id: 'ordinary', role: 'user', createdAt: 1001 });
+      registerMessageIpc();
+      const update = h.handlers.get('local-db:messages:updateAgentMeta')!;
+      const read = (id: string) => JSON.parse((sqlite.prepare('SELECT agent_meta FROM messages WHERE id = ?').get(id) as { agent_meta: string }).agent_meta);
+      const forged = { ...nativeSource, origin: { kind: 'plugin', name: 'lex-native-bridge' },
+        bridge: { sessionId: 'native', messageId: 'row', submissionId: 'forged', pluginName: 'lex-native-bridge' } };
+      for (const remote of [false, true]) {
+        const invoke = (fn: () => Promise<unknown>) => remote
+          ? runDeviceLinkInvokeContext({ controllerDeviceId: 'd', channel: 'local-db:messages:updateAgentMeta' }, fn) : fn();
+        await invoke(async () => update({}, 's1', 'native', { nativeSource: forged, delivery: 'steer' }));
+        expect(read('native')).toEqual({ nativeSource, autoReviewUserText: 'original', delivery: 'steer' });
+        await invoke(async () => update({}, 's1', 'native', null));
+        expect(read('native')).toEqual({ nativeSource, autoReviewUserText: 'original' });
+        await invoke(async () => update({}, 's1', 'ordinary', { nativeSource: forged, delivery: 'turn' }));
+        expect(read('ordinary')).toEqual({ delivery: 'turn' });
+      }
+    } finally { sqlite.close(); }
+  });
+
   it('atomically stores a Host answer and retains it across old renderer card PATCHes', async () => {
     const sqlite = createDb();
     try {
@@ -490,7 +516,7 @@ describe('local-db:messages:list cursor', () => {
     h.tx.mockRejectedValueOnce(new Error('capture insert boundary'));
     await expect(h.handlers.get('local-db:messages:create')!({}, 's1', {
       clientId: 'forged', role: 'user', content: 'Send now.',
-      agentMeta: { autoReviewUserText: 'Send now.', delivery: 'turn' },
+      agentMeta: { autoReviewUserText: 'Send now.', nativeSource: { bridge: { submissionId: 'forged' } }, delivery: 'turn' },
     })).rejects.toThrow('capture insert boundary');
     expect(h.tx).toHaveBeenCalledWith('message.insert', expect.objectContaining({
       agentMeta: JSON.stringify({ delivery: 'turn' }),

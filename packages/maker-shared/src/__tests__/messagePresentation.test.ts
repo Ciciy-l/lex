@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildMessageActionBarPresentation,
+  nativeMessagePluginSource,
+  type NativeMessageSource,
   countMessageRenderItemDiffs,
   isToolErrorLike,
   summarizeToolUseText,
@@ -25,6 +27,30 @@ type TestMessage = MessageRenderNormalizedMessage<MessageRenderSourceMessageLike
   media?: readonly unknown[];
   toolSettled?: boolean;
 };
+
+describe('native plugin source projection', () => {
+  const source: NativeMessageSource = { version: 1, engine: 'claude-code', sessionId: 'session', messageId: 'row',
+    origin: { kind: 'plugin', name: 'lex-native-bridge' },
+    bridge: { sessionId: 'session', messageId: 'row', submissionId: 'host-input', pluginName: 'lex-native-bridge' } };
+  it('hides only the built-in bridge with a matching persisted association', () => {
+    expect(nativeMessagePluginSource(JSON.parse(JSON.stringify(source)))).toBeUndefined();
+    for (const bridge of [undefined, { ...source.bridge!, sessionId: 'other' },
+      { ...source.bridge!, messageId: 'other' }, { ...source.bridge!, submissionId: '' },
+      { ...source.bridge!, pluginName: 'other' }]) {
+      expect(nativeMessagePluginSource({ ...source, bridge })).toBe('lex-native-bridge');
+    }
+  });
+  it('preserves external and lookalike plugin names, and ignores malformed metadata', () => {
+    for (const name of ['external-plugin', 'lex-native-bridge-extra']) {
+      expect(nativeMessagePluginSource({ ...source, origin: { kind: 'plugin', name },
+        bridge: { ...source.bridge!, pluginName: name } })).toBe(name);
+    }
+    for (const value of [null, 1, {}, { ...source, origin: { kind: 'composer' } },
+      { ...source, origin: { kind: 'plugin', name: 'invalid\nname' } }]) {
+      expect(nativeMessagePluginSource(value)).toBeUndefined();
+    }
+  });
+});
 
 function message(id: string, patch: Partial<TestMessage> = {}): TestMessage {
   return {

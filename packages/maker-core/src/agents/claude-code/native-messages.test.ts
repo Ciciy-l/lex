@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ClaudeNativeMessages, type ClaudeNativeSubmission } from './native-messages.js';
+import { ClaudeNativeMessages, claudeNativeMessageSource, type ClaudeNativeSubmission, type ClaudeNativeUserMessage } from './native-messages.js';
+import { nativeMessagePluginSource } from '@cindy/maker-shared/message-presentation';
 
 const input = (): ClaudeNativeSubmission => ({ messageId: 'host-message', text: 'same text',
   originalContent: [{ type: 'text', text: 'same text' }, { type: 'image', managedUrl: 'cindy-media://image' }] });
@@ -18,6 +19,19 @@ function fixture() {
 }
 
 describe('authenticated native message association', () => {
+  it('derives durable provenance from accepted rows rather than trusting a display hint', () => {
+    const message: ClaudeNativeUserMessage = { row: { sessionId: 'native', uuid: 'row', door: 'prompt',
+      origin: { kind: 'plugin', name: 'lex-native-bridge' }, message: { type: 'user', content: [] } },
+      display: { content: [] }, submission: { sessionId: 'native', nativeMessageId: 'row',
+        submissionId: 'host-input', pluginName: 'lex-native-bridge', originalContent: [] } };
+    const trusted = claudeNativeMessageSource(message);
+    expect(trusted.bridge?.submissionId).toBe('host-input');
+    expect(nativeMessagePluginSource(trusted)).toBeUndefined();
+    message.submission!.nativeMessageId = 'other';
+    const mismatched = claudeNativeMessageSource(message);
+    expect(mismatched.bridge).toBeUndefined();
+    expect(nativeMessagePluginSource(mismatched)).toBe('lex-native-bridge');
+  });
   it('binds the original immutable input before its native receipt and retains the actual stored row', async () => {
     const f = fixture(), original = input(), pending = f.messages.submit(original, f.enqueue);
     original.originalContent = []; original.text = 'changed later';

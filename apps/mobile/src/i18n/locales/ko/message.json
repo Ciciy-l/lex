@@ -30,6 +30,7 @@
     "expand": "펼치기",
     "automationOriginNamed": "자동화 작업 「{{name}}」에서 전송",
     "automationOrigin": "자동화 작업에서 전송",
+    "nativePluginSource": "플러그인: {{name}}",
     "modelMismatch": "이번 턴은 선택한 {{selected}}이(가) 아니라 {{actual}}이(가) 응답했습니다(서버 측 임시 다운그레이드)",
     "copyStateCopying": "복사 중",
     "copyStateCopied": "복사됨",

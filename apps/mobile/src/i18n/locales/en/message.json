@@ -30,6 +30,7 @@
     "expand": "Expand",
     "automationOriginNamed": "Sent by automation task “{{name}}”",
     "automationOrigin": "Sent by an automation task",
+    "nativePluginSource": "Plugin: {{name}}",
     "modelMismatch": "This turn was answered by {{actual}} instead of the selected {{selected}} (temporary server-side downgrade)",
     "copyStateCopying": "Copying",
     "copyStateCopied": "Copied",

@@ -9374,6 +9374,7 @@
       "attachmentSourceMissing": "원본 파일이 더 이상 존재하지 않아 첨부 파일을 저장할 수 없습니다",
       "attachmentSaveFailed": "첨부 파일을 저장할 수 없습니다. 대상 폴더 권한을 확인한 후 다시 시도하세요",
       "automationSent": "자동화 작업에서 보냄",
+      "nativePluginSource": "플러그인: {{name}}",
       "automationSentNamed": "자동화 작업 \"{{name}}\"에서 보냄",
       "automationViewTask": "자동화 작업 보기",
       "orcaFromLead": "Lead에서 온 메시지",

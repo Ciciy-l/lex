@@ -750,7 +750,7 @@ export function registerMessageIpc(
     }
 
     const ipcMeta = b.agentMeta ? { ...(b.agentMeta as Record<string, unknown>) } : null;
-    if (ipcMeta) delete ipcMeta.autoReviewUserText;
+    if (ipcMeta) { delete ipcMeta.autoReviewUserText; delete ipcMeta.nativeSource; }
     return createMessage(sid, {
       clientId: cid,
       role: b.role as MessageRole,
@@ -772,13 +772,17 @@ export function registerMessageIpc(
         throwIpcError('INVALID_PARAMS', 'agentMeta 必须是对象或 null');
       }
       const ipcMeta = agentMeta ? { ...(agentMeta as Record<string, unknown>) } : null;
-      if (ipcMeta) delete ipcMeta.autoReviewUserText;
+      if (ipcMeta) { delete ipcMeta.autoReviewUserText; delete ipcMeta.nativeSource; }
       const serialized = ipcMeta ? JSON.stringify(ipcMeta) : null;
       // Preserve Host-authored evidence atomically; the renderer may neither mint nor replace it.
-      await getDbClient().drizzle.update(messages).set({ agentMeta: sql`CASE
+      const withReview = sql`CASE
         WHEN json_valid(${messages.agentMeta}) AND json_type(${messages.agentMeta}, '$.autoReviewUserText') IN ('text', 'object')
         THEN json_set(${serialized ?? '{}'}, '$.autoReviewUserText', json_extract(${messages.agentMeta}, '$.autoReviewUserText'))
-        ELSE ${serialized} END` }).where(and(eq(messages.sessionId, sid), eq(messages.clientId, cid)));
+        ELSE ${serialized} END`;
+      await getDbClient().drizzle.update(messages).set({ agentMeta: sql`CASE
+        WHEN json_valid(${messages.agentMeta}) AND json_type(${messages.agentMeta}, '$.nativeSource') = 'object'
+        THEN json_set(COALESCE(${withReview}, '{}'), '$.nativeSource', json_extract(${messages.agentMeta}, '$.nativeSource'))
+        ELSE ${withReview} END` }).where(and(eq(messages.sessionId, sid), eq(messages.clientId, cid)));
     },
   );
 

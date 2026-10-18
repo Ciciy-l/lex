@@ -3565,6 +3565,13 @@ function MessageBubble({
         </View>
       ) : null}
       {attachmentStripNode}
+      {item.message.nativePluginSource ? (
+        <View style={styles.automationOriginRow} testID="message.nativePluginSource">
+          <Text numberOfLines={1} style={styles.automationOriginText}>
+            {t('message.renderer.nativePluginSource', { name: item.message.nativePluginSource })}
+          </Text>
+        </View>
+      ) : null}
       {hasBubbleContent || (!attachmentStripNode && messageQuotes.length === 0) ? bubble : null}
       {(null)}
       {item.message.kind === 'assistant' && item.message.modelMismatch ? (
