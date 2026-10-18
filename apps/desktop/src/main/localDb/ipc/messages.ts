@@ -25,6 +25,7 @@ import {
 import { createId } from '@paralleldrive/cuid2';
 import { historyOutlineContent, withHistoryArtifacts } from './historyViewOutline';
 import { historyViewLeaves, isHistoryViewUnavailable } from '@cindy/maker-shared/message-window';
+import type { NativeMessageSource } from '@cindy/maker-shared/message-presentation';
 
 import { getDbClient, getCurrentDbClientSnapshot } from '../client/current';
 import { assertNotRetiredCompanionSession } from '../retiredCompanions.js';
@@ -1923,6 +1924,55 @@ export function extractEstimatedSessionValueEntries(
 export interface MessageAgentMetaPatchResult {
   previous: Record<string, unknown>;
   next: Record<string, unknown>;
+}
+
+/** Capture one host dispatch. A late receipt cannot move to a new account/runtime. */
+export function captureNativeUserMessageLink(target: {
+  sessionId: string;
+  clientId: string;
+  nativeSessionId: string;
+  expectedUuid?: string;
+  expectedClearBoundaryMs?: number | null;
+  isCurrent(): boolean;
+}): (source: NativeMessageSource) => Promise<boolean> {
+  const { sessionId, clientId, nativeSessionId, expectedUuid, expectedClearBoundaryMs, isCurrent } = target;
+  const owner = getCurrentDbClientSnapshot();
+  const scope = captureOwnerBroadcastScope();
+  const current = () => Boolean(owner && owner === getCurrentDbClientSnapshot()
+    && !isAppSessionBoundaryPending() && isOwnerBroadcastScopeCurrent(scope) && isCurrent());
+  return async source => {
+    if (!current() || !owner || source.version !== 1 || source.engine !== 'claude-code'
+      || source.sessionId !== nativeSessionId || !source.messageId || source.messageId.length > 256
+      || source.origin.kind !== 'plugin' || source.origin.name !== 'lex-native-bridge'
+      || source.bridge?.sessionId !== nativeSessionId || source.bridge.messageId !== source.messageId
+      || source.bridge.pluginName !== source.origin.name || !source.bridge.submissionId
+      || (expectedUuid !== undefined && source.bridge.submissionId !== expectedUuid)) return false;
+    const serialized = JSON.stringify(source);
+    const meta = sql`CASE WHEN json_valid(${messages.agentMeta})
+      AND json_type(${messages.agentMeta}) = 'object' THEN ${messages.agentMeta} ELSE '{}' END`;
+    const [row] = await owner.client.drizzle.update(messages).set({
+      // Merge in SQLite, not a read/modify/write that could erase delivery,
+      // review or usage metadata written while the native receipt was in flight.
+      agentMeta: sql`json_set(${meta}, '$.uuid', ${source.messageId},
+        '$.sdkSessionId', ${nativeSessionId}, '$.nativeSource', json(${serialized}))`,
+    }).where(and(
+      eq(messages.sessionId, sessionId), eq(messages.clientId, clientId), eq(messages.role, 'user'),
+      isNull(messages.rewindAt),
+      or(
+        and(sql`json_extract(${meta}, '$.nativeSource') IS NULL`,
+          sql`json_extract(${meta}, '$.uuid') IS ${expectedUuid ?? null}`),
+        and(sql`json_extract(${meta}, '$.nativeSource') = ${serialized}`,
+          sql`json_extract(${meta}, '$.uuid') = ${source.messageId}`,
+          sql`json_extract(${meta}, '$.sdkSessionId') = ${nativeSessionId}`),
+      ),
+      sql`EXISTS (SELECT 1 FROM ${sessions} WHERE ${sessions.id} = ${messages.sessionId}
+        AND (${sessions.clearedAt} IS NULL OR ${messages.createdAt} > ${sessions.clearedAt})
+        ${expectedClearBoundaryMs === undefined ? sql`` : sql`AND ${sessions.clearedAt} IS ${expectedClearBoundaryMs}`})`,
+    )).returning();
+    if (!row || !current()) return false;
+    broadcastMessageRow(sessionId, messageToCamel(row), scope);
+    return true;
+  };
 }
 
 /** 与 patchMessageAgentMeta 相同，但返回补丁前后的元数据供幂等账本计算。 */

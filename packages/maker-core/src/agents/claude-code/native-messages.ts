@@ -10,6 +10,8 @@ export interface ClaudeNativeSubmission {
   imagePaths?: readonly string[];
   /** Display input before native plugin wrapping, including managed attachments. */
   originalContent: readonly unknown[];
+  /** Local receipt observer; never serialized to the native plugin. */
+  onNativeUserMessage?: (source: NativeMessageSource) => void | Promise<void>;
 }
 
 export interface ClaudeNativeUserMessage {
@@ -34,6 +36,7 @@ export function claudeNativeMessageSource(message: ClaudeNativeUserMessage): Nat
 interface PendingSubmission {
   input: ClaudeNativeSubmission;
   nativeMessageId?: string;
+  onNativeUserMessage?: ClaudeNativeSubmission['onNativeUserMessage'];
 }
 
 /** Runtime-scoped associations. A lost receipt never permits input replay. */
@@ -48,11 +51,12 @@ export class ClaudeNativeMessages {
     if ([...this.pending.values()].some(entry => entry.input.messageId === input.messageId)) {
       throw new Error('Native input already pending');
     }
-    const encoded = JSON.stringify(input);
+    const { onNativeUserMessage, ...descriptor } = input;
+    const encoded = JSON.stringify(descriptor);
     if (Buffer.byteLength(encoded) > 1_048_576) throw new Error('Native input exceeds identity limit');
     const owned = JSON.parse(encoded) as ClaudeNativeSubmission;
     const command = enqueue({ text: owned.text, ...(owned.imagePaths ? { imagePaths: owned.imagePaths } : {}) });
-    const pending: PendingSubmission = { input: owned };
+    const pending: PendingSubmission = { input: owned, onNativeUserMessage };
     this.pending.set(command.id, pending);
     // Keep unresolved associations after a timeout: the native process may still
     // append this input. Only its explicit receipt or runtime disposal retires it.
@@ -91,8 +95,16 @@ export class ClaudeNativeMessages {
         pluginName: CLAUDE_NATIVE_BRIDGE_PLUGIN_NAME, originalContent: pending.input.originalContent,
         ...(pending.input.imagePaths ? { inputKind: 'media' as const } : {}) };
     }
-    this.onMessage({ row, display: projectClaudeNativeMessage(row, CLAUDE_NATIVE_BRIDGE_PLUGIN_NAME, submission),
-      ...(submission ? { submission } : {}) });
+    const accepted = { row, display: projectClaudeNativeMessage(row, CLAUDE_NATIVE_BRIDGE_PLUGIN_NAME, submission),
+      ...(submission ? { submission } : {}) };
+    if (submission && pending?.onNativeUserMessage) {
+      const notify = pending.onNativeUserMessage;
+      const source = claudeNativeMessageSource(accepted);
+      // History writes must not block the semantic event pump or turn a native
+      // acceptance into a resend. The host observer owns reporting write errors.
+      void Promise.resolve().then(() => notify(source)).catch(() => {});
+    }
+    this.onMessage(accepted);
   }
 
   close(): void { this.pending.clear(); }

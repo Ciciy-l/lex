@@ -104,7 +104,9 @@ import {
   registerMessageIpc,
   readMessagesList,
   updateMessageContent,
+  captureNativeUserMessageLink,
 } from '../messages';
+import type { NativeMessageSource } from '@cindy/maker-shared/message-presentation';
 
 function createDb(): Database.Database {
   const sqlite = new Database(':memory:');
@@ -1486,6 +1488,57 @@ describe('getMessageDeletionTarget', () => {
       deletedClientIds: ['user'],
     });
   });
+});
+
+describe('native GUI user message receipts', () => {
+  function fixture() {
+    const sqlite = createDb();
+    sqlite.prepare('INSERT INTO sessions (id, cleared_at) VALUES (?, NULL)').run('s1');
+    insertCostMessage(sqlite, { id: 'gui-row', role: 'user', createdAt: 100,
+      agentMeta: { uuid: 'host-uuid', sdkSessionId: 'native-session', delivery: 'turn', autoReviewUserText: 'original' } });
+    const source: NativeMessageSource = { version: 1, engine: 'claude-code', sessionId: 'native-session', messageId: 'native-uuid',
+      origin: { kind: 'plugin', name: 'lex-native-bridge' }, bridge: { sessionId: 'native-session',
+        messageId: 'native-uuid', submissionId: 'host-uuid', pluginName: 'lex-native-bridge' } };
+    let current = true;
+    const link = captureNativeUserMessageLink({ sessionId: 's1', clientId: 'gui-row', nativeSessionId: 'native-session',
+      expectedUuid: 'host-uuid', expectedClearBoundaryMs: null, isCurrent: () => current });
+    const read = () => sqlite.prepare('SELECT * FROM messages WHERE client_id = ?').get('gui-row') as { agent_meta: string; role: string };
+    return { sqlite, source, link, read, retire: () => { current = false; } };
+  }
+
+  it('atomically adds native identity to the existing row and preserves newer metadata', async () => {
+    const f = fixture();
+    try {
+      f.sqlite.exec(`UPDATE messages SET agent_meta = json_set(agent_meta, '$.concurrentField', 123)`);
+      expect(await f.link(f.source)).toBe(true);
+      expect(JSON.parse(f.read().agent_meta)).toEqual({ uuid: 'native-uuid', sdkSessionId: 'native-session',
+        delivery: 'turn', autoReviewUserText: 'original', concurrentField: 123, nativeSource: f.source });
+      expect(await f.link(f.source)).toBe(true);
+      expect(f.sqlite.prepare('SELECT count(*) AS n FROM messages').get()).toEqual({ n: 1 });
+      const conflicting = { ...f.source, messageId: 'different', bridge: { ...f.source.bridge!, messageId: 'different' } };
+      expect(await f.link(conflicting)).toBe(false);
+      expect(JSON.parse(f.read().agent_meta).uuid).toBe('native-uuid');
+    } finally { f.sqlite.close(); }
+  });
+
+  it.each(['clear', 'rewind', 'delete', 'role', 'uuid', 'runtime', 'account', 'source', 'submission'])
+    ('ignores a late receipt after %s changes', async change => {
+      const f = fixture();
+      try {
+        if (change === 'clear') f.sqlite.exec('UPDATE sessions SET cleared_at = 1');
+        if (change === 'rewind') f.sqlite.exec('UPDATE messages SET rewind_at = 200');
+        if (change === 'delete') f.sqlite.exec('DELETE FROM messages');
+        if (change === 'role') f.sqlite.exec("UPDATE messages SET role = 'message_tombstone'");
+        if (change === 'uuid') f.sqlite.exec("UPDATE messages SET agent_meta = json_set(agent_meta, '$.uuid', 'other')");
+        if (change === 'runtime') f.retire();
+        if (change === 'account') h.snapshot = { ...h.snapshot!, clientEpoch: 2 };
+        if (change === 'source') f.source.sessionId = 'other';
+        if (change === 'submission') f.source.bridge!.submissionId = 'other';
+        const before = f.read();
+        expect(await f.link(f.source)).toBe(false);
+        expect(f.read()).toEqual(before);
+      } finally { f.sqlite.close(); }
+    });
 });
 
 describe('readPriorUserRoundCost', () => {

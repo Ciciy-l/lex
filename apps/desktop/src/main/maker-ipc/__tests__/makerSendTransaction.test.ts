@@ -102,6 +102,33 @@ function createDeps(overrides: Partial<MakerSendTransactionDeps> = {}) {
 }
 
 describe('maker SEND transaction', () => {
+  it.each(['success', 'missing', 'failed'])('keeps native receipt %s separate from dispatch acceptance', async outcome => {
+    const link = vi.fn(async () => {
+      if (outcome === 'failed') throw new Error('database unavailable');
+      return outcome === 'success';
+    });
+    const capture = vi.fn(() => link);
+    const { deps, session } = createDeps({ captureNativeUserMessageLink: capture });
+    session.agentKind = 'claude-code';
+    const source = { version: 1 as const, engine: 'claude-code' as const, sessionId: 'native', messageId: 'native-row',
+      origin: { kind: 'plugin', name: 'lex-native-bridge' } };
+    vi.mocked(session.send).mockImplementation(async (_message, opts) => {
+      await opts?.onAccepted?.();
+      expect(deps.createDbMessage).toHaveBeenCalledOnce();
+      await opts?.onNativeUserMessage?.(source);
+      expect(opts?.onTranscriptUserEntry).toBeUndefined();
+      return { accepted: true };
+    });
+    const result = await createMakerSendTransaction(deps).sendToAgentAccepted('session-1', 'hello', undefined, {
+      messageUuid: 'host-uuid', persistUserMessage: { clientId: 'gui-row', content: 'hello', expectedClearBoundaryMs: null },
+    });
+    expect(capture).toHaveBeenCalledWith({ session, clientId: 'gui-row', expectedUuid: 'host-uuid', expectedClearBoundaryMs: null });
+    expect(link).toHaveBeenCalledExactlyOnceWith(source);
+    expect(session.send).toHaveBeenCalledOnce();
+    expect(result.outcome).toMatchObject({ kind: 'session-dispatch', dispatched: true });
+    expect(deps.log.warn).toHaveBeenCalledTimes(outcome === 'success' ? 0 : 1);
+  });
+
   function nativeFixture() {
     const { deps, session } = createDeps({
       applyPendingAgentSwitch: vi.fn(async () => {}),

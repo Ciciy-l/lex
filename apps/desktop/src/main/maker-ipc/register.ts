@@ -294,6 +294,7 @@ import {
   listMessagesForAgentHandoff,
   findLatestUserMessageForRebuild,
   patchMessageAgentMeta,
+  captureNativeUserMessageLink,
   supersedeRetriedUserTurn,
   updateMessageContent,
 } from '../localDb/ipc/messages.js';
@@ -12640,6 +12641,22 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       enqueueDurableWrite(`pi-entry-link:${sessionId}:${clientId}`, () =>
         patchMessageAgentMeta(sessionId, clientId, { piEntryId }),
       ),
+    captureNativeUserMessageLink: ({ session, clientId, expectedUuid, expectedClearBoundaryMs }) => {
+      const coordinator = agentInputCoordinatorHolder;
+      const generation = coordinator?.getGeneration(session.id);
+      const nativeSessionId = session.sdkSessionId;
+      if (!nativeSessionId || nativeSessionId === '<pending>') return async () => false;
+      const link = captureNativeUserMessageLink({ sessionId: session.id, clientId, expectedUuid, nativeSessionId,
+        expectedClearBoundaryMs, isCurrent: () => maker.getSession(session.id) === session
+          && session.sdkSessionId === nativeSessionId && session.getStatus?.() === 'active'
+          && agentInputCoordinatorHolder === coordinator
+          && (!coordinator || (generation !== undefined && coordinator.isGenerationCurrent(session.id, generation))),
+      });
+      return source => {
+        const receipt = structuredClone(source);
+        return enqueueDurableWrite(`native-entry-link:${session.id}:${clientId}`, () => link(receipt));
+      };
+    },
     beforeDispatchDirectUserTurn: (sessionId) => gitSnapshotCoordinator?.onTurnStart(sessionId),
     assertBeforeVendorDispatch: (sessionId, sendOpts) => {
       const remote = isDeviceLinkInvoke();

@@ -409,6 +409,21 @@ still require their own acceptance. No production UI or user install changed.
 
 ### Native message identity and GUI source display
 
+GUI sends now carry a host-only `onNativeUserMessage` observer alongside the
+existing queue UUID. The native bridge delivers the actual accepted UUID and
+authenticated source to that observer, including a late receipt after an
+uncertain command response. It never serializes the observer or waits for a
+database write in its semantic event pump. The Desktop send transaction captures
+the exact Session, database owner and clear generation before dispatch. Its
+receipt patches the original visible user row with one conditional SQLite
+`json_set`, preserving concurrent metadata and broadcasting the authoritative row
+over the existing Desktop/phone history channel. Clear, rewind, deletion,
+replacement and conflicting receipts do not revive or relabel an old row. A
+failed association is diagnostic only; it never resubmits accepted input. Pi's
+transcript-entry callback remains separate. Production Claude handle selection
+must pass this observer into `runtime.submit`; the receipt path alone does not
+enable GUI/TUI switching.
+
 The follow-up `--scenario=identity` passes 18 checks on the same managed 2.1.296
 binary, including the earlier continuous controls. Its `session.append` hook
 observes user and assistant UUIDs; every observed user/assistant row matches

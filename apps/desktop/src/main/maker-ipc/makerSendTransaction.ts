@@ -312,6 +312,7 @@ export interface MakerSendTransactionSession {
   id: string;
   /** Exact in-memory incarnation; a reused session id must not inherit turn grants. */
   instanceId: string;
+  readonly sdkSessionId?: string;
   agentKind: AgentKind;
   workDir: string;
   remoteHostId: string | null;
@@ -418,6 +419,11 @@ export interface MakerSendTransactionDeps {
   ) => boolean;
   /** 把 Pi 原生 user entry id 补到已落库的 Cindy user 行，供会话树恢复附件。 */
   linkPiUserEntry?(sessionId: string, clientId: string, piEntryId: string): Promise<boolean | void>;
+  /** Freeze account/runtime/clear ownership before sending; never accept this over IPC. */
+  captureNativeUserMessageLink?(target: {
+    session: MakerSendTransactionSession; clientId: string; expectedUuid: string;
+    expectedClearBoundaryMs?: number | null;
+  }): (source: NativeMessageSource) => Promise<boolean>;
   beforeDispatchDirectUserTurn?: (sessionId: string) => void | Promise<void>;
   /** Synchronous final fence immediately before Session.send enters vendor code. */
   assertBeforeVendorDispatch?: (sessionId: string, sendOpts: unknown) => void;
@@ -1391,6 +1397,11 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
           ? Math.max(0, Date.now() - 1)
           : null;
         assertNativeCurrent();
+        const nativeMessageLink = !native && sess.agentKind === 'claude-code' && persistUserMessage
+          && typeof so.messageUuid === 'string' && so.messageUuid
+          ? deps.captureNativeUserMessageLink?.({ session: sess, clientId: persistUserMessage.clientId,
+              expectedUuid: so.messageUuid, expectedClearBoundaryMs: persistUserMessage.expectedClearBoundaryMs })
+          : undefined;
         const dispatch = native
           ? (prepared: UserMessage | string, options: SessionSendOptions) => sess.acceptNativeInput!({
               nativeSessionId: native.input.nativeSessionId,
@@ -1421,6 +1432,15 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
             : {}),
           logTitle: meta?.title,
           messageUuid: so.messageUuid,
+          ...(nativeMessageLink ? { onNativeUserMessage: async (source: NativeMessageSource) => {
+            try {
+              if (!await nativeMessageLink(source)) deps.log.warn('send: native message receipt no longer matches its row', { sessionId });
+            } catch {
+              // Native already accepted this input. Never reject or resubmit it
+              // because its durable identity patch failed. Do not log content.
+              deps.log.warn('send: native message receipt persistence failed', { sessionId });
+            }
+          } } : {}),
           userName: so.userName,
           throwOnStartFailure: so.throwOnStartFailure,
           turnAttemptToken: so.turnAttemptToken,

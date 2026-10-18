@@ -1,6 +1,7 @@
 import type { AutoReviewUserIntent } from './shared/auto-review-decision.js';
 import type { AgentSessionPresentation } from './presentation.js';
 import type { AgentNativeInputResolver, AgentNativeMediaResolver } from './native-input.js';
+import type { NativeMessageSource } from '@cindy/maker-shared/message-presentation';
 /**
  * BaseAgent — Claude Code / Codex 等具体 agent 的统一抽象。
  *
@@ -2059,6 +2060,12 @@ export interface SendOptions {
    * 回调失败不得改变已经接受的 provider dispatch 结果。
    */
   onTranscriptUserEntry?: (entryId: string) => void | Promise<void>;
+  /**
+   * Host-only receipt for this input's engine-generated UUID and provenance.
+   * May arrive after an uncertain dispatch result. Association failure must
+   * never make accepted native input retryable or create a second user row.
+   */
+  onNativeUserMessage?: (source: NativeMessageSource) => void | Promise<void>;
   /**
    * 当前用户的展示名 (host / renderer 在调 send 时提供)。仅用于 turn-start 时
    * push status event 的文案 — agent 拼成 "<userName> Just Wait ..." 让 UI 个人化;

@@ -19,6 +19,35 @@ function fixture() {
 }
 
 describe('authenticated native message association', () => {
+  it('delivers a late exact-row receipt without replaying or serializing the host callback', async () => {
+    const f = fixture(), onNativeUserMessage = vi.fn();
+    const pending = f.messages.submit({ ...input(), onNativeUserMessage }, f.enqueue);
+    f.reject(new Error('outcome unconfirmed'));
+    await expect(pending).rejects.toThrow('unconfirmed');
+    f.messages.accept(row('foreign', 1, 'other-plugin'));
+    f.messages.accept(row('actual-native', 1));
+    f.messages.accept(row('another-row', 1));
+    await vi.waitFor(() => expect(onNativeUserMessage).toHaveBeenCalledOnce());
+    expect(onNativeUserMessage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'session', messageId: 'actual-native',
+      bridge: expect.objectContaining({ submissionId: 'host-message', messageId: 'actual-native' }),
+    }));
+    expect(f.enqueue).toHaveBeenCalledExactlyOnceWith({ text: 'same text' });
+  });
+
+  it.each(['sync', 'async'])('does not reject accepted input when the %s receipt observer fails', async failure => {
+    const f = fixture();
+    const onNativeUserMessage = vi.fn(() => {
+      if (failure === 'sync') throw new Error('history write failed');
+      return Promise.reject(new Error('history write failed'));
+    });
+    const sent = f.messages.submit({ ...input(), onNativeUserMessage }, f.enqueue);
+    f.messages.accept(row('native', 1)); f.resolve({});
+    await expect(sent).resolves.toEqual({ nativeMessageId: 'native' });
+    await vi.waitFor(() => expect(onNativeUserMessage).toHaveBeenCalledOnce());
+    expect(f.onMessage).toHaveBeenCalledOnce();
+  });
+
   it('derives durable provenance from accepted rows rather than trusting a display hint', () => {
     const message: ClaudeNativeUserMessage = { row: { sessionId: 'native', uuid: 'row', door: 'prompt',
       origin: { kind: 'plugin', name: 'lex-native-bridge' }, message: { type: 'user', content: [] } },
