@@ -1,5 +1,8 @@
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { spawnObservedClaudeProcess } from './local-process-spawn.js';
+import type { ClaudeLocalMcpSources } from './local-mcp-servers.js';
+import type { ClaudeNativeSessionOptions } from './native-session.js';
+import type { Logger } from '../../interfaces/logger.js';
 
 /** Already-resolved task policy/configuration, shared by the SDK and native transports. */
 export interface ClaudeLocalSessionLaunch {
@@ -31,7 +34,17 @@ export interface ClaudeLocalSessionLaunch {
   debug: boolean;
   debugFile?: string;
   mcpServers?: Options['mcpServers'];
+  mcpSources?: ClaudeLocalMcpSources;
   hooks: NonNullable<Options['hooks']>;
+  /** Native host owns these resources once invoked; release only after exit or before spawn. */
+  releaseNativeResources?(): Promise<void>;
+}
+
+/** Host-only factory input. It cannot be selected through renderer/vendor options. */
+export interface ClaudeLocalNativeSessionOptions extends Omit<ClaudeNativeSessionOptions, 'runtime'> {
+  launch: ClaudeLocalSessionLaunch;
+  logger: Logger;
+  onEvent: ClaudeNativeSessionOptions['runtime']['onEvent'];
 }
 
 /** SDK-only transport plumbing; native launch never starts a Query beside its TUI. */

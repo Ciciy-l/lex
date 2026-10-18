@@ -9,6 +9,8 @@ import type { ClaudeNativeRuntimeOptions } from './native-runtime.js';
 type ProcessMcpServer = Exclude<McpServerConfig, { type: 'sdk' }>;
 export interface ClaudeNativeMcpProjection {
   servers: Record<string, ProcessMcpServer>;
+  /** Revoke authority immediately, independently of confirmed process exit. */
+  revoke?(): void;
   dispose(): void | Promise<void>;
 }
 
@@ -16,6 +18,7 @@ export type ClaudeNativePreparedLaunch = Pick<ClaudeNativeRuntimeOptions,
   'nativeSessionId' | 'executable' | 'cwd' | 'args' | 'env' | 'hooks' | 'canUseTool' | 'signal'> & {
   /** Call after native process exit, never on presentation detach. */
   dispose(): Promise<void>;
+  revoke(): void;
   registerProcess?: ClaudeLocalSessionLaunch['registerProcess'];
 };
 
@@ -39,9 +42,11 @@ export async function prepareClaudeNativeLaunch(
   const sdkServers = Object.fromEntries(Object.entries(servers).filter(([, config]) => config.type === 'sdk'));
   if (Object.keys(sdkServers).length && !materializeMcp) throw new Error('Native Claude requires the host MCP bridge');
   let projection: ClaudeNativeMcpProjection | undefined, root: string | undefined;
+  let revoked = false;
+  const revoke = () => { if (!revoked) { revoked = true; projection?.revoke?.(); } };
   let disposal: Promise<void> | undefined;
   const dispose = () => disposal ??= (async () => {
-    try { await projection?.dispose(); }
+    try { revoke(); await projection?.dispose(); }
     finally { if (root) await fs.rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); }
   })();
   try {
@@ -86,7 +91,12 @@ export async function prepareClaudeNativeLaunch(
     await fs.writeFile(settingsPath, JSON.stringify(launch.settings), { mode: 0o600 });
     const args = ['--model', launch.model, '--settings', settingsPath, '--setting-sources', launch.settingSources.join(',')];
     if (launch.permissionMode) args.push('--permission-mode', launch.permissionMode);
-    if (launch.allowDangerouslySkipPermissions) args.push('--allow-dangerously-skip-permissions');
+    // In interactive mode this flag opens a bypass confirmation even when the
+    // selected mode is Ask. SDK uses it to enable future controls; the native
+    // transport must not request bypass before that mode was actually selected.
+    if (launch.allowDangerouslySkipPermissions && launch.permissionMode === 'bypassPermissions') {
+      args.push('--allow-dangerously-skip-permissions');
+    }
     if (launch.effort) args.push('--effort', launch.effort);
     if (launch.thinking) {
       if (launch.thinking.type === 'enabled') {
@@ -118,7 +128,7 @@ export async function prepareClaudeNativeLaunch(
     if (launch.enableFileCheckpointing) env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING = 'true';
     checkLive();
     return { nativeSessionId: launch.sessionId, executable: launch.binaryPath, cwd: launch.cwd,
-      args, env, hooks: launch.hooks, canUseTool: launch.canUseTool, signal, dispose,
+      args, env, hooks: launch.hooks, canUseTool: launch.canUseTool, signal, revoke, dispose,
       registerProcess: launch.registerProcess };
   } catch (error) { await dispose(); throw error; }
 }

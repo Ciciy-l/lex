@@ -52,6 +52,7 @@ describe('native Claude launch from existing session configuration', () => {
     expect(expand(servers.stdio.env.KEY, prepared.env)).toBe('fixture-env-secret');
     expect(config.env.LEX_CLAUDE_MCP).toBeUndefined();
     expect(prepared.args).not.toContain('--print'); expect(prepared.args).not.toContain('--input-format');
+    expect(prepared.args).not.toContain('--allow-dangerously-skip-permissions');
     await prepared.dispose(); await prepared.dispose();
     await expect(fs.stat(path.dirname(settingsPath))).rejects.toMatchObject({ code: 'ENOENT' });
   });
@@ -69,16 +70,20 @@ describe('native Claude launch from existing session configuration', () => {
   });
 
   it('projects an in-process server without serializing its instance or exposing its bridge token', async () => {
-    const dispose = vi.fn();
+    const dispose = vi.fn(), revoke = vi.fn();
     const config = await launch({ mcpServers: { helper: { type: 'sdk', name: 'helper', instance: {} as any } } });
     const prepared = await prepareClaudeNativeLaunch(config, async () => ({
-      servers: { helper: { type: 'http', url: 'http://127.0.0.1:1', headers: { Authorization: 'Bearer fixture-bridge-key' } } }, dispose,
+      servers: { helper: { type: 'http', url: 'http://127.0.0.1:1', headers: { Authorization: 'Bearer fixture-bridge-key' } } }, revoke, dispose,
     })); cleanups.push(prepared.dispose);
     const wire = await fs.readFile(argument(prepared.args, '--mcp-config'), 'utf8');
     expect(wire).not.toContain('fixture-bridge-key'); expect(wire).not.toContain('instance');
     expect(Object.keys(JSON.parse(wire).mcpServers)).toEqual(['helper']);
     expect(prepared.env.ANTHROPIC_API_KEY).toBe('fixture-provider-secret');
+    prepared.revoke(); prepared.revoke();
+    expect(revoke).toHaveBeenCalledOnce(); expect(dispose).not.toHaveBeenCalled();
+    expect((await fs.stat(argument(prepared.args, '--mcp-config'))).isFile()).toBe(true);
     await prepared.dispose(); await prepared.dispose(); expect(dispose).toHaveBeenCalledOnce();
+    expect(revoke).toHaveBeenCalledOnce();
   });
 
   it('cleans the MCP registration when launch is cancelled while it is being prepared', async () => {

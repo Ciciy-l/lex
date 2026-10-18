@@ -1,6 +1,8 @@
 import type { AutoReviewUserIntent } from './shared/auto-review-decision.js';
 import type { AgentSessionPresentation } from './presentation.js';
 import type { AgentNativeInputResolver, AgentNativeMediaResolver } from './native-input.js';
+import type { ClaudeLocalNativeSessionOptions } from './claude-code/local-session-launch.js';
+import type { ClaudeNativeSessionHandle } from './claude-code/native-session.js';
 import type { NativeMessageSource } from '@cindy/maker-shared/message-presentation';
 /**
  * BaseAgent — Claude Code / Codex 等具体 agent 的统一抽象。
@@ -698,6 +700,8 @@ export interface PiSubagentRunnerLaunchRequest {
 }
 
 export interface AgentDeps {
+  /** Host-only native adapter injection. Absent until native/remote acceptance; never a vendor option. */
+  createLocalClaudeNativeSession?: (options: ClaudeLocalNativeSessionOptions) => Promise<ClaudeNativeSessionHandle>;
   /** Cindy-only local Skill overrides. Freeze at native runtime startup; never apply to SSH. */
   getDisabledSkillPaths?: () => readonly string[];
   /** Host-isolated discovery; native runtime loading stays unchanged. */

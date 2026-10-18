@@ -651,6 +651,41 @@ All-four-engine exposure and RC gates remain closed pending full adapter and
 remote acceptance; the subsequent Claude Mods probe is a basic feasibility
 result, not permission to skip those gates.
 
+### Claude production entry and Main ownership, 2026-10-19
+
+`ClaudeCodeAgent.startSession` now has a host-only native factory branch. It
+shares the existing launch assembly, selected MCP factories, input permission
+policy, capability selection, auto-review intent and interaction event queue.
+The branch never creates an SDK Query. It is not injected into normal Desktop
+boot yet: plan/live controls, subscription refresh, history restore, full usage
+and remote parity remain required before product exposure.
+
+Main's `createClaudeNativeHostSession` owns the actual PTY, process registration
+and an authenticated HTTP projection of the exact task-selected MCP servers.
+It reuses the existing HTTP bridge, preserves each server name and live task
+context, creates fresh server instances on reconnect, and revokes authority
+before waiting for process exit. Launch files and managed Skill projections
+remain until confirmed exit; a view detach does not dispose them. GUI images
+use the same prepared bytes and account-bound media importer as native input,
+not a parallel attachment store. This path still requires product image acceptance.
+
+The isolated actual-native probe `production-main-host4.json` passes 29 checks
+through the real Agent start method, Main factory, Core Session and PTY. It
+observes five turns, GUI streaming/queueing, original TUI input, preserved draft,
+Stop followed by another input, one process across detach/attach, and confirmed
+exit/temporary-profile cleanup. Five request system hashes are identical. The
+provider and task/history bindings are fixtures; built-in tools are disabled
+in this probe. It is not DB/MainIPC/UI, production tool policy, cache-hit-rate,
+phone or SSH acceptance. Separate real HTTP MCP tests cover exact names,
+context, reconnect and cross-task token/route refusal.
+
+The first host probe failed before launch because its copied fixture used a
+relative resource path. The next two reached a native bypass-warning dialog:
+the SDK's allow-future-bypass flag caused an interactive warning even in Ask.
+Native launch now emits that flag only when bypass is actually selected. No
+warning was automatically accepted. All raw failures remain in the external
+`ci-logs/claude-permission-lifecycle/` directory; the fourth probe succeeded.
+
 ## Upstream reference
 
 VelaTerm reference: `vlinx-io/VelaTerm` at

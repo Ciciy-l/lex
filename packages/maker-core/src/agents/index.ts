@@ -4,6 +4,12 @@ export type * from './native-input.js';
 // toSdkModelString: host 侧标题 oneShot 需要把 catalog model id 还原成 Anthropic wire 串
 // (claude-haiku-4-5 → claude-haiku-4-5-20251001),复用 SSoT 映射,避免在 host 硬编码 dated id。
 export { ClaudeCodeAgent, toSdkModelString, setClaudeSupportedModelsListener } from './claude-code/index.js';
+export { createClaudeNativeSession } from './claude-code/native-session.js';
+export type { ClaudeNativeSessionOptions, ClaudeNativeSessionHandle } from './claude-code/native-session.js';
+export { prepareClaudeNativeLaunch } from './claude-code/native-launch.js';
+export type { ClaudeNativeMcpProjection } from './claude-code/native-launch.js';
+export type { ClaudeLocalSessionLaunch, ClaudeLocalNativeSessionOptions } from './claude-code/local-session-launch.js';
+export type { ClaudeLocalMcpSources } from './claude-code/local-mcp-servers.js';
 export type {
   ClaudeSubagentModelAccessResult,
   ClaudeSubagentModelAccessStatus,

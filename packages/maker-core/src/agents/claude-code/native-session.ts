@@ -4,7 +4,7 @@ import type { UserMessage } from '../../types/common.js';
 import { NotSupportedError } from '../../types/capabilities.js';
 import { TurnDispatchRejectedError, TurnDispatchUnconfirmedError, type AgentSessionHandle, type SendOptions } from '../base-agent.js';
 import type { AgentNativeInputResolver, AgentNativeMediaResolver } from '../native-input.js';
-import { createAsyncQueue } from '../shared/async-queue.js';
+import { createAsyncQueue, type AsyncQueue } from '../shared/async-queue.js';
 import { createClaudeNativeRuntime, type ClaudeNativeRuntime, type ClaudeNativeRuntimeOptions } from './native-runtime.js';
 import type { ClaudeNativeSubmission } from './native-messages.js';
 
@@ -13,16 +13,20 @@ export interface ClaudeNativeSessionPolicy {
   setInteractionResolver(resolver: InteractionResolver): void;
   validateSendOptions?(options: SendOptions): void;
   beforeInput(message: UserMessage, options: SendOptions): void | Promise<void>;
+  onEvent?(event: AgentEvent): void;
   close(): void | Promise<void>;
 }
 
 export interface ClaudeNativeSessionOptions {
   model: string;
+  disabledSkillPaths?: AgentSessionHandle['disabledSkillPaths'];
   runtime: Omit<ClaudeNativeRuntimeOptions, 'onNativeInput' | 'importNativeMedia' | 'onInputPreparation' | 'onTurnAdmission' | 'onAgentEvent' | 'onUserMessage' | 'onExit' | 'onFault'>;
   policy: ClaudeNativeSessionPolicy;
   /** Uses the existing local/SSH image and mention preparation for this route. */
-  prepareInput(message: UserMessage, signal?: AbortSignal): Promise<Pick<ClaudeNativeSubmission, 'text' | 'imagePaths'>>;
+  prepareInput(message: UserMessage, signal?: AbortSignal, importMedia?: AgentNativeMediaResolver): Promise<Pick<ClaudeNativeSubmission, 'text' | 'imagePaths'>>;
   onFault(reason: string): void;
+  /** Shared with the existing policy, so dismissals/notices reach the same consumer. */
+  events?: AsyncQueue<AgentEvent>;
 }
 
 interface InputEntry {
@@ -44,7 +48,7 @@ export interface ClaudeNativeSessionHandle extends AgentSessionHandle {
  * Engine selection stays gated until launch, controls and native parity pass.
  */
 export async function createClaudeNativeSession(options: ClaudeNativeSessionOptions): Promise<ClaudeNativeSessionHandle> {
-  const events = createAsyncQueue<AgentEvent>();
+  const events = options.events ?? createAsyncQueue<AgentEvent>();
   const guiInputs = new Map<string, InputEntry>();
   const nativeInputs = new Map<string, InputEntry>();
   let resolver: AgentNativeInputResolver | undefined, importMedia: AgentNativeMediaResolver | undefined;
@@ -158,6 +162,7 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
       },
       onAgentEvent(event) {
         if (!live()) return;
+        options.policy.onEvent?.(event);
         if (event.type === 'status') {
           const value = event.data as Partial<UsageSnapshot>;
           if (typeof value.tokenUsage === 'number') usage = { ...usage, ...value };
@@ -184,6 +189,7 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
 
   return {
     nativeRuntime: native,
+    disabledSkillPaths: options.disabledSkillPaths,
     id: options.runtime.nativeSessionId, requestSessionId: options.runtime.nativeSessionId, agentKind: 'claude-code', model: options.model,
     presentation: native.presentation,
     setNativeInputResolver(next, media) { requireLive(); resolver = next; importMedia = media; },
@@ -197,7 +203,7 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
       const entry = makeEntry(id, sendOptions.signal); guiInputs.set(id, entry);
       let dispatched = false;
       try {
-        const input = await options.prepareInput(owned, sendOptions.signal);
+        const input = await options.prepareInput(owned, sendOptions.signal, importMedia);
         requireLive();
         if (entry.cancelled) throw new TurnDispatchRejectedError('Claude input cancelled before dispatch');
         await options.policy.beforeInput(owned, sendOptions);
