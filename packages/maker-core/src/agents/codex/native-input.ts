@@ -87,8 +87,12 @@ export class CodexNativeInputAdmission {
                 throw new TurnDispatchRejectedError('Native Codex input dispatch is no longer current');
               }
               forwarded = true;
-              response = await request.dispatch({ ...prepared, clientUserMessageId: messageId });
-              return response;
+              const receipt = await request.dispatch({ ...prepared, clientUserMessageId: messageId });
+              if (!receipt || !receipt.turn || typeof receipt.turn.id !== 'string' || !receipt.turn.id.trim()) {
+                throw new TurnDispatchUnconfirmedError('Native Codex turn receipt identity unconfirmed');
+              }
+              response = receipt;
+              return receipt;
             } },
           });
         },
@@ -99,6 +103,9 @@ export class CodexNativeInputAdmission {
       }
       return response;
     } catch (error) {
+      // The native server has accepted this exact request. A later product
+      // bookkeeping failure cannot invite the original frontend to resubmit it.
+      if (response) return response;
       // A lost gateway response cannot become a normal retryable queue entry.
       if (forwarded && !response && !(error instanceof TurnDispatchRejectedError)) {
         throw new TurnDispatchUnconfirmedError('Native Codex acceptance is unconfirmed');

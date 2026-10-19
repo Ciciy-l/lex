@@ -103,4 +103,27 @@ describe('Codex native input reservation', () => {
     await expect(f.admission.accept(f.request)).rejects.toBeInstanceOf(TurnDispatchUnconfirmedError);
     expect(f.dispatch).toHaveBeenCalledOnce();
   });
+  it.each(['persistence', 'cancel', 'close', 'replace'] as const)(
+    'retains confirmed native acceptance when %s fails after dispatch', async boundary => {
+      const f = fixture();
+      f.owner.mockImplementation(async input => {
+        await input.accept(input.message, {});
+        if (boundary === 'cancel') f.lifetime.abort();
+        if (boundary === 'close') f.admission.close();
+        if (boundary === 'replace') f.replace();
+        throw new Error('product bookkeeping failed after native acceptance');
+      });
+      expect(await f.admission.accept(f.request)).toEqual({ turn: { id: 'turn' } });
+      expect(f.dispatch).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([undefined, null, {}, { turn: null }, { turn: {} }, { turn: { id: '' } }, { turn: { id: 42 } }])(
+    'does not mistake a malformed response %j for accepted input', async receipt => {
+      const f = fixture();
+      f.dispatch.mockResolvedValue(receipt as unknown as Awaited<ReturnType<typeof f.dispatch>>);
+      await expect(f.admission.accept(f.request)).rejects.toBeInstanceOf(TurnDispatchUnconfirmedError);
+      expect(f.dispatch).toHaveBeenCalledOnce();
+    },
+  );
 });
