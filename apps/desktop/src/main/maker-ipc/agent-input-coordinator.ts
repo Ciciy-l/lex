@@ -1131,7 +1131,12 @@ export class AgentInputCoordinator {
     }
     // Check the ordinary queue gates without inserting or persisting this native
     // row. An already-held first model step must never wait behind a GUI send.
-    const gate = this.explainDrainBlockGate(sessionId, { ...state, pendingQueue: [item, ...state.pendingQueue] });
+    // A new human message abandons the previous failed turn just as a GUI
+    // enqueue does. Preview that transition before mutating recovery so a
+    // paused, stale, or otherwise refused native input cannot consume it.
+    const gate = this.explainDrainBlockGate(sessionId, { ...state,
+      recovery: state.recovery?.kind === 'active-turn' ? null : state.recovery,
+      pendingQueue: [item, ...state.pendingQueue] });
     if (gate || state.pendingQueue.length > 0) {
       // Keep the wire refusal generic; host diagnostics distinguish an occupied
       // input boundary from a stale owner without logging composer contents.
@@ -1142,6 +1147,12 @@ export class AgentInputCoordinator {
       });
       throwIpcError('PRECONDITION_FAILED', 'Native input cannot enter the current task boundary');
     }
+    this.cancelPreparedAutoResume(sessionId, state);
+    this.deps.onUserEnqueue?.(sessionId);
+    state.autoResumePending = null;
+    state.autoResumeAttemptToken = null;
+    this.abandonActiveTurnRecoveryForUserAction(state);
+    this.clearErrorUnlessQueueHeadBlocked(state);
     const native = { ...input, accepted: false };
     await this.dispatchInput(sessionId, item, 'native-input', native);
     if (!native.accepted) throwIpcError('PRECONDITION_FAILED', 'Native input was not admitted');

@@ -1234,6 +1234,49 @@ describe('held native input adoption', () => {
     h.coordinator.onSessionClosed(sid);
   });
 
+  it('lets a new native message abandon a failed turn without retrying the old input', async () => {
+    const { h, input, dispatch } = fixture();
+    await h.coordinator.acceptNativeInput(sid, makeItem('failed-native', 'first'), input);
+    h.setRunning(false);
+    h.coordinator.onTurnEvent(sid, 'error', 'stream disconnected');
+    expect(h.coordinator.getProjection(sid).recovery?.kind).toBe('active-turn');
+    h.onUserEnqueue.mockClear();
+
+    await h.coordinator.acceptNativeInput(sid, makeItem('new-native', 'different input'),
+      { ...input, messageId: 'new-native-row' });
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(dispatch.mock.calls[1]?.[1]).toMatchObject({ content: 'different input' });
+    expect(h.onUserEnqueue).toHaveBeenCalledExactlyOnceWith(sid);
+    expect(h.coordinator.getProjection(sid)).toMatchObject({ recovery: null, error: null, pendingQueue: [] });
+    await h.coordinator.retryLastError(sid);
+    await flush();
+    expect(h.sendToAgent).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    h.coordinator.onSessionClosed(sid);
+  });
+
+  it('preserves failed-turn recovery when a stale, cancelled, or locked native input is refused', async () => {
+    for (const refusal of ['stale', 'cancelled', 'locked'] as const) {
+      const { h, input, dispatch } = fixture();
+      await h.coordinator.acceptNativeInput(sid, makeItem('failed-native', 'first'), input);
+      h.setRunning(false);
+      h.coordinator.onTurnEvent(sid, 'error', 'stream disconnected');
+      const recovery = h.coordinator.getProjection(sid).recovery;
+      expect(recovery?.kind).toBe('active-turn');
+      h.onUserEnqueue.mockClear();
+      const controller = new AbortController();
+      if (refusal === 'cancelled') controller.abort();
+      if (refusal === 'locked') h.coordinator.setInteractionLock(sid, 'confirmation', true);
+      await expect(h.coordinator.acceptNativeInput(sid, makeItem('refused-native', 'second'),
+        { ...input, session: refusal === 'stale' ? {} : input.session,
+          signal: controller.signal, messageId: 'refused-native-row' })).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+      expect(h.coordinator.getProjection(sid).recovery).toEqual(recovery);
+      expect(h.onUserEnqueue).not.toHaveBeenCalled();
+      expect(dispatch).toHaveBeenCalledOnce();
+      h.coordinator.onSessionClosed(sid);
+    }
+  });
+
   it('does not let native input overtake an older queued GUI input', async () => {
     const { h, input, dispatch } = fixture();
     h.setRunning(true);
