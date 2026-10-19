@@ -892,7 +892,14 @@ interface SteerObservation {
   policyBlocked: boolean;
 }
 
+interface NativeSteerContinuation {
+  session: object; turnGeneration: number; messageId: string; signal: AbortSignal;
+  dispatch: AgentInputCoordinatorDeps['steerToAgent'];
+  buildMessage(head: AgentInputQueuedMessage): AgentInputMakerMessage;
+}
+
 interface SteerOptions {
+  native?: NativeSteerContinuation;
   removeFromQueue?: boolean;
   touchUserSend?: boolean;
   /** 控制面插话不允许在 turn 结束竞态下退化成下一轮普通输入。 */
@@ -2036,10 +2043,26 @@ export class AgentInputCoordinator {
    * just before provider dispatch. A failed ACK can leave the item in a paused queue:
    * that is host ownership, not permission to send a second copy.
    */
-  async steerControlInput(
+  async acceptNativeSteer(sessionId: string, item: AgentInputQueuedMessage, native: NativeSteerContinuation): Promise<void> {
+    if (this.nativeAdmissions.has(native) || native.signal.aborted || !native.messageId
+      || native.messageId !== item.clientId) throwIpcError('PRECONDITION_FAILED', 'Native steering identity unavailable');
+    this.nativeAdmissions.add(native);
+    const outcome = await this.steerOwnedInput(sessionId, { item }, native, native);
+    if (outcome === 'steered') return;
+    if (outcome === 'queued') throw new Error('Native steering delivery uncertain; retained in the paused queue');
+    throwIpcError('PRECONDITION_FAILED', 'Native steering was not accepted');
+  }
+
+  async steerControlInput(sessionId: string, target: { item: AgentInputQueuedMessage } | { queuedClientId: string },
+    expectedTurn: { session: object; turnGeneration: number }): Promise<ControlSteerOutcome> {
+    return this.steerOwnedInput(sessionId, target, expectedTurn);
+  }
+
+  private async steerOwnedInput(
     sessionId: string,
     target: { item: AgentInputQueuedMessage } | { queuedClientId: string },
     expectedTurn: { session: object; turnGeneration: number },
+    native?: NativeSteerContinuation,
   ): Promise<ControlSteerOutcome> {
     await this.ensureQueueRestored(sessionId).catch(() => undefined);
     const state = this.getState(sessionId);
@@ -2047,7 +2070,7 @@ export class AgentInputCoordinator {
     const item = fromQueue
       ? state.pendingQueue.find((queued) => queued.clientId === target.queuedClientId)
       : target.item;
-    if (!item) return 'rejected';
+    if (!item || native?.signal.aborted) return 'rejected';
     if (
       this.deps.getTurnSessionIdentity?.(sessionId) !== expectedTurn.session ||
       this.deps.getTurnGeneration?.(sessionId) !== expectedTurn.turnGeneration ||
@@ -2060,6 +2083,7 @@ export class AgentInputCoordinator {
       controlInput: { fromQueue },
       expectedTurnSession: expectedTurn.session,
       expectedTurnGeneration: expectedTurn.turnGeneration,
+      ...(native ? { native } : {}),
     });
     if (observed.providerAccepted) return 'steered';
     // Input screening discarded the content: a definitive refusal, never a retry candidate.
@@ -2135,7 +2159,7 @@ export class AgentInputCoordinator {
     opts: SteerOptions | undefined,
     observation: SteerObservation,
   ): Promise<boolean> {
-    const matchesExpectedTurn = () =>
+    const matchesExpectedTurn = () => !opts?.native?.signal.aborted &&
       (opts?.expectedTurnSession === undefined ||
         this.deps.getTurnSessionIdentity?.(sessionId) === opts.expectedTurnSession) &&
       (opts?.expectedTurnGeneration === undefined ||
@@ -2232,7 +2256,7 @@ export class AgentInputCoordinator {
     // 插话统一为同轮注入(2026-07-12 产品决策):Claude 与 Codex 都走
     // steerToAgent 把消息注入正在跑的 turn,不打断当前工作。需要打断的用户
     // 自己点 Stop。(历史:PR #394 曾把 Claude 改成 abort+新 turn,现回退。)
-    const messageUuid = crypto.randomUUID();
+    const messageUuid = opts?.native?.messageId ?? crypto.randomUUID();
     const createdAt = new Date().toISOString();
     const steerGeneration = state.generation;
     const steerRequestToken = this.beginSteerRequest(sessionId, item.clientId);
@@ -2367,7 +2391,8 @@ export class AgentInputCoordinator {
         item.persistedContent,
         referenceContexts,
       );
-      await this.deps.steerToAgent(sessionId, buildMakerUserMessage(item, referenceContexts), {
+      await (opts?.native?.dispatch ?? this.deps.steerToAgent)(sessionId,
+        opts?.native ? opts.native.buildMessage(item) : buildMakerUserMessage(item, referenceContexts), {
         ...(item.sharedTaskAuthor ? { sharedTaskAuthor: item.sharedTaskAuthor } : {}),
         [AUTO_REVIEW_SOURCE_CONTENT]: queuedAutoReviewText(item),
         ...(item.autoReviewUserText && typeof item.autoReviewUserText === 'object' && item.autoReviewUserText.kind === 'delegated-continuation'
@@ -2376,7 +2401,7 @@ export class AgentInputCoordinator {
           ? { [AUTO_REVIEW_USER_INTENT]: queuedAutoReviewText(item) } : {}),
         messageUuid,
         userName: item.userName,
-        signal: AbortSignal.any([inputBoundarySignal, steerAbort.signal]),
+        signal: AbortSignal.any([inputBoundarySignal, steerAbort.signal, ...(opts?.native ? [opts.native.signal] : [])]),
         expectedClearBoundaryMs: steerClearBoundaryMs,
         expectedInputGeneration: steerGeneration,
         ...(opts?.expectedTurnSession !== undefined

@@ -13300,3 +13300,46 @@ describe('AgentInputCoordinator 中断自动续跑', () => {
     expect(h.onResumableTurnError, '落库失败就没有可续跑的目标,不该消耗额度').not.toHaveBeenCalled();
   });
 });
+
+describe('original native steering through the product coordinator', () => {
+  const sid = 'native-steer';
+  function native(h: ReturnType<typeof createHarness>, dispatch = vi.fn<AgentInputCoordinatorDeps['steerToAgent']>(async () => {})) {
+    const controller = new AbortController();
+    return { controller, input: { session: h.getTurnSessionIdentity(), turnGeneration: 0, messageId: 'native-row',
+      signal: controller.signal, dispatch, buildMessage: (item: AgentInputQueuedMessage) => ({ type: 'user' as const, content: item.text }) } };
+  }
+  it('screens and persists one native message with its actual identity without sending a second prompt', async () => {
+    const h = createHarness(); h.setRunning(true);
+    h.setScreenUserMessage(async () => ({ action: 'rewrite', ghostId: 'guard', ghostName: 'guard', text: 'prepared' }));
+    const n = native(h);
+    await h.coordinator.acceptNativeSteer(sid, makeItem('native-row', 'original'), n.input);
+    expect(n.input.dispatch).toHaveBeenCalledExactlyOnceWith(sid, { type: 'user', content: 'prepared' },
+      expect.objectContaining({ messageUuid: 'native-row', expectedTurnSession: n.input.session, expectedTurnGeneration: 0 }));
+    expect(h.sendToAgent).not.toHaveBeenCalled(); expect(h.steerToAgent).not.toHaveBeenCalled();
+    expect(h.onSteerAccepted).toHaveBeenCalledOnce();
+    expect(mocks.createMessage).toHaveBeenCalledOnce();
+    await expect(h.coordinator.acceptNativeSteer(sid, makeItem('native-row', 'original'), n.input)).rejects.toThrow('identity');
+  });
+  it.each(['pause','turn','owner','abort','stop','block'] as const)('rejects %s during preparation without a fallback turn', async kind => {
+    const h = createHarness(); h.setRunning(true); const n = native(h);
+    h.setScreenUserMessage(async () => {
+      if (kind === 'pause') h.coordinator.setExecutionPaused(sid, true);
+      if (kind === 'turn') h.setTurnGeneration(1);
+      if (kind === 'owner') h.setTurnSessionIdentity({});
+      if (kind === 'abort') n.controller.abort();
+      if (kind === 'stop') h.setRunning(false);
+      return kind === 'block' ? { action: 'block', ghostId: 'guard', ghostName: 'guard', reason: 'blocked' } : { action: 'allow' };
+    });
+    await expect(h.coordinator.acceptNativeSteer(sid, makeItem('native-row','native'),n.input)).rejects.toThrow('not accepted');
+    expect(n.input.dispatch).not.toHaveBeenCalled(); expect(h.sendToAgent).not.toHaveBeenCalled();
+  });
+  it('retains uncertain delivery once in a paused queue and never automatically replays', async () => {
+    const h=createHarness(); h.setAgentKind('codex'); h.setRunning(true);
+    const n=native(h,vi.fn(async () => { h.setRunning(false); throw new Error('Native steering delivery uncertain'); }));
+    await expect(h.coordinator.acceptNativeSteer(sid,makeItem('native-row','native'),n.input)).rejects.toThrow('uncertain');
+    expect(h.coordinator.getQueueControlSnapshot(sid).pendingQueue.map(item=>item.clientId)).toEqual(['native-row']);
+    expect(h.coordinator.isQueuePaused(sid)).toBe(true);
+    h.coordinator.onTurnEvent(sid,'done'); await flush(); expect(h.sendToAgent).not.toHaveBeenCalled();
+    expect(n.input.dispatch).toHaveBeenCalledOnce();
+  });
+});

@@ -244,3 +244,29 @@ describe('native menu ownership through Session', () => {
     gate.resolve(); await pending;
   });
 });
+
+describe('native steering through the same Core Session',()=>{
+  it('preserves the active turn and original review content while applying vision preparation',async()=>{
+    const f=fixture({capabilities:{sameTurnSteer:{supported:true}} as never,visionBridge:async()=>({applied:true,message:{type:'user',content:'vision'}})});
+    f.handle.getCurrentTurnId=()=> 'turn'; await f.session.send('first');
+    const generation=f.session.getTurnGeneration();
+    const message={type:'user' as const,content:[{type:'image' as const,path:'/fixture'}]};
+    const input={...f.input,nativeTurnId:'turn',message};
+    await f.session.acceptNativeSteer(input);
+    expect(f.accept).toHaveBeenCalledWith({type:'user',content:'vision'},expect.objectContaining({[AUTO_REVIEW_SOURCE_CONTENT]:message.content}));
+    expect(f.session.getTurnGeneration()).toBe(generation); expect(f.handle.steer).not.toHaveBeenCalled();
+    await expect(f.session.acceptNativeSteer(input)).rejects.toThrow('already admitted');
+  });
+  it('does not dispatch after the native turn changes during vision conversion',async()=>{
+    let turn='turn', calls=0;const gate=deferred(),entered=deferred();
+    const f=fixture({capabilities:{sameTurnSteer:{supported:true}} as never,visionBridge:async message=>{
+      if(++calls>1){entered.resolve();await gate.promise;}return {applied:false,message};
+    }});
+    f.handle.getCurrentTurnId=()=>turn;await f.session.send('first');
+    const accept=vi.fn(async()=>{});
+    const input={...f.input,nativeTurnId:'turn',accept};
+    const pending=expect(f.session.acceptNativeSteer(input)).rejects.toThrow('another turn');
+    await entered.promise;turn='new';gate.resolve();await pending;
+    expect(accept).not.toHaveBeenCalled();
+  });
+});

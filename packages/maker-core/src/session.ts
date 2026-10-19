@@ -707,6 +707,7 @@ export class Session {
     let attempted = false, accepted = false;
     await binding.listener({
       nativeSessionId, nativeMessageId: input.nativeMessageId,
+      ...(input.nativeTurnId ? { nativeTurnId: input.nativeTurnId } : {}),
       message: structuredClone(input.message),
       ...(input.source ? { source: structuredClone(input.source) } : {}), signal,
       accept: async (message, options) => {
@@ -1285,6 +1286,27 @@ export class Session {
   }
 
   async steer(message: UserMessage | string, opts?: SendOptions): Promise<void> {
+    return this.dispatchSteer(message, opts);
+  }
+
+  /** Same policy and vision preparation as GUI steering, with one native continuation. */
+  async acceptNativeSteer(input: SessionNativeInput, opts?: SendOptions): Promise<void> {
+    const check = () => {
+      if (!input.nativeSessionId || this.sdkSessionId !== input.nativeSessionId
+        || !input.nativeTurnId || this.getCurrentTurnId() !== input.nativeTurnId || opts?.signal?.aborted) {
+        throw new TurnDispatchRejectedError('Native steering belongs to another turn');
+      }
+    };
+    check();
+    if (this.nativeInputs.has(input)) throw new TurnDispatchRejectedError('Native input was already admitted');
+    this.nativeInputs.add(input);
+    return this.dispatchSteer(input.message, opts, async (message, options) => {
+      check(); await input.accept(message, options);
+    });
+  }
+
+  private async dispatchSteer(message: UserMessage | string, opts?: SendOptions,
+    dispatch?: (message: UserMessage, options: SendOptions) => Promise<void>): Promise<void> {
     let msg: UserMessage = typeof message === 'string'
       ? { type: 'user', content: message }
       : message;
@@ -1312,7 +1334,7 @@ export class Session {
       throw new Error(`Session ${this.id} has no active turn to steer`);
     }
     this.startEventLoopIfNeeded();
-    await this.handle.steer(msg, { ...opts, [AUTO_REVIEW_SOURCE_CONTENT]: autoReviewSourceContent });
+    await (dispatch ?? this.handle.steer.bind(this.handle))(msg, { ...opts, [AUTO_REVIEW_SOURCE_CONTENT]: autoReviewSourceContent });
   }
 
   async abort(options?: { expectedTurnId: string; signal: AbortSignal }): Promise<void> {

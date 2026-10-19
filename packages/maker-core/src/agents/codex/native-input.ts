@@ -1,9 +1,10 @@
 import type { CodexNativeApprovalEvent, CodexNativeApprovalFrontend } from './native-approvals.js';
-import { isDeepStrictEqual } from 'node:util';
+import { prepareCodexNativeInput } from './native-input-content.js';
+import type { CodexNativeSteerRequest } from './native-steer.js';
 import type { UserContentBlock, UserMessage } from '../../types/common.js';
 import { TurnDispatchRejectedError, TurnDispatchUnconfirmedError, type SendOptions, type AgentSessionHandle } from '../base-agent.js';
 import type { AgentNativeInputResolver, AgentNativeMediaResolver } from '../native-input.js';
-import type { TurnStartParams, TurnStartResponse, UserInput } from './app-server/protocol.js';
+import type { TurnStartParams, TurnStartResponse, TurnSteerResponse, UserInput } from './app-server/protocol.js';
 
 /** A host-only continuation. It cannot be constructed by a Renderer or vendor option. */
 export const CODEX_NATIVE_TURN = Symbol('codexNativeTurn');
@@ -31,6 +32,7 @@ export interface CodexNativeRuntimeSnapshot {
 export interface CodexNativeSessionHandle extends AgentSessionHandle {
   readNativeRuntimeSnapshot(): Readonly<CodexNativeRuntimeSnapshot>;
   attachNativeApprovalFrontend(receive: (event: CodexNativeApprovalEvent) => void): CodexNativeApprovalFrontend;
+  acceptNativeSteer(request: CodexNativeSteerRequest): Promise<TurnSteerResponse>;
   acceptNativeTurn(request: CodexNativeTurnRequest): Promise<TurnStartResponse>;
   applyNativeRuntimeSettings(params: unknown, signal: AbortSignal): Promise<Record<string, never>>;
   interruptNativeTurn(params: unknown, signal: AbortSignal): Promise<Record<string, never>>;
@@ -71,31 +73,7 @@ export class CodexNativeInputAdmission {
     this.pending = true;
     let accepted = false, forwarded = false, response: TurnStartResponse | undefined;
     try {
-      const content: UserContentBlock[] = [];
-      const originals: Array<{ host: UserContentBlock; native: UserInput }> = [];
-      for (const [index, block] of params.input.entries()) {
-        check();
-        let host: UserContentBlock;
-        if (block.type === 'text' && typeof block.text === 'string') host = { type: 'text', text: block.text };
-        else if ((block.type === 'skill' || block.type === 'mention') && typeof block.name === 'string' && typeof block.path === 'string') {
-          host = { type: 'mention', name: block.name, path: block.path };
-        } else if ((block.type === 'image' || block.type === 'localImage') && importer) {
-          host = await importer({ sessionId: threadId, messageId, index, block: structuredClone(block), signal });
-          check();
-          if (host.type !== 'image') throw new TurnDispatchRejectedError('Native Codex image identity changed');
-        } else throw new TurnDispatchRejectedError('Native Codex input requires a supported host importer');
-        content.push(host); originals.push({ host: structuredClone(host), native: block });
-      }
-      const prepare = (message: UserMessage): UserInput[] => {
-        const remaining = [...originals];
-        const blocks = typeof message.content === 'string' ? [{ type: 'text' as const, text: message.content }] : message.content;
-        return blocks.map(block => {
-          const index = remaining.findIndex(original => isDeepStrictEqual(original.host, block));
-          if (index >= 0) return structuredClone(remaining.splice(index, 1)[0]!.native);
-          if (block.type === 'text') return { type: 'text', text: block.text };
-          throw new TurnDispatchRejectedError('Native Codex input cannot introduce an unprepared attachment');
-        });
-      };
+      const { content, prepare } = await prepareCodexNativeInput(params.input, threadId, messageId, signal, check, importer);
       await owner({ nativeSessionId: threadId, nativeMessageId: messageId, message: { type: 'user', content }, signal,
         accept: async (message, options) => {
           check();

@@ -1,3 +1,4 @@
+import type { AgentNativeInputRequest } from '@cindy/maker-core';
 import { createCodexNativeMediaImporter } from '../maker-host/codexNativeMedia.js';
 import { bindNativeSessionRuntime, type NativeRuntimeBindingDeps } from './nativeRuntimeBinding.js';
 import { bindNativeSessionStop, type NativeStopBindingDeps } from './nativeStopBinding.js';
@@ -13115,6 +13116,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     sessionId: unknown,
     message: unknown,
     sendOpts?: unknown,
+    native?: { session: Session; input: AgentNativeInputRequest },
   ): Promise<void> => {
     if (typeof sessionId !== 'string') throwIpcError('INVALID_PARAMS', 'sessionId required');
     await assertReviewExternalInputAllowed(sessionId);
@@ -13139,6 +13141,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (!current) {
         log.warn('steer: session not running', { sessionId });
         throwIpcError('NO_ACTIVE_TURN', `Session ${sessionId} is not running`);
+      }
+      if (native && (current !== native.session || native.input.signal.aborted
+        || current.sdkSessionId !== native.input.nativeSessionId || current.getCurrentTurnId() !== native.input.nativeTurnId)) {
+        throw new Error('[STALE_TURN] Native steering owner changed');
       }
       if (
         (so.expectedTurnSession !== undefined && current !== so.expectedTurnSession) ||
@@ -13168,7 +13174,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
 
     let normalized: IpcUserMessage;
     try {
-      normalized = await prepareUserMessageForAgent(sessionId, message, 'steer');
+      // Native images were already imported by the task-owned media resolver.
+      // Re-normalizing their paths drops the managed identity needed to preserve
+      // original native bytes through the same vision/policy preparation below.
+      normalized = native ? native.input.message : await prepareUserMessageForAgent(sessionId, message, 'steer');
     } catch (err) {
       const messageText = err instanceof Error ? err.message : String(err);
       log.warn('steer: normalize message failed', {
@@ -13225,7 +13234,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       // 同轮插话也属于新输入。必须在 vendor await 前通知，旧轮可能先于 steer ack 结束。
       // 共用入口同时覆盖 INPUT_STEER、队列提升和旧 STEER IPC。
       publishUiSessionIntervention(sessionId);
-      await sess.steer(steerPayload as never, {
+      const dispatch = native
+        ? (payload: unknown, options: Parameters<Session['steer']>[1]) => sess.acceptNativeSteer({ ...native.input, message: payload as UserMessage }, options)
+        : sess.steer.bind(sess);
+      await dispatch(steerPayload as never, {
         logTitle: meta?.title,
         messageUuid: so.messageUuid,
         userName: so.userName,
@@ -14461,6 +14473,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   agentInputCoordinatorHolder = inputCoordinator;
   nativeInputBindingDepsHolder = {
     coordinator: inputCoordinator, accept: acceptNativeInput,
+    steer: (session, input, options) => steerToAgentAccepted(session.id, input.message, options, { session, input }),
     assertAllowed: async sessionId => {
       await assertReviewExternalInputAllowed(sessionId);
       await assertNotRetiredCompanionSession(sessionId);

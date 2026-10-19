@@ -1,3 +1,4 @@
+import { CodexNativeSteerAdmission, CODEX_NATIVE_STEER, type CodexNativeSteerOptions } from './native-steer.js';
 import { CodexSettingsQueue } from './native-settings-queue.js';
 import { CodexNativeRuntimeControls } from './native-runtime-controls.js';
 import { AgentNativeStopBinding } from '../native-stop.js';
@@ -6900,6 +6901,8 @@ assertRouteCurrent();
     );
     const pushThreadSettings = (patch: Omit<ThreadSettingsUpdateParams, 'threadId'>): Promise<void> =>
       settingsQueue.update(patch);
+    const nativeSteerAdmission = new CodexNativeSteerAdmission(() => threadId, () => currentTurnId,
+      (message, options) => handle.steer(message, options));
     const nativeStop = new AgentNativeStopBinding(() => threadId, () => !closed && !reviewMode && isCurrentHost(), () => currentTurnId);
     const nativeRuntimeControls = new CodexNativeRuntimeControls(
       () => closed || !isCurrentHost() ? '<closed>' : threadId,
@@ -13105,6 +13108,7 @@ assertRouteCurrent();
       const frontendClosed = nativePresentation?.close().then(
         () => ({ ok: true as const }), error => ({ ok: false as const, error }));
       nativeAdmission?.close();
+      nativeSteerAdmission.close();
       nativeRuntimeControls.close();
       nativeStop.retire();
       nativeApprovals.close();
@@ -13163,7 +13167,7 @@ assertRouteCurrent();
           effort: mutableEffort, fastMode: isFastServiceTier(mutableServiceTier) });
       },
       attachNativeApprovalFrontend(receive) { assertCurrentHost("native approval frontend"); return nativeApprovals.attach(receive); },
-      setNativeInputResolver(resolver, media) { nativeAdmission!.bind(resolver, media); },
+      setNativeInputResolver(resolver, media) { nativeAdmission!.bind(resolver, media); nativeSteerAdmission.bind(resolver, media); },
       setNativeRuntimeResolver(resolver) { nativeRuntimeControls.bind(resolver); },
       setNativeStopResolver(resolver) { nativeStop.bind(resolver); },
       async interruptNativeTurn(params, signal) {
@@ -13174,6 +13178,7 @@ assertRouteCurrent();
         await nativeStop.resolve({ nativeSessionId: threadId, nativeTurnId: p.turnId, signal });
         return {};
       },
+      acceptNativeSteer(request) { assertCurrentHost('native turn/steer'); return nativeSteerAdmission.accept(request); },
       applyNativeRuntimeSettings(params, signal) {
         assertCurrentHost('native runtime settings');
         if (reviewMode) throw new Error('Native controls cannot replace a host-owned review policy');
@@ -13982,7 +13987,8 @@ assertRouteCurrent();
         // Validate content before steering. `toTurnInput` can touch local
         // files/images; if that fails, leaving the current turn untouched is
         // better than sending a broken 插话.
-        const input = await toTurnInput(message.content);
+        const native = (sendOpts as CodexNativeSteerOptions | undefined)?.[CODEX_NATIVE_STEER];
+        const input = native ? native.input(message) : await toTurnInput(message.content);
         rejectIfCancelled(sendOpts, 'steer');
         if (closed) {
           throw new Error('No active Codex turn to steer: session is closed');
@@ -14029,11 +14035,12 @@ assertRouteCurrent();
         );
         let steerRpc: Promise<unknown>;
         try {
-          steerRpc = host.request(Method.TurnSteer, {
+          const params = {
             threadId,
             input,
             expectedTurnId: steeredTurnId,
-          });
+          };
+          steerRpc = native ? native.start(params) : host.request(Method.TurnSteer, params);
         } catch (error) {
           settleCapabilitySteer(false);
           throw error;

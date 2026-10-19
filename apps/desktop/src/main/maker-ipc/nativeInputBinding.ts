@@ -2,6 +2,7 @@ import type { AgentNativeInputRequest, AgentNativeMediaResolver, Session, UserMe
 import type { AgentInputCreateOpts, AgentInputQueuedMessage } from '../../shared/agentInputQueue.js';
 import type { AgentInputCoordinator } from './agent-input-coordinator.js';
 import type { createMakerSendTransaction } from './makerSendTransaction.js';
+import type { SendOptions } from '@cindy/maker-core';
 import { throwIpcError } from '../utils/ipcValidate.js';
 
 /** Product owner of the current Session's native composer; never an IPC surface. */
@@ -9,9 +10,10 @@ export interface NativeInputBindingDeps {
   isCurrent(session: Session): boolean;
   assertAllowed(sessionId: string): Promise<void>;
   readCreateOpts(session: Session): Promise<AgentInputCreateOpts>;
-  coordinator: Pick<AgentInputCoordinator, 'acceptNativeInput' | 'isExecutionPaused'>;
+  coordinator: Pick<AgentInputCoordinator, 'acceptNativeInput' | 'isExecutionPaused'> & Partial<Pick<AgentInputCoordinator, 'acceptNativeSteer'>>;
   accept: ReturnType<typeof createMakerSendTransaction>['acceptNativeInput'];
   importMedia?: AgentNativeMediaResolver;
+  steer?(session: Session, input: AgentNativeInputRequest, options: SendOptions): Promise<void>;
   /** Refuse contention rather than wait behind a GUI submission to the native process. */
   withIdleSendLock<T>(sessionId: string, run: () => Promise<T>): Promise<T>;
 }
@@ -74,6 +76,26 @@ export function bindNativeSessionInput(session: Session, deps: NativeInputBindin
     const createOpts = await deps.readCreateOpts(session);
     assertCurrent();
     const item = nativeInputQueueItem(input, createOpts);
+    if (input.nativeTurnId) {
+      const generation = session.getTurnGeneration();
+      const checkTurn = () => {
+        assertCurrent();
+        if (session.getCurrentTurnId() !== input.nativeTurnId || session.getTurnGeneration() !== generation) {
+          throwIpcError('PRECONDITION_FAILED', 'Native steering turn changed');
+        }
+      };
+      checkTurn();
+      if (!deps.steer || !deps.coordinator.acceptNativeSteer) throwIpcError('PRECONDITION_FAILED', 'Native steering owner unavailable');
+      await deps.coordinator.acceptNativeSteer(session.id, item, {
+        session, turnGeneration: generation, messageId: input.nativeMessageId, signal: input.signal,
+        buildMessage: head => preparedNativeMessage(input.message, head.text),
+        dispatch: async (_id, message, options) => {
+          checkTurn(); await deps.assertAllowed(session.id); checkTurn();
+          await deps.steer!(session, { ...input, message: message as UserMessage }, options);
+        },
+      });
+      return;
+    }
     await deps.coordinator.acceptNativeInput(session.id, item, {
       session, messageId: input.nativeMessageId, signal: input.signal,
       buildMessage: head => preparedNativeMessage(input.message, head.text),

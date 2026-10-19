@@ -95,3 +95,31 @@ describe('Desktop native input binding', () => {
     expect(() => nativeInputQueueItem(f.input, createOpts)).toThrow('not been imported');
   });
 });
+
+describe('native steering Main binding', () => {
+  it('shares current task policy and the existing steer path without holding the send lock', async () => {
+    const f=fixture();
+    Object.assign(f.session,{getTurnGeneration:()=>1,getCurrentTurnId:()=> 'turn'});
+    f.deps.steer=vi.fn(async()=>{});
+    f.deps.coordinator.acceptNativeSteer=vi.fn(async(id,item,native)=>{
+      await native.dispatch(id,native.buildMessage(item),{signal:native.signal,messageUuid:native.messageId});
+    });
+    await f.receive({...f.input,nativeTurnId:'turn'});
+    expect(f.deps.steer).toHaveBeenCalledExactlyOnceWith(f.session,expect.objectContaining({nativeTurnId:'turn',message:f.input.message}),
+      expect.objectContaining({messageUuid:'row'}));
+    expect(f.deps.withIdleSendLock).not.toHaveBeenCalled(); expect(f.deps.accept).not.toHaveBeenCalled();
+  });
+  it.each(['turn','owner','cancel'] as const)('fences %s changes while native steering policy awaits',async kind=>{
+    const f=fixture();let turn='turn';
+    Object.assign(f.session,{getTurnGeneration:()=>1,getCurrentTurnId:()=>turn});
+    f.deps.steer=vi.fn(async()=>{});
+    f.deps.coordinator.acceptNativeSteer=vi.fn(async(id,item,native)=>{
+      if(kind==='turn')turn='other';
+      if(kind==='owner')vi.mocked(f.deps.isCurrent).mockReturnValue(false);
+      if(kind==='cancel')f.controller.abort();
+      await native.dispatch(id,native.buildMessage(item),{});
+    });
+    await expect(f.receive({...f.input,nativeTurnId:'turn'})).rejects.toThrow();
+    expect(f.deps.steer).not.toHaveBeenCalled();
+  });
+});

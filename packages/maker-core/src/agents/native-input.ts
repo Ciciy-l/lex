@@ -5,6 +5,8 @@ import type { SendOptions } from './base-agent.js';
 /** Host-only continuation for an input held before the native provider starts. */
 export interface AgentNativeInput {
   readonly nativeSessionId: string;
+  /** Present only for input explicitly directed at the already-running turn. */
+  readonly nativeTurnId?: string;
   readonly message: UserMessage;
   /** Install the prepared bytes in this input; never submit a second prompt. */
   accept(message: UserMessage, opts: SendOptions): Promise<void>;

@@ -124,7 +124,10 @@ export function createTaskCodexNativePresentation(launch: CodexNativePresentatio
     control: (call, scope) => call.request.method === 'thread/settings/update' && scope === 'task'
       ? launch.handle.applyNativeRuntimeSettings(call.request.params, call.signal)
       : call.request.method === 'turn/interrupt' && scope === 'task'
-        ? launch.handle.interruptNativeTurn(call.request.params, call.signal) : options.control(call, scope),
+        ? launch.handle.interruptNativeTurn(call.request.params, call.signal)
+        : call.request.method === 'turn/steer' && scope === 'task'
+          ? launch.handle.acceptNativeSteer({ params: call.request.params as Parameters<CodexNativeSessionHandle['acceptNativeSteer']>[0]['params'], signal: call.signal,
+            dispatch: params => call.forward(params) as ReturnType<CodexNativeSessionHandle['acceptNativeSteer']> }) : options.control(call, scope),
   });
   return createCodexNativePresentation({ ...options, handle: launch.handle, endpoint: launch.service.endpoint,
     cwd: launch.cwd, signal: launch.signal, isCurrent: launch.isCurrent,
