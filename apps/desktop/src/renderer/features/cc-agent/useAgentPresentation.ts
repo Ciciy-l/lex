@@ -17,10 +17,12 @@ function persist(scope: string, mode: Mode) {
   } catch { /* View preference failure never changes the task. */ }
 }
 
-export function useAgentPresentation({ sessionId, deviceId, ownerId, enabled, runtimeKey, prepare }: {
+export function useAgentPresentation({ sessionId, deviceId, ownerId, enabled, runtimeKey, prepare, initialMode }: {
   sessionId?: string; deviceId?: string | null; ownerId?: string | null; enabled: boolean; runtimeKey: string;
   /** Explicit TUI selection uses the existing product creation funnel. */
   prepare?: () => Promise<void>;
+  /** One explicit routed selection; never inherited by a different owner. */
+  initialMode?: Mode;
 }) {
   const scope = JSON.stringify([ownerId ?? '', deviceId ?? 'local', sessionId ?? '']);
   const [chosen, setChosen] = useState<{ scope: string; mode: Mode }>(() => ({ scope, mode: preference(scope) }));
@@ -65,6 +67,13 @@ export function useAgentPresentation({ sessionId, deviceId, ownerId, enabled, ru
     }
     setChosen({ scope, mode }); persist(scope, mode);
   }, [scope, supported, prepare, sessionId, enabled, invoke]);
+  const routedSelection = useRef({ scope, mode: initialMode, applied: false });
+  useEffect(() => {
+    const selection = routedSelection.current;
+    if (selection.applied || selection.scope !== scope || !selection.mode || !enabled || !sessionId || !prepare) return;
+    selection.applied = true;
+    change(selection.mode);
+  }, [scope, enabled, sessionId, prepare, change]);
   const unavailableReason = enabled && availability.scope === scope ? availability.reason : undefined;
   return { supported, selectable: supported || (enabled && !!prepare), mode, change, invoke, generation, unavailableReason };
 }

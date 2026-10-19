@@ -790,7 +790,9 @@ export function CCAgentSessionView({
   const [forkStripEncryptedRunning, setForkStripEncryptedRunning] = useState(false);
   // 从 Automations 的 RunHistoryCard 跳过来的 navigate 会带 state.from='automations'，
   // 在聊天区左上角显示一个返回按钮；点别的 session 入口（不带 state）时按钮自然消失。
-  const navState = location.state as { from?: string } | null;
+  const navState = location.state as { from?: string;
+    nativePresentation?: { sessionId?: string; ownerId?: string | null } } | null;
+  const nativePresentationIntent = navState?.nativePresentation;
   const cameFromAutomations = navState?.from === 'automations';
   const handoffFrom = useMemo(() => parseHandoffState(location.state), [location.state]);
   const locationSearchJump = useMemo(() => parseSearchJumpState(location.state), [location.state]);
@@ -4405,6 +4407,9 @@ export function CCAgentSessionView({
   }, [sessionId, session, remoteDeviceId]);
   const presentation = useAgentPresentation({ sessionId, deviceId: remoteDeviceId, ownerId: dataOwnerId,
     enabled: !readOnly && !!session, runtimeKey: String(session?.sdkSessionId ?? '') + ':' + String(agentStatus.isRunning),
+    initialMode: nativePresentationIntent && !!sessionId &&
+      nativePresentationIntent.sessionId === sessionId && nativePresentationIntent.ownerId !== undefined &&
+      nativePresentationIntent.ownerId === dataOwnerId ? 'tui' : undefined,
     prepare: session?.agentKind === 'codex' && !session.remoteHostId && !session.orcaRole && !!session.workingDir
       ? prepareNativePresentation : undefined });
 

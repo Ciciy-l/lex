@@ -92,3 +92,32 @@ it('keeps GUI available when explicit task startup fails', async () => {
   await waitFor(() => expect(ui.result.current.unavailableReason).toBe('startup-failed'));
   expect(ui.result.current.mode).toBe('gui'); expect(prepare).toHaveBeenCalledOnce();
 });
+
+it('consumes a routed TUI selection once after task hydration, without a message or a second startup', async () => {
+  invoke.mockResolvedValue({ supported: false });
+  const prepare = vi.fn(async () => { invoke.mockResolvedValue(available('routed-task')); });
+  const ui = renderHook(useAgentPresentation, { initialProps: {
+    ...args, enabled: false, initialMode: 'tui' as const, prepare,
+  } });
+  expect(prepare).not.toHaveBeenCalled();
+  ui.rerender({ ...args, enabled: true, initialMode: 'tui', prepare });
+  await waitFor(() => expect(ui.result.current.mode).toBe('tui'));
+  act(() => ui.result.current.change('gui'));
+  ui.rerender({ ...args, enabled: true, runtimeKey: 'running', initialMode: 'tui', prepare });
+  await waitFor(() => expect(ui.result.current.generation).toBe('routed-task'));
+  expect(ui.result.current.mode).toBe('gui');
+  expect(prepare).toHaveBeenCalledOnce();
+  expect(invoke.mock.calls.every(([request]) => request.action === 'status')).toBe(true);
+});
+
+it('does not apply an old routed TUI selection to a different owner before hydration', async () => {
+  invoke.mockResolvedValue({ supported: false });
+  const prepare = vi.fn(async () => {});
+  const ui = renderHook(useAgentPresentation, { initialProps: {
+    ...args, enabled: false, initialMode: 'tui' as const, prepare,
+  } });
+  ui.rerender({ ...args, ownerId: 'other', enabled: true, initialMode: 'tui', prepare });
+  await act(async () => {});
+  expect(prepare).not.toHaveBeenCalled();
+  expect(ui.result.current.mode).toBe('gui');
+});
