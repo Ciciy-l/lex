@@ -8,16 +8,21 @@ export interface CodexNativeApprovalRequest {
 }
 export type CodexNativeApprovalDecision = CommandExecutionRequestApprovalResponse['decision'];
 export interface CodexNativeApprovalResponse { decision: CodexNativeApprovalDecision }
-export type CodexNativeApprovalEvent = { kind: 'request'; request: CodexNativeApprovalRequest }
+export interface CodexNativeInteractionRequest {
+  id: string | number;
+  method: 'item/permissions/requestApproval' | 'mcpServer/elicitation/request' | 'item/tool/requestUserInput';
+  params: Record<string, unknown>;
+}
+export type CodexNativePromptRequest = CodexNativeApprovalRequest | CodexNativeInteractionRequest;
+export type CodexNativeApprovalEvent = { kind: 'request'; request: CodexNativePromptRequest }
   | { kind: 'resolved'; id: string | number; threadId: string };
 export interface CodexNativeApprovalFrontend {
   answer(id: string | number, response: unknown): boolean;
   detach(): void;
 }
 interface Entry {
-  request: CodexNativeApprovalRequest;
-  decisions: unknown[];
-  accept: (response: CodexNativeApprovalResponse, behavior: 'allow' | 'deny', session: boolean) => void;
+  request: CodexNativePromptRequest;
+  prepare: (response: unknown) => (() => void) | undefined;
 }
 
 /**
@@ -32,13 +37,8 @@ export class CodexNativeApprovals {
 
   open(request: CodexNativeApprovalRequest, options: {
     allowPersistent: boolean;
-    accept: Entry['accept'];
+    accept: (response: CodexNativeApprovalResponse, behavior: 'allow' | 'deny', session: boolean) => void;
   }): { close(): void } {
-    if (this.closed || this.pending.has(request.id) || this.pending.size >= 128
-      || (typeof request.id !== 'string' && !Number.isSafeInteger(request.id))
-      || typeof request.params.threadId !== 'string' || !request.params.threadId) {
-      throw new Error('Native Codex approval owner unavailable');
-    }
     const copy = structuredClone(request);
     const advertised = Array.isArray(copy.params.availableDecisions) ? copy.params.availableDecisions
       : ['accept', 'acceptForSession', 'decline', 'cancel'];
@@ -52,7 +52,35 @@ export class CodexNativeApprovals {
         && amendmentBehavior(decision) !== null;
     });
     copy.params.availableDecisions = decisions;
-    const entry: Entry = { request: copy, decisions, accept: options.accept };
+    return this.register(copy, response => {
+      if (!record(response) || Object.keys(response).length !== 1 || !('decision' in response)
+        || !decisions.some(value => isDeepStrictEqual(value, response.decision))) return undefined;
+      const decision = structuredClone(response.decision) as CodexNativeApprovalDecision;
+      const behavior = typeof decision === 'string'
+        ? decision === 'decline' || decision === 'cancel' ? 'deny' : 'allow'
+        : amendmentBehavior(decision)!;
+      return () => options.accept({ decision }, behavior, decision === 'acceptForSession');
+    });
+  }
+
+  /** Only the existing request owner opens this after its policy checks. */
+  openInteraction<T>(request: CodexNativeInteractionRequest, options: {
+    normalize(response: unknown): T | undefined;
+    accept(response: T): void;
+  }): { close(): void } {
+    return this.register(structuredClone(request), response => {
+      const answer = options.normalize(response);
+      return answer === undefined ? undefined : () => options.accept(answer);
+    });
+  }
+
+  private register(copy: CodexNativePromptRequest, prepare: Entry['prepare']): { close(): void } {
+    if (this.closed || this.pending.has(copy.id) || this.pending.size >= 128
+      || (typeof copy.id !== 'string' && !Number.isSafeInteger(copy.id))
+      || typeof copy.params.threadId !== 'string' || !copy.params.threadId) {
+      throw new Error('Native Codex approval owner unavailable');
+    }
+    const entry: Entry = { request: copy, prepare };
     this.pending.set(copy.id, entry);
     // Do not call a frontend reentrantly before the owner has its close handle.
     queueMicrotask(() => { if (this.pending.get(copy.id) === entry) this.emit({ kind: 'request', request: copy }); });
@@ -76,17 +104,14 @@ export class CodexNativeApprovals {
     }
     return {
       answer: (id, response) => {
-        if (this.closed || !this.frontends.has(sink) || !record(response)
-          || Object.keys(response).length !== 1 || !('decision' in response)) return false;
+        if (this.closed || !this.frontends.has(sink)) return false;
         const entry = this.pending.get(id);
-        if (!entry || !entry.decisions.some(value => isDeepStrictEqual(value, response.decision))) return false;
+        if (!entry) return false;
+        const accept = entry.prepare(response);
+        if (!accept) return false;
         // Revoke first: observer/callback reentrancy cannot accept twice.
         this.pending.delete(id);
-        const decision = response.decision as CodexNativeApprovalDecision;
-        const behavior = typeof decision === 'string'
-          ? decision === 'decline' || decision === 'cancel' ? 'deny' : 'allow'
-          : amendmentBehavior(decision)!;
-        try { entry.accept({ decision: structuredClone(decision) }, behavior, decision === 'acceptForSession'); }
+        try { accept(); }
         finally { this.emit({ kind: 'resolved', id, threadId: entry.request.params.threadId as string }); }
         return true;
       },

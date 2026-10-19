@@ -911,6 +911,27 @@ history bindings are still fixtures. This is not ordinary boot selection,
 MainIPC/database/product UI, phone or SSH acceptance; production task-bound
 controls and remaining native interactions are still required.
 
+### Codex native MCP confirmation
+
+MCP tool confirmations now use the same policy-gated, single-answer broker as
+command/file approvals. Native choices only become available after the existing
+host policy and Auto review. GUI resolution, cancellation and native resolution
+retire the other view; native acceptance preserves the actual permission history.
+Session persistence must be advertised by the server and permitted by host policy.
+Arbitrary forms, URLs and metadata are not accepted as tool confirmations.
+
+Task configuration only registers its selected permission profile and keeps its
+selector in that same per-thread snapshot. This fixes native MCP/settings reload
+without writing a global default or granting additional filesystem access.
+
+The isolated real Codex 0.162.1 probe `codex-mcp-native8.json` verifies native form
+acceptance, GUI dismissal, exactly one allowed fixture tool call, three GUI/TUI/GUI
+turns and process/profile cleanup. The earlier probe did render the native form
+but sent unsupported `y`; it is retained as failed evidence. Configuration probes
+also verify MCP status with/without reference directories and after revocation.
+Routing/history remain fixture bindings: ordinary boot, product UI and remote
+acceptance are still open. This evidence does not establish full adapter parity.
+
 ## Upstream reference
 
 VelaTerm reference: `vlinx-io/VelaTerm` at

@@ -35224,3 +35224,124 @@ describe('native frontend approval ownership', () => {
     } finally { await f.close(); }
   });
 });
+
+describe('native MCP confirmation ownership', () => {
+  async function fixture(deps: Partial<AgentDeps> = {}, permissionMode: 'ask' | 'auto' = 'ask') {
+    const agent = new CodexAgent(createDeps({}, deps));
+    const host = installFakeHost(agent, method => method === Method.TurnStart ? { turn: { id: 'native-mcp-turn' } } : undefined);
+    const handle = await agent.startSession({ sessionId: 'native-mcp', model: 'gpt-5.4', workingDir: '/repo', permissionMode }) as CodexNativeSessionHandle;
+    const events: AgentEvent[] = [];
+    const drained = (async () => { for await (const event of handle.events()) events.push(event); })();
+    let answer!: (decision: InteractionDecision) => void;
+    const resolver = vi.fn(() => new Promise<InteractionDecision>(resolve => { answer = resolve; }));
+    handle.setInteractionResolver(resolver);
+    const prompts: import('./native-approvals.js').CodexNativeApprovalEvent[] = [];
+    const native = handle.attachNativeApprovalFrontend(event => prompts.push(event));
+    await handle.send({ type: 'user', content: 'use fixture tool' });
+    const handlers = host.getThreadHandlers()!;
+    const params = { threadId: 'start-thread-id', turnId: 'native-mcp-turn', serverName: 'fixture', mode: 'form' as const,
+      message: 'Fixture confirmation', requestedSchema: {}, _meta: { codex_approval_kind: 'mcp_tool_call',
+        persist: ['session', 'always'], tool_name: 'fixture_mutation', tool_params: { resource: 'fixture' } } };
+    return { agent, host, handle, events, resolver, prompts, native, handlers, params,
+      answer: (value: InteractionDecision) => answer(value),
+      start: () => handlers.mcpServerElicitation!(params, { requestId: 81 }),
+      close: async () => { await handle.close(); await drained; await agent.dispose(); } };
+  }
+  it('native MCP acceptance settles the existing GUI prompt and ignores a late GUI denial', async () => {
+    const f = await fixture();
+    try { const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      expect(f.native.answer(81, { action: 'accept', content: null, _meta: null })).toBe(true);
+      expect(await pending).toEqual({ action: 'accept', content: null, _meta: null });
+      f.answer({ kind: 'permission', behavior: 'deny' }); await Promise.resolve();
+      expect(f.native.answer(81, { action: 'decline' })).toBe(false);
+      await vi.waitFor(() => expect(f.events).toContainEqual(expect.objectContaining({ type: 'interaction_dismissed',
+        data: expect.objectContaining({ reason: 'native_answered', resolvedAs: 'allow', nativePermissionScope: 'once' }) })));
+      expect(f.prompts.map(e => e.kind)).toEqual(['request', 'resolved']);
+    } finally { await f.close(); }
+  });
+  it('GUI denial closes the native MCP prompt without allowing a second response', async () => {
+    const f = await fixture();
+    try { const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      f.answer({ kind: 'permission', behavior: 'deny' });
+      expect(await pending).toEqual({ action: 'decline', content: null, _meta: null });
+      expect(f.native.answer(81, { action: 'accept' })).toBe(false);
+      expect(f.prompts.map(e => e.kind)).toEqual(['request', 'resolved']);
+    } finally { await f.close(); }
+  });
+  it('native MCP approval keeps a deliberate advertised session grant', async () => {
+    const f = await fixture();
+    try { const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      expect(f.native.answer(81, { action: 'accept', content: null, _meta: { persist: 'session' } })).toBe(true);
+      expect(await pending).toEqual({ action: 'accept', content: null, _meta: { persist: 'session' } });
+      await vi.waitFor(() => expect(f.events).toContainEqual(expect.objectContaining({ type: 'interaction_dismissed',
+        data: expect.objectContaining({ reason: 'native_answered', nativePermissionScope: 'session' }) })));
+      f.answer({ kind: 'permission', behavior: 'deny' });
+    } finally { await f.close(); }
+  });
+  it('prompt-each-time native MCP approval cannot display or acquire persistence', async () => {
+    const f = await fixture({ getMcpToolApprovalPolicy: () => 'prompt-each-time' });
+    try { const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      const prompt = f.prompts[0]; expect(prompt?.kind).toBe('request');
+      if (prompt?.kind === 'request') expect(prompt.request.params._meta).not.toHaveProperty('persist');
+      expect(f.native.answer(81, { action: 'accept', _meta: { persist: 'session' } })).toBe(false);
+      expect(f.native.answer(81, { action: 'accept' })).toBe(true);
+      expect(await pending).toEqual({ action: 'accept', content: null, _meta: null });
+      f.answer({ kind: 'permission', behavior: 'deny' });
+    } finally { await f.close(); }
+  });
+  it('native MCP confirmation cannot bypass Auto review or its cancellation', async () => {
+    let review!: (value: { verdict: 'ask'; reason: string }) => void;
+    const reviewer = vi.fn<AutoReviewDelegate>(() => new Promise(resolve => { review = resolve; }));
+    const f = await fixture({ reviewAutoPermissionAction: reviewer }, 'auto');
+    try { const pending = f.start(); await vi.waitFor(() => expect(reviewer).toHaveBeenCalledOnce());
+      expect(f.prompts).toEqual([]); expect(f.native.answer(81, { action: 'accept' })).toBe(false);
+      f.handlers.serverRequestResolved!({ threadId: f.params.threadId, requestId: 81 });
+      review({ verdict: 'ask', reason: 'fixture asks user' });
+      expect(await pending).toEqual({ action: 'decline', content: null, _meta: null });
+      expect(f.prompts).toEqual([]); expect(f.resolver).not.toHaveBeenCalled();
+    } finally { await f.close(); }
+  });
+  it('server cancellation retires the corresponding native MCP numeric request', async () => {
+    const f = await fixture();
+    try { const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      f.handlers.serverRequestResolved!({ threadId: f.params.threadId, requestId: 81 });
+      expect(await pending).toEqual({ action: 'decline', content: null, _meta: null });
+      expect(f.native.answer(81, { action: 'accept' })).toBe(false);
+      f.answer({ kind: 'permission', behavior: 'allow' });
+      expect(f.prompts.map(e => e.kind)).toEqual(['request', 'resolved']);
+    } finally { await f.close(); }
+  });
+});
+
+
+describe('Codex native config reload after task sandbox selection', () => {
+  it.each(['ask', 'auto', 'bypassPermissions'] as const)(
+    'does not install an unselected named profile for a %s task without external roots', async permissionMode => {
+      const agent = new CodexAgent(createDeps());
+      const host = installFakeHost(agent);
+      const handle = await agent.startSession({ sessionId: 'native-config', model: 'gpt-5.4', workingDir: '/repo', permissionMode });
+      try {
+        const [, params] = host.request.mock.calls.find(([method]) => method === Method.ThreadStart)! as [string, Record<string, unknown>];
+        const config = params.config as Record<string, unknown>;
+        expect(Object.keys(config).filter(key => key.startsWith('permissions.'))).toEqual([]);
+        expect(config).not.toHaveProperty('default_permissions');
+        expect(params).not.toHaveProperty('permissions');
+        expect(params.sandbox).toBe(permissionMode === 'bypassPermissions' ? 'danger-full-access' : 'workspace-write');
+      } finally { await handle.close(); await agent.dispose(); }
+    },
+  );
+  it('keeps the selected read-only-reference profile and its restricted directory policy', async () => {
+    const agent = new CodexAgent(createDeps());
+    const host = installFakeHost(agent);
+    const handle = await agent.startSession({ sessionId: 'native-config-reference', model: 'gpt-5.4', workingDir: '/repo', permissionMode: 'ask', extraDirs: ['/reference'] });
+    try {
+      const [, params] = host.request.mock.calls.find(([method]) => method === Method.ThreadStart)! as [string, Record<string, unknown>];
+      expect(params.permissions).toBe('cindy-readonly-references');
+      expect(params.config).toHaveProperty('default_permissions', 'cindy-readonly-references');
+      expect(params).not.toHaveProperty('sandbox');
+      const profile = (params.config as Record<string, { filesystem: Record<string, unknown> }> )['permissions.cindy-readonly-references'];
+      expect(profile.filesystem[':workspace_roots']).toBe('read');
+      expect(profile.filesystem['/reference']).toBeUndefined();
+    } finally { await handle.close(); await agent.dispose(); }
+  });
+});

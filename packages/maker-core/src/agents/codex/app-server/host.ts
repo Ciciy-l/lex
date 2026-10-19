@@ -212,6 +212,7 @@ export interface ThreadEventHandlers {
   ) => Promise<FileChangeRequestApprovalResponse>;
   mcpServerElicitation?: (
     params: McpServerElicitationRequestParams,
+    meta?: ServerRequestMeta,
   ) => Promise<McpServerElicitationRequestResponse>;
   /** server 要求审批 MCP 工具等权限请求 (item/permissions/requestApproval)。 */
   permissionsApproval?: (
@@ -757,7 +758,7 @@ export class AppServerHost {
       }
     });
 
-    client.setRequestHandler(Method.McpServerElicitationRequest, async (rawParams) => {
+    client.setRequestHandler(Method.McpServerElicitationRequest, async (rawParams, meta) => {
       const params = rawParams as McpServerElicitationRequestParams;
       const resolvedHandlers = this.resolveRequestHandlers(params.threadId);
       const handlers = resolvedHandlers instanceof Promise
@@ -771,7 +772,7 @@ export class AppServerHost {
         return { action: 'decline', content: null, _meta: null } satisfies McpServerElicitationRequestResponse;
       }
       try {
-        return await handlers.mcpServerElicitation(params);
+        return await handlers.mcpServerElicitation(params, { requestId: meta.id });
       } catch (e) {
         this.logger.error('mcpServerElicitation handler threw -> decline', {
           threadId: params.threadId,

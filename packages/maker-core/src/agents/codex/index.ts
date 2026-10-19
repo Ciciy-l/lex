@@ -1,3 +1,4 @@
+import { projectNativeMcpConfirmation, decodeNativeMcpConfirmation } from './native-mcp-confirmation.js';
 import { CodexNativeTaskPresentation } from './native-task-presentation.js';
 import { CodexNativeApprovals, type CodexNativeApprovalRequest, type CodexNativeApprovalResponse } from './native-approvals.js';
 import { CODEX_NATIVE_TURN, CodexNativeInputAdmission, type CodexNativeSendOptions, type CodexNativeSessionHandle } from './native-input.js';
@@ -6359,8 +6360,17 @@ assertRouteCurrent();
           : {}),
         // Lex owns goal dispatch and pause/resume; native continuation must not bypass the host.
         'features.goals': false,
-        ...(readonlyReferenceDirsSupported ? readonlyReferencesConfig() : {}),
+        // Register only the selected named profile. An unselected permissions
+        // table makes native config reload (MCP status/settings) invalid when
+        // the task uses the ordinary sandbox and has no default_permissions.
+        ...(currentWorkspacePermissionProfile() === READONLY_REFERENCES_PERMISSION_PROFILE
+          ? readonlyReferencesConfig() : {}),
         ...(reviewMode ? reviewPermissionsConfig : {}),
+        // Native reloads this per-thread snapshot independently of the
+        // thread/start selector (for example mcpServerStatus/list). Keep the
+        // selected profile explicit within the same request-only config.
+        ...(currentWorkspacePermissionProfile()
+          ? { default_permissions: currentWorkspacePermissionProfile() } : {}),
         ...(reviewMode
           ? {
               // Windows native sandboxes cannot enforce this split read scope.
@@ -7655,10 +7665,15 @@ assertRouteCurrent();
         hostAutoApprove?: boolean;
         itemId?: string;
         nativeRequest?: CodexNativeApprovalRequest;
+        nativePrompt?: {
+          requestId: string | number;
+          open(allowPersistent: boolean, accept: (decision: ApprovalDecision) => void): { close(): void };
+        };
       },
     ): Promise<{ decision: ApprovalDecision; reason?: string; nativeResponse?: CodexNativeApprovalResponse }> {
       let nativeResponse: CodexNativeApprovalResponse | undefined;
-      const nativeOwner = opts?.nativeRequest ? nativeApprovalRequests.get(opts.nativeRequest.id) : undefined;
+      const nativeRequestId = opts?.nativeRequest?.id ?? opts?.nativePrompt?.requestId;
+      const nativeOwner = nativeRequestId === undefined ? undefined : nativeApprovalRequests.get(nativeRequestId);
       if (nativeOwner?.resolved || closed) return { decision: 'decline' };
       // Reasons stay inside Cindy for Host-owned dynamic tool results. Stock Codex
       // approval responses cannot carry them into native exec/patch tool output.
@@ -7831,6 +7846,16 @@ assertRouteCurrent();
                   resolvedAs: behavior, nativePermissionScope: session ? 'session'
                     : typeof response.decision === 'object' ? 'persistent' : 'once' }, source: 'codex' });
               },
+            }); } catch { finalize('decline'); return; }
+          }
+          if (opts?.nativePrompt) {
+            try { nativePrompt = opts.nativePrompt.open(!forcePrompt, d => {
+              if (entry.settled) return;
+              const behavior = d === 'decline' || d === 'cancel' ? 'deny' : 'allow';
+              if (behavior === 'deny') { denialReason = formatPermissionDenial('user'); reportMcpDenial('user'); }
+              finalize(d);
+              eventQueue.push({ type: 'interaction_dismissed', data: { requestId, reason: 'native_answered',
+                resolvedAs: behavior, nativePermissionScope: d === 'acceptForSession' ? 'session' : 'once' }, source: 'codex' });
             }); } catch { finalize('decline'); return; }
           }
           dispatchInteraction(routedRequest)
@@ -9113,6 +9138,7 @@ assertRouteCurrent();
 
     const mcpServerElicitation = async (
       params: McpServerElicitationRequestParams,
+      nativeMeta?: { requestId: string | number },
     ): Promise<McpServerElicitationRequestResponse> => {
       if (reviewMode) return { action: 'decline', content: null, _meta: null };
       // buffered/墓碑 turn 的 elicitation 不得上 UI / auto-approve (codex R12 P1)。
@@ -9204,7 +9230,8 @@ assertRouteCurrent();
       const toolTitle = stringFromMeta(meta, 'tool_title');
       const innerToolName = mcpInnerToolName(params);
       const toolUseId = activeMcpToolUseId(params);
-      const requestId = `mcp-elicitation:${params.serverName}:${params.turnId ?? params.threadId}:${++mcpElicitationSeq}`;
+      let nativeAnswer: McpServerElicitationRequestResponse | undefined;
+      const requestId = nativeMeta ? serverInteractionId(nativeMeta.requestId) : `mcp-elicitation:${params.serverName}:${params.turnId ?? params.threadId}:${++mcpElicitationSeq}`;
       const decision = await awaitApprovalDecision(
         params.threadId,
         params.turnId,
@@ -9238,9 +9265,20 @@ assertRouteCurrent();
             ? { autoReviewAction: { kind: 'other' as const, description: undefined } }
             : {}),
           ...(toolUseId ? { itemId: toolUseId } : {}),
+          ...(nativeMeta ? { nativePrompt: {
+            requestId: nativeMeta.requestId,
+            open: (allowPersistent: boolean, accept: (decision: ApprovalDecision) => void) => {
+              const projected = projectNativeMcpConfirmation(params, allowPersistent && mcpElicitationAllowsSession(params));
+              return nativeApprovals.openInteraction({ id: nativeMeta.requestId, method: 'mcpServer/elicitation/request', params: projected }, {
+                normalize: response => decodeNativeMcpConfirmation(response, projected),
+                accept: answer => { nativeAnswer = answer.response; accept(answer.decision); },
+              });
+            },
+          } } : {}),
         },
       );
 
+      if (nativeAnswer) return nativeAnswer;
       if (decision.decision === 'accept') {
         return { action: 'accept', content: null, _meta: null };
       }
@@ -13009,7 +13047,9 @@ assertRouteCurrent();
       },
       commandExecutionApproval: (params, meta) => withNativeApprovalRequest(params, meta, () => commandExecutionApproval(params, meta)),
       fileChangeApproval: (params, meta) => withNativeApprovalRequest(params, meta, () => fileChangeApproval(params, meta)),
-      mcpServerElicitation,
+      mcpServerElicitation: (params, meta) => withNativeApprovalRequest(
+        { threadId: params.threadId, itemId: meta ? serverInteractionId(meta.requestId) : '' }, meta,
+        () => mcpServerElicitation(params, meta)),
       permissionsApproval,
       serverRequestResolved: handleServerRequestResolved,
       requestUserInput,
