@@ -1,3 +1,4 @@
+import type { AgentNativeInputConsumptionState } from '@cindy/maker-core';
 /**
  * chat-data-localization F5：Messages IPC handlers（C7）。
  *
@@ -751,7 +752,7 @@ export function registerMessageIpc(
     }
 
     const ipcMeta = b.agentMeta ? { ...(b.agentMeta as Record<string, unknown>) } : null;
-    if (ipcMeta) { delete ipcMeta.autoReviewUserText; delete ipcMeta.nativeSource; }
+    if (ipcMeta) { delete ipcMeta.autoReviewUserText; delete ipcMeta.nativeSource; delete ipcMeta.nativeConsumption; }
     return createMessage(sid, {
       clientId: cid,
       role: b.role as MessageRole,
@@ -773,17 +774,24 @@ export function registerMessageIpc(
         throwIpcError('INVALID_PARAMS', 'agentMeta 必须是对象或 null');
       }
       const ipcMeta = agentMeta ? { ...(agentMeta as Record<string, unknown>) } : null;
-      if (ipcMeta) { delete ipcMeta.autoReviewUserText; delete ipcMeta.nativeSource; }
+      if (ipcMeta) { delete ipcMeta.autoReviewUserText; delete ipcMeta.nativeSource; delete ipcMeta.nativeConsumption; }
       const serialized = ipcMeta ? JSON.stringify(ipcMeta) : null;
       // Preserve Host-authored evidence atomically; the renderer may neither mint nor replace it.
       const withReview = sql`CASE
         WHEN json_valid(${messages.agentMeta}) AND json_type(${messages.agentMeta}, '$.autoReviewUserText') IN ('text', 'object')
         THEN json_set(${serialized ?? '{}'}, '$.autoReviewUserText', json_extract(${messages.agentMeta}, '$.autoReviewUserText'))
         ELSE ${serialized} END`;
-      await getDbClient().drizzle.update(messages).set({ agentMeta: sql`CASE
+      const withSource = sql`CASE
         WHEN json_valid(${messages.agentMeta}) AND json_type(${messages.agentMeta}, '$.nativeSource') = 'object'
         THEN json_set(COALESCE(${withReview}, '{}'), '$.nativeSource', json_extract(${messages.agentMeta}, '$.nativeSource'))
-        ELSE ${withReview} END` }).where(and(eq(messages.sessionId, sid), eq(messages.clientId, cid)));
+        ELSE ${withReview} END`;
+      await getDbClient().drizzle.update(messages).set({ agentMeta: sql`CASE
+        WHEN json_valid(${messages.agentMeta}) AND json_type(${messages.agentMeta}, '$.nativeConsumption') = 'object'
+        THEN json_set(COALESCE(${withSource}, '{}'),
+          '$.nativeConsumption', json_extract(${messages.agentMeta}, '$.nativeConsumption'),
+          '$.uuid', json_extract(${messages.agentMeta}, '$.uuid'),
+          '$.sdkSessionId', json_extract(${messages.agentMeta}, '$.sdkSessionId'))
+        ELSE ${withSource} END` }).where(and(eq(messages.sessionId, sid), eq(messages.clientId, cid)));
     },
   );
 
@@ -1974,6 +1982,53 @@ export function captureNativeUserMessageLink(target: {
     return true;
   };
 }
+
+/** Bind late consumption evidence before admission to the same DB, task and native input. */
+export function captureNativeInputConsumption(target: {
+  sessionId: string; clientId: string; nativeSessionId: string; nativeTurnId: string;
+  isCurrent(): boolean;
+}): (state: AgentNativeInputConsumptionState, clearBoundaryMs: number | null) => Promise<boolean> {
+  const owner = getCurrentDbClientSnapshot(), scope = captureOwnerBroadcastScope();
+  const current = () => Boolean(owner && owner === getCurrentDbClientSnapshot()
+    && !isAppSessionBoundaryPending() && isOwnerBroadcastScopeCurrent(scope) && target.isCurrent());
+  return async (state, clearBoundaryMs) => {
+    if (!owner || !current() || state.version !== 1 || state.engine !== 'codex'
+      || state.sessionId !== target.nativeSessionId || state.turnId !== target.nativeTurnId
+      || state.messageId !== target.clientId || !['consumed', 'unconsumed', 'unknown'].includes(state.status)
+      || (state.status === 'consumed' && (typeof state.itemId !== 'string' || !state.itemId))) return false;
+    const serialized = JSON.stringify(state);
+    const meta = sql`CASE WHEN json_valid(${messages.agentMeta})
+      AND json_type(${messages.agentMeta}) = 'object' THEN ${messages.agentMeta} ELSE '{}' END`;
+    // The existing authority trigger watches autoReviewUserText. Only consumption
+    // unwraps the Host-captured receipt; unconsumed/unknown never restore an Auto grant.
+    const withConsumption = sql`json_set(${meta}, '$.nativeConsumption', json(${serialized}))`;
+    const [row] = await owner.client.drizzle.update(messages).set({
+      agentMeta: sql`CASE WHEN ${state.status} = 'consumed'
+        AND json_extract(${meta}, '$.autoReviewUserText.kind') = 'native-input-pending'
+        THEN json_set(${withConsumption}, '$.autoReviewUserText', json_extract(${meta}, '$.autoReviewUserText.text'))
+        ELSE ${withConsumption} END`,
+    }).where(and(
+      eq(messages.sessionId, target.sessionId), eq(messages.clientId, target.clientId),
+      eq(messages.role, 'user'), isNull(messages.rewindAt),
+      sql`json_extract(${meta}, '$.uuid') = ${target.clientId}`,
+      sql`json_extract(${meta}, '$.sdkSessionId') = ${target.nativeSessionId}`,
+      sql`json_extract(${meta}, '$.nativeConsumption.version') = 1`,
+      sql`json_extract(${meta}, '$.nativeConsumption.engine') = 'codex'`,
+      sql`json_extract(${meta}, '$.nativeConsumption.sessionId') = ${target.nativeSessionId}`,
+      sql`json_extract(${meta}, '$.nativeConsumption.turnId') = ${target.nativeTurnId}`,
+      sql`json_extract(${meta}, '$.nativeConsumption.messageId') = ${target.clientId}`,
+      or(sql`json_extract(${meta}, '$.nativeConsumption.status') = 'pending'`,
+        sql`json_extract(${meta}, '$.nativeConsumption') = ${serialized}`),
+      sql`EXISTS (SELECT 1 FROM ${sessions} WHERE ${sessions.id} = ${messages.sessionId}
+        AND ${sessions.clearedAt} IS ${clearBoundaryMs}
+        AND (${sessions.clearedAt} IS NULL OR ${messages.createdAt} > ${sessions.clearedAt}))`,
+    )).returning();
+    if (!row || !current()) return false;
+    broadcastMessageRow(target.sessionId, messageToCamel(row), scope);
+    return true;
+  };
+}
+
 
 /** 与 patchMessageAgentMeta 相同，但返回补丁前后的元数据供幂等账本计算。 */
 export async function patchMessageAgentMetaWithResult(

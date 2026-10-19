@@ -19,6 +19,42 @@ import {
   type PresentationLocalizer,
 } from './presentationLocalization';
 
+/** Host-authored evidence for accepted native input; RPC acceptance is not consumption. */
+export interface NativeMessageConsumption {
+  readonly version: 1;
+  readonly engine: 'codex';
+  readonly sessionId: string;
+  readonly turnId: string;
+  readonly messageId: string;
+  readonly status: 'pending' | 'consumed' | 'unconsumed' | 'unknown';
+  readonly itemId?: string;
+}
+
+/** Projection of a host-authored record bound to the exact persisted native user row. */
+export function nativeMessageConsumptionStatus(meta: unknown): NativeMessageConsumption['status'] | undefined {
+  if (typeof meta === 'string') {
+    try { meta = JSON.parse(meta); } catch { return undefined; }
+  }
+  if (!meta || typeof meta !== 'object') return undefined;
+  const value = meta as { uuid?: unknown; sdkSessionId?: unknown; nativeConsumption?: Partial<NativeMessageConsumption> };
+  const record = value.nativeConsumption;
+  if (!record || record.version !== 1 || record.engine !== 'codex'
+    || typeof record.sessionId !== 'string' || !record.sessionId || record.sessionId !== value.sdkSessionId
+    || typeof record.turnId !== 'string' || !record.turnId
+    || typeof record.messageId !== 'string' || !record.messageId || record.messageId !== value.uuid
+    || !['pending', 'consumed', 'unconsumed', 'unknown'].includes(record.status ?? '')
+    || (record.status === 'consumed' && (typeof record.itemId !== 'string' || !record.itemId))) return undefined;
+  return record.status;
+}
+
+/** A stale pending row after shutdown cannot promise that the engine is still waiting. */
+export function nativeMessageConsumptionLabel(status: NativeMessageConsumption['status'] | undefined,
+  running: boolean): 'pending' | 'unconsumed' | 'unknown' | undefined {
+  if (status === 'pending') return running ? 'pending' : 'unknown';
+  return status === 'unconsumed' || status === 'unknown' ? status : undefined;
+}
+
+
 /** Host-authored provenance of one accepted native input, persisted with its GUI row. */
 export interface NativeMessageSource {
   version: 1;

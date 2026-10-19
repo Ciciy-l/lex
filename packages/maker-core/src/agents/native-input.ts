@@ -17,6 +17,8 @@ export interface AgentNativeInputRequest extends AgentNativeInput {
   readonly nativeMessageId: string;
   readonly source?: NativeMessageSource;
   readonly signal: AbortSignal;
+  /** Adapter-owned observation; an accepted steer is not necessarily consumed. */
+  readonly consumption?: AgentNativeInputConsumption;
 }
 
 export type AgentNativeInputResolver = (input: AgentNativeInputRequest) => Promise<void>;
@@ -31,3 +33,9 @@ export interface AgentNativeMediaInput {
 }
 export type AgentNativeMediaResolver = (input: AgentNativeMediaInput) =>
   Promise<Extract<UserContentBlock, { type: 'image' | 'file' }>>;
+
+export type AgentNativeInputConsumptionState = import('@cindy/maker-shared/message-presentation').NativeMessageConsumption;
+export interface AgentNativeInputConsumption {
+  read(): AgentNativeInputConsumptionState;
+  readonly settled: Promise<AgentNativeInputConsumptionState>;
+}

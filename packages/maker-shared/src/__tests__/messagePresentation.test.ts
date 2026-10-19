@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildMessageActionBarPresentation,
   nativeMessagePluginSource,
+  nativeMessageConsumptionStatus, nativeMessageConsumptionLabel,
   type NativeMessageSource,
   countMessageRenderItemDiffs,
   isToolErrorLike,
@@ -693,5 +694,30 @@ describe('messagePresentation', () => {
     expect(summarizeToolRowPresentation(readTool).label).toBe('读取 app.ts');
     expect(summarizeToolRowPresentation(readTool, { wording: enWording }).label).toBe('Read app.ts');
     expect(summarizeToolRowPresentation(readTool, { wording: enWording }).label).not.toContain('读取');
+  });
+});
+
+describe('native consumption projection', () => {
+  const state = { version: 1, engine: 'codex', sessionId: 'thread', turnId: 'turn', messageId: 'uuid', status: 'pending' };
+  const row = { uuid: 'uuid', sdkSessionId: 'thread', nativeConsumption: state };
+  it('keeps pending, consumed and unconsumed distinct without altering legacy history', () => {
+    expect(nativeMessageConsumptionStatus({ delivery: 'steer' })).toBeUndefined();
+    for (const status of ['pending', 'consumed', 'unconsumed', 'unknown']) {
+      expect(nativeMessageConsumptionStatus({ ...row, nativeConsumption: { ...state, status, itemId: 'item' } })).toBe(status);
+    }
+  });
+  it('requires exact host row and engine evidence, including an item for consumed input', () => {
+    for (const patch of [{ version: 2 }, { engine: 'other' }, { sessionId: 'foreign' }, { messageId: 'foreign' },
+      { turnId: '' }, { status: 'sent' }, { status: 'consumed' }]) {
+      expect(nativeMessageConsumptionStatus({ ...row, nativeConsumption: { ...state, ...patch } })).toBeUndefined();
+    }
+  });
+  it('does not leave a stale pending row promising continued work or badge consumed/legacy rows', () => {
+    expect(nativeMessageConsumptionLabel('pending', true)).toBe('pending');
+    expect(nativeMessageConsumptionLabel('pending', false)).toBe('unknown');
+    expect(nativeMessageConsumptionLabel('unconsumed', false)).toBe('unconsumed');
+    expect(nativeMessageConsumptionLabel('unknown', true)).toBe('unknown');
+    expect(nativeMessageConsumptionLabel('consumed', true)).toBeUndefined();
+    expect(nativeMessageConsumptionLabel(undefined, false)).toBeUndefined();
   });
 });

@@ -13342,4 +13342,28 @@ describe('original native steering through the product coordinator', () => {
     h.coordinator.onTurnEvent(sid,'done'); await flush(); expect(h.sendToAgent).not.toHaveBeenCalled();
     expect(n.input.dispatch).toHaveBeenCalledOnce();
   });
+  it.each(['early', 'late', 'clear', 'persistence-failure'])('retains actual consumption across %s history settlement', async timing => {
+    const h = createHarness(); h.setRunning(true); const n = native(h);
+    let state = { version: 1 as const, engine: 'codex' as const, sessionId: 'native', turnId: 'turn',
+      messageId: 'native-row', status: 'pending' as 'pending' | 'unconsumed' };
+    let settle!: (next: typeof state) => void;
+    const settled = new Promise<typeof state>(resolve => { settle = resolve; });
+    const persistConsumption = vi.fn(async () => true);
+    const consumption = { read: () => state, settled };
+    const finish = () => { state = { ...state, status: 'unconsumed' }; settle(state); };
+    if (timing === 'early') finish();
+    if (timing === 'persistence-failure') mocks.createMessage.mockRejectedValueOnce(new Error('disk full'));
+    await h.coordinator.acceptNativeSteer(sid, { ...makeItem('native-row', 'original'), autoReviewUserText: 'original' }, { ...n.input, consumption, persistConsumption });
+    expect(mocks.createMessage).toHaveBeenCalledWith(sid, expect.objectContaining({ agentMeta: expect.objectContaining({
+      nativeConsumption: expect.objectContaining({ messageId: 'native-row', status: timing === 'early' ? 'unconsumed' : 'pending' }),
+      autoReviewUserText: { kind: 'native-input-pending', text: 'original' },
+    }) }), expect.anything());
+    if (timing === 'clear') h.coordinator.clearSession(sid);
+    if (timing !== 'early') finish();
+    await flush();
+    if (timing === 'clear' || timing === 'persistence-failure') expect(persistConsumption).not.toHaveBeenCalled();
+    else expect(persistConsumption).toHaveBeenCalledExactlyOnceWith(state, null);
+    expect(h.sendToAgent).not.toHaveBeenCalled(); expect(n.input.dispatch).toHaveBeenCalledOnce();
+  });
+
 });

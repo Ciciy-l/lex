@@ -68,6 +68,29 @@ function stored(db: Database.Database) {
 }
 
 describe('durable Auto authority projection', () => {
+  it.each(['pending', 'unconsumed', 'unknown', 'consumed'])('does not turn %s native input into an unverified grant', status => {
+    const db = open();
+    add(db, 'restriction', 'worker', 1, 'Read only');
+    read(db);
+    const meta = { delivery: 'steer', autoReviewUserText: { kind: 'native-input-pending', text: 'Publish now' },
+      nativeConsumption: { version: 1, engine: 'codex', sessionId: 'thread', turnId: 'turn', messageId: 'native', status: 'pending' } };
+    add(db, 'native', 'worker', 2, 'Publish now', 'user', meta);
+    const pending = read(db);
+    expect(JSON.stringify(pending)).not.toContain('Publish now');
+    expect(pending.reviewIntent).toMatchObject({ historyOmitted: true });
+    // The history update uses the existing watched authority field in the same SQL write.
+    db.prepare("UPDATE messages SET agent_meta = json_set(agent_meta, '$.nativeConsumption.status', ?, '$.autoReviewUserText', json(?)) WHERE id = 'native'")
+      .run(status, JSON.stringify(status === 'consumed' ? 'Publish now' : meta.autoReviewUserText));
+    const result = read(db);
+    if (status === 'consumed') {
+      expect(JSON.stringify(result.reviewIntent)).toContain('Publish now');
+      expect(stored(db).revision).toBeGreaterThan(pending.revision);
+    } else {
+      expect(JSON.stringify(result)).not.toContain('Publish now');
+      expect(result.reviewIntent).toMatchObject({ historyOmitted: true });
+    }
+    expect(stored(db).revision).toBe(stored(db).projected_revision);
+  });
   it.each(['insert', 'answer', 'delete', 'clear', 'rewind'])(
     'keeps %s writes and rebuilds evidence after corrupt summaries with live and legacy connections',
     (operation) => {

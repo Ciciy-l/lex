@@ -1,3 +1,4 @@
+import type { AgentNativeInputConsumptionState } from '@cindy/maker-core';
 import type { AgentNativeInputRequest, AgentNativeMediaResolver, Session, UserMessage, UserContentBlock } from '@cindy/maker-core';
 import type { AgentInputCreateOpts, AgentInputQueuedMessage } from '../../shared/agentInputQueue.js';
 import type { AgentInputCoordinator } from './agent-input-coordinator.js';
@@ -13,6 +14,9 @@ export interface NativeInputBindingDeps {
   coordinator: Pick<AgentInputCoordinator, 'acceptNativeInput' | 'isExecutionPaused'> & Partial<Pick<AgentInputCoordinator, 'acceptNativeSteer'>>;
   accept: ReturnType<typeof createMakerSendTransaction>['acceptNativeInput'];
   importMedia?: AgentNativeMediaResolver;
+  captureConsumption?(session: Session, input: AgentNativeInputRequest):
+    (state: AgentNativeInputConsumptionState, clearBoundaryMs: number | null) => Promise<boolean>;
+
   steer?(session: Session, input: AgentNativeInputRequest, options: SendOptions): Promise<void>;
   /** Refuse contention rather than wait behind a GUI submission to the native process. */
   withIdleSendLock<T>(sessionId: string, run: () => Promise<T>): Promise<T>;
@@ -88,6 +92,8 @@ export function bindNativeSessionInput(session: Session, deps: NativeInputBindin
       if (!deps.steer || !deps.coordinator.acceptNativeSteer) throwIpcError('PRECONDITION_FAILED', 'Native steering owner unavailable');
       await deps.coordinator.acceptNativeSteer(session.id, item, {
         session, turnGeneration: generation, messageId: input.nativeMessageId, signal: input.signal,
+        ...(input.consumption ? { consumption: input.consumption,
+          persistConsumption: deps.captureConsumption?.(session, input) } : {}),
         buildMessage: head => preparedNativeMessage(input.message, head.text),
         dispatch: async (_id, message, options) => {
           checkTurn(); await deps.assertAllowed(session.id); checkTurn();

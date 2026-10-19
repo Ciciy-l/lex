@@ -708,6 +708,7 @@ export class Session {
     await binding.listener({
       nativeSessionId, nativeMessageId: input.nativeMessageId,
       ...(input.nativeTurnId ? { nativeTurnId: input.nativeTurnId } : {}),
+      ...(input.consumption ? { consumption: input.consumption } : {}),
       message: structuredClone(input.message),
       ...(input.source ? { source: structuredClone(input.source) } : {}), signal,
       accept: async (message, options) => {

@@ -1,3 +1,4 @@
+import type { AgentNativeInputConsumption } from '@cindy/maker-core';
 import { AUTO_REVIEW_SOURCE_CONTENT, AUTO_REVIEW_USER_INTENT } from '@cindy/maker-core';
 import { throwIpcError } from '../utils/ipcValidate.js';
 import { SchedulerQueuedPreparationError } from './schedulerQueuedPreparation.js';
@@ -588,6 +589,7 @@ export interface AgentInputCoordinatorDeps {
 }
 
 interface ActiveTurn {
+  nativeConsumption?: Pick<NativeSteerContinuation, 'consumption' | 'persistConsumption'>;
   /** Owned by a native append continuation; never serialize/requeue as a new send. */
   nativeInput?: true;
   /** Retained after steering receipt cleanup until this turn ends. */
@@ -893,6 +895,8 @@ interface SteerObservation {
 }
 
 interface NativeSteerContinuation {
+  consumption?: AgentNativeInputConsumption;
+  persistConsumption?(state: ReturnType<AgentNativeInputConsumption['read']>, clearBoundaryMs: number | null): Promise<boolean>;
   session: object; turnGeneration: number; messageId: string; signal: AbortSignal;
   dispatch: AgentInputCoordinatorDeps['steerToAgent'];
   buildMessage(head: AgentInputQueuedMessage): AgentInputMakerMessage;
@@ -2588,6 +2592,7 @@ export class AgentInputCoordinator {
       const detachedAcceptedTurn: ActiveTurn = {
         item,
         delivery: 'steer',
+        ...(opts?.native?.consumption ? { nativeConsumption: opts.native } : {}),
         messageUuid,
         createdAt,
         generation: steerGeneration,
@@ -2645,6 +2650,7 @@ export class AgentInputCoordinator {
       item,
       replyInputClientIds: [...new Set([...replyInputClientIds, item.clientId])],
       delivery: 'steer',
+      ...(opts?.native?.consumption ? { nativeConsumption: opts.native } : {}),
       messageUuid,
       createdAt,
       generation: steerGeneration,
@@ -6496,9 +6502,14 @@ export class AgentInputCoordinator {
           content: item.persistedContent,
           agentMeta: {
             uuid: active.messageUuid,
-            ...(item.autoReviewUserText !== undefined ? { autoReviewUserText: item.autoReviewUserText } : {}),
+            ...(item.autoReviewUserText !== undefined ? { autoReviewUserText:
+              active.nativeConsumption?.consumption && active.nativeConsumption.consumption.read().status !== 'consumed'
+                ? { kind: 'native-input-pending', text: item.autoReviewUserText } : item.autoReviewUserText } : {}),
             sdkSessionId,
             delivery: active.delivery,
+            ...(active.nativeConsumption?.consumption ? {
+              nativeConsumption: active.nativeConsumption.consumption.read(),
+            } : {}),
             ...(transcriptParentUuid ? { transcriptParentUuid } : {}),
           } as never,
         },
@@ -6532,6 +6543,18 @@ export class AgentInputCoordinator {
       if (!this.isTurnGenerationCurrent(sessionId, active)) return 'stale';
       active.persisted = true;
       active.persisting = false;
+      const consumption = active.nativeConsumption;
+      if (consumption?.consumption && consumption.persistConsumption) {
+        // Start only after the row exists; early native events remain in the observation.
+        // Do not hold the send lock or manufacture a retry if this late patch fails.
+        void consumption.consumption.settled.then(async state => {
+          if (this.isTurnGenerationCurrent(sessionId, active)) {
+            await consumption.persistConsumption!(state, active.clearBoundaryMs);
+          }
+        }).catch(error => log.warn('native input consumption persistence failed', {
+          sessionId, clientId: item.clientId, error: errorMessage(error),
+        }));
+      }
       this.notifyUserMessageQueryable(sessionId, item);
       // 同 drain onPersisted:steer 消息落库后立即收窄快照,避免长 turn 内崩溃二次恢复。
       this.maybePersistQueueSnapshot(sessionId);

@@ -28,6 +28,7 @@ import {
   type DbAgentKind,
 } from '../../shared/agentKindConversion.js';
 import type { AgentMeta, Session } from '../../renderer/lib/ccAgent.types';
+import { nativeMessageConsumptionStatus } from '@cindy/maker-shared/message-presentation';
 import { buildHandoffText, type HandoffSourceMessage } from '../maker-ipc/agentHandoff.js';
 import {
   type ClaudeTranscriptAnchorIndex,
@@ -826,6 +827,7 @@ export async function forkSessionAtMessage(
       id: messages.id,
       clientId: messages.clientId,
       role: messages.role,
+      agentMeta: messages.agentMeta,
       createdAt: messages.createdAt,
       rowid: messageRowid,
     })
@@ -837,6 +839,10 @@ export async function forkSessionAtMessage(
   }
   if (target.role !== 'user' && target.role !== 'assistant') {
     throw forkError('NOT_USER_MESSAGE', 'fork 只能在 user 或 assistant 消息上发起');
+  }
+  const nativeInputStatus = nativeMessageConsumptionStatus(target.agentMeta);
+  if (target.role === 'user' && nativeInputStatus && nativeInputStatus !== 'consumed') {
+    throw forkError('UNSUPPORTED_HISTORY', 'Native input has no confirmed processed history boundary');
   }
 
   const forkSource = await resolveForkNativeSource(sourceSessionId, source, target);

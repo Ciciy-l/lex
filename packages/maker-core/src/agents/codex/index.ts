@@ -12370,6 +12370,8 @@ assertRouteCurrent();
         publishTurnDiff(threadId, params.turnId, params.diff);
       },
       turnCompleted: (params) => {
+        // Observe the continuous native stream before product Stop tombstones or buffering.
+        nativeSteerAdmission.consumption.turnCompleted(params.threadId, params.turn.id);
         // buffered turn 的终态同样进队列等对账 (greptile R11 P1 + codex R12 P1):
         // 合法 → 激活后按序重放, handleTurnCompleted 自然收口 send; 孤儿 →
         // 整队丢弃。直接处理会让孤儿 completed 提前收口在飞 send
@@ -12390,6 +12392,7 @@ assertRouteCurrent();
         handleTurnCompleted(params);
       },
       itemStarted: (params) => {
+        nativeSteerAdmission.consumption.itemStarted(params);
         // 血缘不能跟着 turn 对账队列一起迟到:AppServerHost 只为未知 child 缓冲 5s。
         // 卡片/翻译仍在队列内,这里只保留 provisional claim；父 turn 被接受后
         // 重放 item 才 commit root route，孤儿则 discard。
@@ -12799,6 +12802,7 @@ assertRouteCurrent();
         const isTransportError = params.scope === 'transport';
         if (isTransportError) {
           subscriptionInvalidatedByTransport = true;
+          nativeSteerAdmission.consumption.disconnect();
           // 订阅已作废(app-server 崩了 / IO 断开)→ 后代通知**永远不会再到**,而 tracker 只靠
           // 后代 turn/completed 写终态。不在这里收口,渲染端会一直留着最后一帧 running:进程
           // 早就死了,子代理卡还在原地转圈(review)。这条路径与 close() / cleanup-failure 是

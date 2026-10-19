@@ -92,3 +92,88 @@ describe('native Codex same-turn admission', () => {
     expect(f.dispatch).toHaveBeenCalledOnce();
   });
 });
+
+describe('native input consumption on a continuous root stream', () => {
+  const item = (clientId: string, turnId = 'running', threadId = 'task') => ({
+    threadId, turnId, item: { type: 'userMessage', id: 'item-' + clientId, clientId },
+  });
+  it.each(['before', 'after'])('uses actual native user identity when consumption arrives %s receipt', async when => {
+    const f = fixture();
+    if (when === 'before') f.dispatch.mockImplementation(async () => {
+      f.admission.consumption.itemStarted(item(messageId)); return { turnId: 'running' };
+    });
+    await f.admission.accept(f.request);
+    const observation = f.owner.mock.calls[0]![0].consumption!;
+    if (when === 'after') {
+      expect(observation.read().status).toBe('pending');
+      f.admission.consumption.itemStarted(item(messageId));
+    }
+    expect(await observation.settled).toEqual({ version: 1, engine: 'codex', sessionId: 'task',
+      turnId: 'running', messageId, status: 'consumed', itemId: 'item-' + messageId });
+    f.admission.consumption.turnCompleted('task', 'running');
+    f.admission.close();
+    expect(observation.read().status).toBe('consumed');
+  });
+  it('keeps terminal-before-receipt unconsumed rather than presenting it as an executed steer', async () => {
+    const f = fixture();
+    f.dispatch.mockImplementation(async () => {
+      f.admission.consumption.turnCompleted('task', 'running'); f.endTurn();
+      return { turnId: 'running' };
+    });
+    expect(await f.admission.accept(f.request)).toEqual({ turnId: 'running' });
+    const observation = f.owner.mock.calls[0]![0].consumption!;
+    expect((await observation.settled).status).toBe('unconsumed');
+    expect(f.dispatch).toHaveBeenCalledOnce();
+  });
+  it('does not assign a matching text from a later Escape turn to the unconsumed original', async () => {
+    const f = fixture(); await f.admission.accept(f.request);
+    const original = f.owner.mock.calls[0]![0].consumption!;
+    f.admission.consumption.turnCompleted('task', 'running');
+    const next = f.admission.consumption.begin('task', 'next', 'distinct-uuid');
+    f.admission.consumption.itemStarted(item('distinct-uuid', 'next'));
+    expect((await original.settled).status).toBe('unconsumed');
+    expect((await next.settled).status).toBe('consumed');
+    expect(original.read().messageId).toBe(messageId);
+  });
+  it('ignores foreign thread/turn/client and non-user items; one input cannot consume its neighbors', async () => {
+    const f = fixture(); await f.admission.accept(f.request);
+    const observation = f.owner.mock.calls[0]![0].consumption!;
+    for (const event of [item(messageId, 'foreign'), item(messageId, 'running', 'foreign'), item('foreign'),
+      { ...item(messageId), item: { ...item(messageId).item, type: 'agentMessage' } }]) {
+      f.admission.consumption.itemStarted(event);
+      expect(observation.read().status).toBe('pending');
+    }
+    f.admission.consumption.turnCompleted('foreign', 'running');
+    f.admission.consumption.turnCompleted('task', 'foreign');
+    expect(observation.read().status).toBe('pending');
+    const other = f.admission.consumption.begin('task', 'running', 'other');
+    f.admission.consumption.itemStarted(item(messageId));
+    expect(observation.read().status).toBe('consumed');
+    expect(other.read().status).toBe('pending');
+    f.admission.consumption.turnCompleted('task', 'running');
+    expect((await other.settled).status).toBe('unconsumed');
+  });
+  it.each(['disconnect', 'close', 'replacement'])('preserves unknown after %s even if a late terminal arrives', async reason => {
+    const f = fixture(); await f.admission.accept(f.request);
+    const observation = f.owner.mock.calls[0]![0].consumption!;
+    if (reason === 'disconnect') f.admission.consumption.disconnect();
+    if (reason === 'close') f.admission.close();
+    if (reason === 'replacement') f.admission.bind(async () => {});
+    f.admission.consumption.turnCompleted('task', 'running');
+    expect((await observation.settled).status).toBe('unknown');
+    expect(observation.read().status).toBe('unknown');
+  });
+  it('does not retroactively claim uncertainty after an observed consumption and lost response', async () => {
+    const f = fixture(); f.dispatch.mockImplementation(async () => {
+      f.admission.consumption.itemStarted(item(messageId)); throw new Error('lost receipt');
+    });
+    await expect(f.admission.accept(f.request)).rejects.toBeInstanceOf(TurnDispatchUnconfirmedError);
+    expect(f.owner.mock.calls[0]![0].consumption!.read().status).toBe('consumed');
+  });
+  it('settles missing receipts as unknown without holding pending entries or replaying input', async () => {
+    const f = fixture(); f.dispatch.mockRejectedValue(new Error('lost response'));
+    await expect(f.admission.accept(f.request)).rejects.toBeInstanceOf(TurnDispatchUnconfirmedError);
+    expect((await f.owner.mock.calls[0]![0].consumption!.settled).status).toBe('unknown');
+    expect(f.dispatch).toHaveBeenCalledOnce();
+  });
+});

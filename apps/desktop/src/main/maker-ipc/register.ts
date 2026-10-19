@@ -299,6 +299,7 @@ import {
   findLatestUserMessageForRebuild,
   patchMessageAgentMeta,
   captureNativeUserMessageLink,
+  captureNativeInputConsumption,
   supersedeRetriedUserTurn,
   updateMessageContent,
 } from '../localDb/ipc/messages.js';
@@ -4756,6 +4757,11 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
     registration.disposers.push(bindNativeSessionInput(session, {
       ...nativeDeps,
       isCurrent,
+      captureConsumption: (current, input) => captureNativeInputConsumption({
+        sessionId: current.id, clientId: input.nativeMessageId,
+        nativeSessionId: input.nativeSessionId, nativeTurnId: input.nativeTurnId!,
+        isCurrent: () => isCurrent(current) && current.sdkSessionId === input.nativeSessionId,
+      }),
       importMedia: async input => {
         if (!isCurrent(session) || !['claude-code', 'codex'].includes(session.agentKind) || input.sessionId !== session.sdkSessionId) {
           throwIpcError('PRECONDITION_FAILED', 'Native attachment no longer belongs to this task');

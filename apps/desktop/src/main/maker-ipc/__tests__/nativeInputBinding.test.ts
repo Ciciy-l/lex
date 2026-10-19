@@ -101,10 +101,19 @@ describe('native steering Main binding', () => {
     const f=fixture();
     Object.assign(f.session,{getTurnGeneration:()=>1,getCurrentTurnId:()=> 'turn'});
     f.deps.steer=vi.fn(async()=>{});
+    const state = { version: 1 as const, engine: 'codex' as const, sessionId: 'native', turnId: 'turn',
+      messageId: 'row', status: 'unconsumed' as const };
+    const consumption = { read: () => state, settled: Promise.resolve(state) };
+    const persistConsumption = vi.fn(async () => true);
+    f.deps.captureConsumption = vi.fn(() => persistConsumption);
     f.deps.coordinator.acceptNativeSteer=vi.fn(async(id,item,native)=>{
       await native.dispatch(id,native.buildMessage(item),{signal:native.signal,messageUuid:native.messageId});
     });
-    await f.receive({...f.input,nativeTurnId:'turn'});
+    await f.receive({...f.input,nativeTurnId:'turn',consumption});
+    expect(f.deps.captureConsumption).toHaveBeenCalledExactlyOnceWith(f.session,
+      expect.objectContaining({ consumption, nativeTurnId: 'turn', nativeMessageId: 'row' }));
+    expect(f.deps.coordinator.acceptNativeSteer).toHaveBeenCalledWith('task', expect.anything(),
+      expect.objectContaining({ consumption, persistConsumption }));
     expect(f.deps.steer).toHaveBeenCalledExactlyOnceWith(f.session,expect.objectContaining({nativeTurnId:'turn',message:f.input.message}),
       expect.objectContaining({messageUuid:'row'}));
     expect(f.deps.withIdleSendLock).not.toHaveBeenCalled(); expect(f.deps.accept).not.toHaveBeenCalled();

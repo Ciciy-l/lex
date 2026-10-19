@@ -1,3 +1,4 @@
+import { CodexNativeInputConsumption } from './native-consumption.js';
 import type { UserMessage } from '../../types/common.js';
 import { TurnDispatchRejectedError, TurnDispatchUnconfirmedError, type SendOptions } from '../base-agent.js';
 import type { AgentNativeInputResolver, AgentNativeMediaResolver } from '../native-input.js';
@@ -18,6 +19,7 @@ export interface CodexNativeSteerRequest {
 
 /** Preserve original message identity and run the normal product steering lifecycle. */
 export class CodexNativeSteerAdmission {
+  readonly consumption = new CodexNativeInputConsumption();
   private resolver?: AgentNativeInputResolver;
   private media?: AgentNativeMediaResolver;
   private pending = false;
@@ -26,9 +28,10 @@ export class CodexNativeSteerAdmission {
     private readonly steer: (message: UserMessage, options: CodexNativeSteerOptions) => Promise<void>) {}
   bind(resolver: AgentNativeInputResolver, media?: AgentNativeMediaResolver): void {
     if (this.lifetime.signal.aborted) throw new TurnDispatchRejectedError('Native steering owner closed');
+    if (this.resolver && this.resolver !== resolver) this.consumption.disconnect();
     this.resolver = resolver; this.media = media;
   }
-  close(): void { this.lifetime.abort(); this.resolver = undefined; this.media = undefined; }
+  close(): void { this.lifetime.abort(); this.consumption.disconnect(); this.resolver = undefined; this.media = undefined; }
   async accept(request: CodexNativeSteerRequest): Promise<TurnSteerResponse> {
     const params = structuredClone(request.params), owner = this.resolver, media = this.media;
     const threadId = this.thread(), turnId = this.turn(), messageId = params.clientUserMessageId;
@@ -45,13 +48,14 @@ export class CodexNativeSteerAdmission {
       || Object.entries(params).some(([key, value]) => value != null && !fields.has(key))) {
       throw new TurnDispatchRejectedError('Native steering has no matching product reservation');
     }
+    const consumption = this.consumption.begin(threadId, turnId!, messageId);
     this.pending = true;
     let accepted = false, forwarded = false, response: TurnSteerResponse | undefined;
     try {
       const { content, prepare } = await prepareCodexNativeInput(params.input, threadId, messageId, signal, check, media);
       check();
       await owner!({ nativeSessionId: threadId, nativeTurnId: turnId!, nativeMessageId: messageId,
-        message: { type: 'user', content }, signal, accept: async (message, options) => {
+        message: { type: 'user', content }, signal, consumption, accept: async (message, options) => {
           check();
           if (accepted || options.signal?.aborted) throw new TurnDispatchRejectedError('Native steering already admitted or cancelled');
           accepted = true;
@@ -80,6 +84,9 @@ export class CodexNativeSteerAdmission {
         throw new TurnDispatchUnconfirmedError('Native steering delivery uncertain');
       }
       throw error;
-    } finally { this.pending = false; }
+    } finally {
+      if (!response) this.consumption.uncertain(messageId);
+      this.pending = false;
+    }
   }
 }

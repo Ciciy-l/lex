@@ -105,6 +105,7 @@ import {
   readMessagesList,
   updateMessageContent,
   captureNativeUserMessageLink,
+  captureNativeInputConsumption,
 } from '../messages';
 import type { NativeMessageSource } from '@cindy/maker-shared/message-presentation';
 
@@ -518,7 +519,8 @@ describe('local-db:messages:list cursor', () => {
     h.tx.mockRejectedValueOnce(new Error('capture insert boundary'));
     await expect(h.handlers.get('local-db:messages:create')!({}, 's1', {
       clientId: 'forged', role: 'user', content: 'Send now.',
-      agentMeta: { autoReviewUserText: 'Send now.', nativeSource: { bridge: { submissionId: 'forged' } }, delivery: 'turn' },
+      agentMeta: { autoReviewUserText: 'Send now.', nativeSource: { bridge: { submissionId: 'forged' } },
+        nativeConsumption: { status: 'consumed' }, delivery: 'turn' },
     })).rejects.toThrow('capture insert boundary');
     expect(h.tx).toHaveBeenCalledWith('message.insert', expect.objectContaining({
       agentMeta: JSON.stringify({ delivery: 'turn' }),
@@ -1621,4 +1623,76 @@ describe('readPriorUserRoundCost', () => {
       hasEstimatedValue: false,
     });
   });
+});
+
+describe('native input consumption history', () => {
+  function fixture() {
+    const sqlite = createDb();
+    sqlite.prepare('INSERT INTO sessions (id, cleared_at) VALUES (?, NULL)').run('s1');
+    const state = { version: 1 as const, engine: 'codex' as const, sessionId: 'native-session',
+      turnId: 'native-turn', messageId: 'native-row', status: 'pending' as const };
+    insertCostMessage(sqlite, { id: 'native-row', role: 'user', createdAt: 100,
+      agentMeta: { uuid: 'native-row', sdkSessionId: 'native-session', delivery: 'steer', nativeConsumption: state } });
+    let current = true;
+    const patch = captureNativeInputConsumption({ sessionId: 's1', clientId: 'native-row',
+      nativeSessionId: 'native-session', nativeTurnId: 'native-turn', isCurrent: () => current });
+    const read = () => sqlite.prepare('SELECT * FROM messages WHERE client_id = ?').get('native-row') as { agent_meta: string };
+    return { sqlite, state, patch, read, retire: () => { current = false; } };
+  }
+  it.each(['consumed', 'unconsumed', 'unknown'] as const)('atomically records %s without erasing concurrent metadata', async status => {
+    const f = fixture();
+    try {
+      f.sqlite.exec("UPDATE messages SET agent_meta = json_set(agent_meta, '$.turnCostUsd', 12)");
+      f.sqlite.prepare("UPDATE messages SET agent_meta = json_set(agent_meta, '$.autoReviewUserText', json(?))")
+        .run(JSON.stringify({ kind: 'native-input-pending', text: 'Publish now' }));
+      const state = { ...f.state, status, ...(status === 'consumed' ? { itemId: 'actual-item' } : {}) };
+      expect(await f.patch(state, null)).toBe(true);
+      expect(JSON.parse(f.read().agent_meta)).toMatchObject({ nativeConsumption: state, turnCostUsd: 12, delivery: 'steer' });
+      expect(JSON.parse(f.read().agent_meta).autoReviewUserText).toEqual(status === 'consumed'
+        ? 'Publish now' : { kind: 'native-input-pending', text: 'Publish now' });
+      expect(await f.patch(state, null)).toBe(true);
+      expect(await f.patch({ ...f.state, status: status === 'unknown' ? 'unconsumed' : 'unknown' }, null)).toBe(false);
+      expect(JSON.parse(f.read().agent_meta).nativeConsumption).toEqual(state);
+    } finally { f.sqlite.close(); }
+  });
+  it.each(['clear', 'rewind', 'delete', 'role', 'uuid', 'thread', 'turn', 'client', 'runtime', 'account'])
+    ('ignores late consumption after %s changes', async change => {
+      const f = fixture();
+      try {
+        if (change === 'clear') f.sqlite.exec('UPDATE sessions SET cleared_at = 1');
+        if (change === 'rewind') f.sqlite.exec('UPDATE messages SET rewind_at = 200');
+        if (change === 'delete') f.sqlite.exec('DELETE FROM messages');
+        if (change === 'role') f.sqlite.exec("UPDATE messages SET role = 'message_tombstone'");
+        if (change === 'uuid') f.sqlite.exec("UPDATE messages SET agent_meta = json_set(agent_meta, '$.uuid', 'other')");
+        if (change === 'thread') f.sqlite.exec("UPDATE messages SET agent_meta = json_set(agent_meta, '$.nativeConsumption.sessionId', 'other')");
+        if (change === 'turn') f.sqlite.exec("UPDATE messages SET agent_meta = json_set(agent_meta, '$.nativeConsumption.turnId', 'other')");
+        if (change === 'client') f.sqlite.exec("UPDATE messages SET agent_meta = json_set(agent_meta, '$.nativeConsumption.messageId', 'other')");
+        if (change === 'runtime') f.retire();
+        if (change === 'account') h.snapshot = { ...h.snapshot!, clientEpoch: 2 };
+        const before = f.read();
+        expect(await f.patch({ ...f.state, status: 'consumed', itemId: 'native-item' }, null)).toBe(false);
+        expect(f.read()).toEqual(before);
+      } finally { f.sqlite.close(); }
+    });
+  it('preserves host consumption and identity against local and remote metadata forgery', async () => {
+    const f = fixture();
+    try {
+      registerMessageIpc();
+      const update = h.handlers.get('local-db:messages:updateAgentMeta')!;
+      insertCostMessage(f.sqlite, { id: 'ordinary', role: 'user', createdAt: 101 });
+      for (const remote of [false, true]) {
+        const invoke = (fn: () => Promise<unknown>) => remote
+          ? runDeviceLinkInvokeContext({ controllerDeviceId: 'd', channel: 'local-db:messages:updateAgentMeta' }, fn) : fn();
+        await invoke(async () => update({}, 's1', 'native-row', { uuid: 'forged', sdkSessionId: 'forged',
+          nativeConsumption: { ...f.state, status: 'consumed', itemId: 'forged' }, model: 'updated' }));
+        expect(JSON.parse(f.read().agent_meta)).toEqual({ uuid: 'native-row', sdkSessionId: 'native-session',
+          nativeConsumption: f.state, model: 'updated' });
+        await invoke(async () => update({}, 's1', 'native-row', null));
+        expect(JSON.parse(f.read().agent_meta)).toEqual({ uuid: 'native-row', sdkSessionId: 'native-session', nativeConsumption: f.state });
+        await invoke(async () => update({}, 's1', 'ordinary', { nativeConsumption: f.state, delivery: 'turn' }));
+        expect(JSON.parse((f.sqlite.prepare('SELECT agent_meta FROM messages WHERE id = ?').get('ordinary') as { agent_meta: string }).agent_meta)).toEqual({ delivery: 'turn' });
+      }
+    } finally { f.sqlite.close(); }
+  });
+
 });
