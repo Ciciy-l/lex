@@ -27,6 +27,8 @@ export function isSameCodexMcpSessionContext(
     left.agentKind === right.agentKind &&
     left.workingDir === right.workingDir &&
     left.remoteHostId === right.remoteHostId &&
+    left.mcpCallerKind === right.mcpCallerKind &&
+    left.mcpCallerAttested === right.mcpCallerAttested &&
     isDeepStrictEqual(left.vendorOptions, right.vendorOptions)
   );
 }
