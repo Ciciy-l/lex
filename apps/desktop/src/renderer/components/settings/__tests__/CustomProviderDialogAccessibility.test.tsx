@@ -191,7 +191,9 @@ async function renderNewImageGenerationReloadConfirmation(onSaved = vi.fn(), onC
   });
   const user = userEvent.setup();
   render(<ProviderConnectionDialog onSaved={onSaved} onClose={onClose} />);
-  await enterSpecializedSetup();
+  // Settle the form's scheduled initial focus before typing; otherwise that
+  // frame can move focus back to the setup tab during the new-name input.
+  await waitForInitialDialogFocus();
   await user.type(
     screen.getByPlaceholderText('settings.providers.custom.fields.namePlaceholder'),
     'New image provider',
