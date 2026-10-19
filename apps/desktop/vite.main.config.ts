@@ -1,9 +1,15 @@
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, loadEnv } from 'vite';
 import { desktopClientBuildEnv } from '../../scripts/shared/client-endpoint-build-env.mjs';
 
 const configDir = path.dirname(fileURLToPath(import.meta.url));
+// @xterm/headless 6.0.0 declares a module entry (lib/xterm.mjs) that is
+// absent from its published package. Resolve its real Node main entry instead
+// of Forge's module-first lookup, then bundle it so packaged apps need no
+// extra runtime dependency for terminal screen snapshots.
+const headlessNodeEntry = createRequire(import.meta.url).resolve('@xterm/headless');
 // 登录 scenario fixtures 的生产空 stub(implementation-plan Step 0 WHAT4 生产排除
 // 双保险之 build-time 层;check-login-production-guard.mjs 以 sentinel 双断言校验)。
 const loginFixturesStub = path.resolve(
@@ -36,10 +42,12 @@ export default defineConfig(({ mode }) => {
     resolve: {
       // 仅 fixtures 生产排除条件(v6.17 允许范围):production 构建把
       // '@cindy/auth-client/fixtures' 整模块替换为空 stub,dev 构建保留真模块。
-      alias:
-        mode === 'production'
+      alias: [
+        { find: /^@xterm\/headless$/, replacement: headlessNodeEntry },
+        ...(mode === 'production'
           ? [{ find: '@cindy/auth-client/fixtures', replacement: loginFixturesStub }]
-          : [],
+          : []),
+      ],
     },
     define: {
       'import.meta.env.VITE_CINDY_AUTH_REGION': JSON.stringify(
