@@ -34604,7 +34604,7 @@ describe('CodexAgent custom provider context window override', () => {
     expect(host.getHost).toHaveBeenCalledWith(
       undefined,
       'provider-oauth',
-      { ignoreBindingLeases: 1, routeIsCurrent: expect.any(Function), routeSignal: expect.any(AbortSignal) },
+      { ignoreBindingLeases: 1, routeIsCurrent: expect.any(Function), routeSignal: expect.any(AbortSignal), notificationProfile: 'legacy' },
     );
     await handle.close();
   });
