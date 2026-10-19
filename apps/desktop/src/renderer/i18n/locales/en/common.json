@@ -9613,7 +9613,7 @@
     "presentation": {
       "nativeFileApproval": {
         "header": "File changes",
-        "confirmation": "Lex requires confirmation for these changes.",
+        "confirmation": "{{appName}} requires confirmation for these changes.",
         "once": "Apply these changes once",
         "onceDescription": "Apply only these changes without granting future access.",
         "cancel": "Cancel these changes",
@@ -9621,7 +9621,7 @@
       },
       "nativePermissions": {
         "header": "Permissions",
-        "confirmation": "Lex requires confirmation for this operation.",
+        "confirmation": "{{appName}} requires confirmation for this operation.",
         "once": "Allow for this turn",
         "onceDescription": "Grant only these permissions for this turn.",
         "strict": "Allow with strict review",
