@@ -128,3 +128,5 @@ export {
 
 export { createCodexNativeService, type CodexNativeEndpoint, type CodexNativeService, type CodexNativeServiceOptions } from './agents/codex/native-service.js';
 export type { StdioTransportOptions as CodexLocalServiceLaunch } from './agents/codex/app-server/stdioTransport.js';
+export type { CodexNativeSessionHandle } from './agents/codex/native-input.js';
+export { connectCodexNativeFrontend, type CodexNativeFrontendOptions, type CodexFrontendCall, type CodexFrontendRequest, type CodexFrontendNotification } from './agents/codex/native-frontend.js';

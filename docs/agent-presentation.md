@@ -865,6 +865,35 @@ production PTY/gateway registration and MainIPC/UI/remote acceptance remain open
 MCP elicitation, extended permissions and native questions still require their
 corresponding shared-response integration before exposing the full adapter.
 
+### Codex task-owned original frontend
+
+The protocol relay and Main factory now launch the upstream remote TUI against
+the existing task service. A separate task capability, private frontend home
+and OS-only environment keep service/provider credentials out of the frontend
+launch. Browser origins and foreign listener routes are refused. Request ids
+remain correlated to the native UI; unique upstream ids prevent a late receipt
+from satisfying a later request that reused an id. Pending calls, frames and
+pre-initialization approval snapshots are bounded.
+
+Only policy-approved prompts enter the TUI. Its answers return through the
+existing Agent callback; raw server requests never gain a competing responder.
+Detach preserves the PTY. Task close revokes access before closing the frontend,
+and removes its temporary home only after confirmed exit. A natural frontend
+exit retires access while leaving its last screen readable.
+
+The isolated Windows `codex-host-presentation-native2.json` probe passed 18
+checks with managed Codex 0.162.1: real Agent/Core Session, original PTY, three
+GUI/TUI/GUI turns, one thread/service, one native-approved tool, ignored late GUI
+denial, detach/reattach and confirmed cleanup. Its predecessor's fixture wrote
+after terminal exit; that failed report and unconfirmed residual home are kept.
+The successful probe still injects fixture request/notification policy. Normal
+boot selection, task-bound model/permission controls, remaining native questions,
+MainIPC/database/UI, phone, SSH and non-Windows acceptance are not established.
+The same 18 checks also pass against the actual repository implementation in
+`codex-root-presentation-native1.json`, including the unique upstream request
+ids and confirmed service/frontend cleanup. This repeats the transport proof,
+not the still-open product acceptance.
+
 ## Upstream reference
 
 VelaTerm reference: `vlinx-io/VelaTerm` at
