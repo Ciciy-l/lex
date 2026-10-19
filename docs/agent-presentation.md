@@ -894,6 +894,23 @@ The same 18 checks also pass against the actual repository implementation in
 ids and confirmed service/frontend cleanup. This repeats the transport proof,
 not the still-open product acceptance.
 
+### Codex task and concrete process ownership
+
+The Agent now owns its optional native presentation and publishes it on the
+actual session handle. The host captures the already-running concrete service;
+reading that binding never starts a replacement. Task close, native service
+exit and host retirement revoke the frontend before asynchronous cleanup. A
+late frontend factory result is still closed, and an obsolete service endpoint
+cannot attach to a newer process. Frontend cleanup never owns the shared service.
+
+The isolated Windows probe `codex-agent-presentation-native1.json` passes 19
+checks with the real Agent-owned presentation, Core Session, Main factory and
+original Codex PTY: three GUI/TUI/GUI turns, one service/thread, shared approval,
+detach/reattach, and confirmed process/profile cleanup. Request routing and
+history bindings are still fixtures. This is not ordinary boot selection,
+MainIPC/database/product UI, phone or SSH acceptance; production task-bound
+controls and remaining native interactions are still required.
+
 ## Upstream reference
 
 VelaTerm reference: `vlinx-io/VelaTerm` at

@@ -1,3 +1,4 @@
+import { CodexNativeTaskPresentation } from './native-task-presentation.js';
 import { CodexNativeApprovals, type CodexNativeApprovalRequest, type CodexNativeApprovalResponse } from './native-approvals.js';
 import { CODEX_NATIVE_TURN, CodexNativeInputAdmission, type CodexNativeSendOptions, type CodexNativeSessionHandle } from './native-input.js';
 import { syncCodexArchiveState } from './archive-state.js';
@@ -4680,6 +4681,8 @@ assertRouteCurrent();
     }
 
     let closed = false;
+    const nativePresentation = this.deps.createLocalCodexNativePresentation && !opts.remoteHostId
+      ? new CodexNativeTaskPresentation(message => log.warn(message)) : undefined;
     let subscriptionInvalidatedByTransport = false;
     let sessionHostForceRetired = false;
     let subscription: ThreadSubscription | null = null;
@@ -11948,6 +11951,7 @@ assertRouteCurrent();
       // pending/retry 会话会收不了口（busy 永久卡死）。所以由这里统一收口。
       hostForcedRetire: ({ reason }) => {
         sessionHostForceRetired = true;
+        void nativePresentation?.close().catch(() => log.warn('native Codex frontend close unconfirmed after host retirement'));
         subscriptionInvalidatedByTransport = false;
         resetCodexGenerationTiming(translatorRt);
 
@@ -13030,6 +13034,8 @@ assertRouteCurrent();
     ): Promise<void> {
       if (closed) return;
       closed = true;
+      const frontendClosed = nativePresentation?.close().then(
+        () => ({ ok: true as const }), error => ({ ok: false as const, error }));
       nativeAdmission?.close();
       nativeApprovals.close();
       await startup.remoteRoute?.release();
@@ -13071,11 +13077,14 @@ assertRouteCurrent();
         retireHostOnFailure: opts.retireHostOnCleanupFailure ?? true,
       });
       try { eventQueue.end(); } catch (e) { log.warn('eventQueue.end threw', { error: String(e) }); }
+      const frontendOutcome = await frontendClosed;
+      if (frontendOutcome && !frontendOutcome.ok) throw frontendOutcome.error;
     }
     // ── AgentSessionHandle ──────────────────────────────────────────────────
     nativeAdmission = new CodexNativeInputAdmission(
       () => closed ? '<closed>' : threadId, (message, options) => handle.send(message, options));
     const handle: CodexNativeSessionHandle = {
+      get presentation() { return nativePresentation?.presentation; },
       attachNativeApprovalFrontend(receive) { assertCurrentHost("native approval frontend"); return nativeApprovals.attach(receive); },
       setNativeInputResolver(resolver, media) { nativeAdmission!.bind(resolver, media); },
       acceptNativeTurn(request) {
@@ -14694,6 +14703,16 @@ assertRouteCurrent();
       },
     };
 
+    if (nativePresentation && this.deps.createLocalCodexNativePresentation) {
+      try {
+        assertCurrentHost('native frontend startup');
+        const service = await host.getNativeFrontendBinding();
+        if (!service) throw new Error('Native Codex presentation requires its owning native service');
+        await nativePresentation.start(this.deps.createLocalCodexNativePresentation, {
+          handle, service, cwd: opts.workingDir, isCurrent: () => !closed && isCurrentHost(),
+        });
+      } catch (error) { await closeSessionHandle(); throw error; }
+    }
     return handle;
   }
 

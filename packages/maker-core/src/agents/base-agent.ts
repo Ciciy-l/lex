@@ -1,5 +1,6 @@
 import type { StdioTransportOptions } from './codex/app-server/stdioTransport.js';
 import type { CodexNativeService } from './codex/native-service.js';
+import type { CodexNativePresentationFactory } from './codex/native-task-presentation.js';
 import type { AutoReviewUserIntent } from './shared/auto-review-decision.js';
 import type { AgentSessionPresentation } from './presentation.js';
 import type { AgentNativeInputResolver, AgentNativeMediaResolver } from './native-input.js';
@@ -704,6 +705,8 @@ export interface PiSubagentRunnerLaunchRequest {
 export interface AgentDeps {
   /** Host-only dual-frontend service. Control-plane probes and SSH keep their own transports. */
   createLocalCodexNativeService?: (options: StdioTransportOptions) => CodexNativeService;
+  /** Optional task-owned frontend; requires the same concrete native service. */
+  createLocalCodexNativePresentation?: CodexNativePresentationFactory;
   /** Host-only native adapter injection. Absent until native/remote acceptance; never a vendor option. */
   createLocalClaudeNativeSession?: (options: ClaudeLocalNativeSessionOptions) => Promise<ClaudeNativeSessionHandle>;
   /** Cindy-only local Skill overrides. Freeze at native runtime startup; never apply to SSH. */

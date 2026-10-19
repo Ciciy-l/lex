@@ -4952,6 +4952,66 @@ describe('CodexAgent.refreshLocalModels', () => {
     } finally { await agent.dispose(); }
   });
 
+  it('publishes the task-owned native frontend and retires it before the shared service', async () => {
+    const native = new MockCodexTransport();
+    const service = Object.assign(native, { endpoint: Promise.resolve({ url: 'ws://127.0.0.1:31415', token: 'fixture-only' }) });
+    const owners: Array<{ presentation: never; close: ReturnType<typeof vi.fn> }> = [];
+    const frontends: NonNullable<AgentDeps['createLocalCodexNativePresentation']> = vi.fn(async launch => {
+      expect(launch.handle.id).toBe('thread-1'); expect(launch.isCurrent()).toBe(true);
+      expect(launch.cwd).toBe('/repo'); expect(launch.service.endpoint.token).toBe('fixture-only');
+      const owner = { presentation: {} as never, close: vi.fn(async () => {}) }; owners.push(owner); return owner;
+    });
+    const agent = new CodexAgent(createDeps({}, { createLocalCodexNativeService: () => service,
+      createLocalCodexNativePresentation: frontends, disableCodexPluginRuntime: true }));
+    try {
+      const handle = await agent.startSession({ sessionId: 'native-presentation', model: 'gpt-5.4', workingDir: '/repo' });
+      const launch = vi.mocked(frontends).mock.calls[0]![0];
+      expect(handle.presentation).toBe(owners[0]!.presentation); expect(frontends).toHaveBeenCalledOnce();
+      await handle.close(); expect(owners[0]!.close).toHaveBeenCalledOnce();
+      expect(launch.signal.aborted).toBe(true); expect(launch.isCurrent()).toBe(false);
+      expect(handle.presentation).toBeUndefined(); expect(native.closed).toBe(false);
+    } finally { await agent.dispose(); }
+    expect(native.closed).toBe(true);
+  });
+
+  it('never creates a native frontend over a legacy task transport', async () => {
+    const frontend = vi.fn(async () => ({ presentation: {} as never, close: async () => {} }));
+    const agent = new CodexAgent(createDeps({}, { createLocalCodexNativePresentation: frontend }));
+    try {
+      await expect(agent.startSession({ sessionId: 'native-no-service', model: 'gpt-5.4', workingDir: '/repo' }))
+        .rejects.toThrow('requires its owning native service');
+      expect(frontend).not.toHaveBeenCalled();
+      expect(createdTransports.flatMap(t => t.lines).map(line => JSON.parse(line))
+        .filter(v => v.method === 'thread/unsubscribe')).toHaveLength(1);
+    } finally { await agent.dispose(); }
+  });
+
+  it('releases the thread if the Main frontend factory rejects startup', async () => {
+    const native = new MockCodexTransport();
+    const frontend = vi.fn(async () => { throw new Error('fixture native frontend startup failed'); });
+    const agent = new CodexAgent(createDeps({}, {
+      createLocalCodexNativeService: () => Object.assign(native, { endpoint: Promise.resolve({ url: 'ws://127.0.0.1:31415', token: 'fixture-only' }) }),
+      createLocalCodexNativePresentation: frontend,
+    }));
+    try {
+      await expect(agent.startSession({ sessionId: 'native-start-failed', model: 'gpt-5.4', workingDir: '/repo' }))
+        .rejects.toThrow('fixture native frontend startup failed');
+      expect(frontend).toHaveBeenCalledOnce();
+      expect(native.lines.map(line => JSON.parse(line)).filter(v => v.method === 'thread/unsubscribe')).toHaveLength(1);
+    } finally { await agent.dispose(); }
+  });
+
+  it('service retirement invalidates the published native frontend without starting a replacement', async () => {
+    const native = new MockCodexTransport(), closed = vi.fn(async () => {});
+    const frontend: NonNullable<AgentDeps['createLocalCodexNativePresentation']> = vi.fn(async () => ({ presentation: {} as never, close: closed }));
+    const service = vi.fn(() => Object.assign(native, { endpoint: Promise.resolve({ url: 'ws://127.0.0.1:31415', token: 'fixture-only' }) }));
+    const agent = new CodexAgent(createDeps({}, { createLocalCodexNativeService: service, createLocalCodexNativePresentation: frontend }));
+    const handle = await agent.startSession({ sessionId: 'native-retire', model: 'gpt-5.4', workingDir: '/repo' });
+    await agent.dispose();
+    await vi.waitFor(() => expect(closed).toHaveBeenCalledOnce());
+    expect(vi.mocked(frontend).mock.calls[0]![0].signal.aborted).toBe(true);
+    expect(handle.presentation).toBeUndefined(); expect(service).toHaveBeenCalledOnce();
+  });
   it('injects the native task service without replacing control-plane probes or its resolved launch policy', async () => {
     const native = new MockCodexTransport();
     const factory: NonNullable<AgentDeps['createLocalCodexNativeService']> = vi.fn(options => {

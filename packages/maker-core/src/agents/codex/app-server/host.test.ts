@@ -1800,3 +1800,29 @@ describe('AppServerHost buffered descendant notification replay', () => {
     await host.shutdown();
   });
 });
+
+describe('AppServerHost native frontend generation binding', () => {
+  it('does not start a transport merely to obtain a frontend binding', async () => {
+    const createTransport = vi.fn(() => new NotificationTransport());
+    const host = new AppServerHost({ createTransport, logger: logger, clientInfo: { name: 'fixture', version: '0' } });
+    expect(await host.getNativeFrontendBinding()).toBeUndefined(); expect(createTransport).not.toHaveBeenCalled();
+    await host.ensureStarted(); expect(await host.getNativeFrontendBinding()).toBeUndefined();
+    await host.shutdown();
+  });
+  it('revokes a captured endpoint at shutdown before native transport cleanup finishes', async () => {
+    const transport = Object.assign(new NotificationTransport(), {
+      endpoint: Promise.resolve({ url: 'ws://127.0.0.1:31415', token: 'fixture-only' }),
+    });
+    const host = new AppServerHost({ createTransport: () => transport, logger: logger, clientInfo: { name: 'fixture', version: '0' } });
+    await host.ensureStarted(); const binding = (await host.getNativeFrontendBinding())!;
+    expect(binding.isCurrent()).toBe(true);
+    let finish!: () => void;
+    const pending = new Promise<void>(resolve => { finish = resolve; });
+    const originalClose = transport.close.bind(transport);
+    vi.spyOn(transport, 'close').mockImplementation(async () => { await pending; await originalClose(); });
+    const closing = host.shutdown();
+    expect(binding.signal.aborted).toBe(true); expect(binding.isCurrent()).toBe(false);
+    expect(await host.getNativeFrontendBinding()).toBeUndefined();
+    finish(); await closing;
+  });
+});

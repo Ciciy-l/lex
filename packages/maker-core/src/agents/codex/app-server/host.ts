@@ -24,6 +24,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { CodexNativeServiceSlot, type CodexNativeServiceBinding } from '../native-service-slot.js';
 
 import type { Logger } from '../../../interfaces/logger.js';
 import type { CodexSessionMcpConfigInput, CodexSubagentRoutingProfile } from '../../base-agent.js';
@@ -341,6 +342,7 @@ export class AppServerHost {
   private readonly bufferTtlMs: number;
   private readonly threadUnsubscribeTimeoutMs: number;
 
+  private readonly nativeService = new CodexNativeServiceSlot();
   private client: AppServerClient | null = null;
   // Negative proof belongs to the exact transport, not readiness or provider.
   // Any application RPC may load a thread (including future protocol methods).
@@ -391,6 +393,17 @@ export class AppServerHost {
     this.bufferTtlMs = opts.notificationBufferTtlMs ?? 5_000;
     this.threadUnsubscribeTimeoutMs =
       opts.threadUnsubscribeTimeoutMs ?? DEFAULT_THREAD_UNSUBSCRIBE_TIMEOUT_MS;
+  }
+
+  /** Captures only an already-running concrete process; never starts a replacement. */
+  async getNativeFrontendBinding(): Promise<CodexNativeServiceBinding | undefined> {
+    if (!this.client || this.shuttingDown || this.retired) return undefined;
+    const client = this.client;
+    const binding = await this.nativeService.capture();
+    if (this.client !== client || this.shuttingDown || this.retired) {
+      throw new Error('Native Codex service changed during frontend attachment');
+    }
+    return binding;
   }
 
   isCodexProxyActive(): boolean {
@@ -654,7 +667,11 @@ export class AppServerHost {
     nativeEpoch = this.nativeInitializationEpoch,
   ): Promise<InitializeResponse> {
     const client = new AppServerClient({
-      createTransport: this.opts.createTransport,
+      createTransport: () => {
+        const transport = this.opts.createTransport();
+        this.nativeService.bind(transport);
+        return transport;
+      },
       logger: this.opts.logger,
       onTransportError: (err) => {
         // Keep the shared startPromise while recovering this one pre-protocol
@@ -974,6 +991,7 @@ export class AppServerHost {
     this.nativeInitializationEpoch++;
     if (!this.shutdownPromise) {
       this.shuttingDown = true;
+      this.nativeService.clear();
       const client = this.client;
       const shutdownPromise = Promise.resolve().then(async () => {
         await client?.close({ reason, throwOnTransportError: true });
