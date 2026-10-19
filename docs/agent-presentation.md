@@ -932,6 +932,12 @@ also verify MCP status with/without reference directories and after revocation.
 Routing/history remain fixture bindings: ordinary boot, product UI and remote
 acceptance are still open. This evidence does not establish full adapter parity.
 
+Claude's semantic bridge also avoids OS-assigned ports blocked by Fetch. It
+closes an unusable loopback listener before requesting another ephemeral port,
+with bounded attempts and unchanged authentication. Deterministic tests cover
+blocked allocations, failure and cleanup; this fixes the observed local
+`bad port` failure without changing machine networking or client protections.
+
 ## Upstream reference
 
 VelaTerm reference: `vlinx-io/VelaTerm` at

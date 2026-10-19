@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import type { AddressInfo } from 'node:net';
+import { listenFetchLoopback } from '../shared/fetch-loopback-listener.js';
 
 export interface ClaudeBridgeEvent {
   sequence: number;
@@ -79,15 +79,9 @@ export class ClaudeNativeBridge {
   start(): Promise<string> {
     if (this.closed) return Promise.reject(new Error('Native bridge closed'));
     if (this.starting) return this.starting;
-    this.starting = new Promise((resolve, reject) => {
-      const fail = (error: Error) => { this.server.off('error', fail); reject(error); };
-      this.server.once('error', fail);
-      this.server.listen(0, '127.0.0.1', () => {
-        this.server.off('error', fail);
-        const address = this.server.address() as AddressInfo;
-        this.endpoint = `http://127.0.0.1:${address.port}`;
-        resolve(this.endpoint);
-      });
+    this.starting = listenFetchLoopback(this.server).then(port => {
+      this.endpoint = `http://127.0.0.1:${port}`;
+      return this.endpoint;
     });
     return this.starting;
   }
