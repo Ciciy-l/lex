@@ -1,3 +1,4 @@
+import { bindNativeSessionRuntime, type NativeRuntimeBindingDeps } from './nativeRuntimeBinding.js';
 import { assertNotRetiredCompanionSession } from '../localDb/retiredCompanions.js';
 import { createAgentPresentationHandler, AGENT_PRESENTATION_CHANNEL } from './agentPresentationHandlers.js';
 import { resolveSafe as resolveCindyMediaUrl } from '../cindy-media/blobStore.js';
@@ -3213,6 +3214,7 @@ async function syncLibraryReadonlyExtraDir(
 
 let agentInputCoordinatorHolder: AgentInputCoordinator | null = null;
 let nativeInputBindingDepsHolder: Omit<NativeInputBindingDeps, 'isCurrent'> | null = null;
+let nativeRuntimeBindingDepsHolder: Omit<NativeRuntimeBindingDeps, 'isCurrent'> | null = null;
 let contextOverflowRolloverHolder: ReturnType<typeof createContextOverflowRollover> | null = null;
 const overflowSuppressedBroadcasts = new Map<
   string,
@@ -4758,6 +4760,14 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
           isCurrent: () => isCurrent(session) && session.sdkSessionId === input.sessionId });
         return importMedia(input);
       },
+    }));
+  }
+  if (nativeRuntimeBindingDepsHolder && typeof session.onNativeRuntimeSelection === 'function') {
+    const runtimeDeps = nativeRuntimeBindingDepsHolder;
+    registration.disposers.push(bindNativeSessionRuntime(session, {
+      ...runtimeDeps,
+      isCurrent: current => Boolean(ownerDb && ownerDb === getCurrentDbClientSnapshot()
+        && nativeRuntimeBindingDepsHolder === runtimeDeps && sessionBindings.getSession(current.id) === current),
     }));
   }
   const ownerEventDependencies = Object.create(sessionEventDependencies) as SessionEventDependencies;
@@ -11417,6 +11427,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     /** Internal calls from the send / switch transaction already own the route lock. */
     sessionLockHeld?: boolean;
     applyingUserSelectionOnSend?: boolean;
+    /** Original TUI expects an immediate receipt on this existing native task. */
+    nativeImmediateSelection?: boolean;
     /** Reassess the current Pi route after its catalog descriptor or budget changed. */
     refreshPiConfiguration?: boolean;
     /** The pending service owns removal and queue release after this apply commits. */
@@ -16612,7 +16624,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       }
       // A picker click records intent only. Keep the persisted route and native binding
       // authoritative until a real send holds this same lock and consumes the final choice.
-      if (internalOptions.source === 'user' && !internalOptions.applyingUserSelectionOnSend &&
+      if (internalOptions.source === 'user' && !internalOptions.applyingUserSelectionOnSend && !internalOptions.nativeImmediateSelection &&
           !runtimeStatus.remoteHostId && !runtimeStatus.orcaRole) {
         assertRuntimeOwnerCurrent();
         clearPendingCredentialSwitchForSession(sessionId, { wake: false });
@@ -16633,6 +16645,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         if (isDeviceLinkInvoke()) markRemoteSettingPersistedInsideHandler(response);
         return response;
       }
+      if (internalOptions.nativeImmediateSelection && effectiveProviderId !== undefined
+        && (normalizeSessionProviderId(effectiveProviderId) ?? null) !== (currentProviderId ?? null)) {
+        throwIpcError('PRECONDITION_FAILED', 'Native model selection cannot replace the task provider');
+      }
       const axisPatch: SessionRuntimeAxisPatch = {
         ...(internalOptions.effortExplicit === true && atomicSelection
           ? { effort: atomicSelection.effort }
@@ -16645,6 +16661,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         ? axisPatch
         : await resolvePendingRuntimeAxisPatch(sessionId, axisPatch);
       const deferLockedSelection = async () => {
+        if (internalOptions.nativeImmediateSelection) {
+          throwIpcError('PRECONDITION_FAILED', 'This native menu change cannot be applied while the task is busy');
+        }
         const meta = await maker.getSessionMeta(sessionId);
         if (!meta) return { deferred: false, superseded: true };
         if (supersededByOwnerBoundary()) {
@@ -17011,6 +17030,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               },
               assertCanCommit: assertRuntimeOwnerCurrent,
               beforeClose: () => {
+                if (internalOptions.nativeImmediateSelection) {
+                  throwIpcError('PRECONDITION_FAILED', 'Native model selection cannot replace this running task');
+                }
                 if (!internalOptions.applyingPiCredentialPending) {
                   clearPendingCredentialSwitchForSession(sessionId, { wake: false });
                   pendingClearedForWindowRebuild = true;
@@ -17302,6 +17324,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
                       'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra',
                   }
                 : {}),
+              ...(internalOptions.nativeImmediateSelection ? {
+                assertSessionCloseSupported: () => {
+                  throwIpcError('PRECONDITION_FAILED', 'Native model selection requires an explicit task restart');
+                },
+              } : {}),
               forceSessionRebuild:
                 rebuildLiveOrcaWorker ||
                 (atomicSelection?.effort === null && runtimeAgentKind !== 'pi'),
@@ -17766,6 +17793,43 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   };
   applySessionRuntimeSelection = (sessionId, model, providerId, selection, options) =>
     handleSetModel(sessionId, model, providerId, undefined, selection, options);
+  nativeRuntimeBindingDepsHolder = {
+    assertAllowed: async id => {
+      await assertReviewSettingsUnlocked(id);
+      await assertNotRetiredCompanionSession(id);
+    },
+    withChangeLock: (id, run) => withSessionPermissionChange(id, () => {
+      if (hasSendToSessionLock(id)) {
+        throwIpcError('PRECONDITION_FAILED', 'A task input or runtime change is already in progress');
+      }
+      return withSendToSessionLock(id, run);
+    }),
+    apply: async (session, request, assertCurrent) => {
+      assertCurrent();
+      const patch = request.patch;
+      if (patch.model !== undefined || patch.effort !== undefined || patch.fastMode !== undefined) {
+        const profiles = await readSessionRuntimeProfiles(session.id);
+        assertCurrent();
+        if (!profiles) throwIpcError('NOT_FOUND', 'Native settings task no longer exists');
+        const current = profiles.effective;
+        const result = await applySessionRuntimeSelection(session.id,
+          patch.model ?? current.model, current.providerId,
+          { effort: patch.effort ?? current.effort, fastMode: patch.fastMode ?? current.fastMode },
+          { source: 'user', sessionLockHeld: true, nativeImmediateSelection: true,
+            assertSelectionCurrent: assertCurrent, effectiveProfile: current,
+            routeExplicit: patch.model !== undefined,
+            effortExplicit: patch.effort !== undefined, fastExplicit: patch.fastMode !== undefined });
+        assertCurrent();
+        if (result.superseded || result.deferred || runtimeSelectionRequiresModelWindowConfirmation(result)) {
+          throwIpcError('PRECONDITION_FAILED', 'Native model selection was not applied; task confirmation is required');
+        }
+      }
+      if (patch.planMode !== undefined && session.getPlanMode() !== patch.planMode) {
+        await handleSetPlanMode(session.id, patch.planMode, { permissionLockHeld: true, assertCurrent });
+        assertCurrent();
+      }
+    },
+  };
   registerSessionSetModelHandler(makerSessionRegistry, {
     isDeviceLinkInvoke,
     assertTrustedSender: (event) => assertTrustedAppRendererEvent(
@@ -18024,23 +18088,16 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     },
   );
 
-  ipcMain.handle(
-    MAKER_INVOKE.SET_PLAN_MODE,
-    async (event, sessionId: unknown, enabled: unknown) => {
-      // 轮 24-I3 HIGH:会话变更型 IPC 统一 sender 校验(对齐 SET_PERMISSION_MODE)。
-      if (!isDeviceLinkInvoke()) {
-        assertTrustedAppRendererEvent(event as Parameters<typeof assertTrustedAppRendererEvent>[0]);
-      }
-      if (typeof sessionId !== 'string' || typeof enabled !== 'boolean') {
-        throwIpcError('INVALID_PARAMS', 'sessionId + enabled required');
-      }
+  const handleSetPlanMode = async (sessionId: string, enabled: boolean,
+    options?: { permissionLockHeld?: boolean; assertCurrent?: () => void }) => {
       const snapshot = getCurrentDbClientSnapshot();
       const remote = isDeviceLinkInvoke();
       const assertOwnerCurrent = () => {
+        options?.assertCurrent?.();
         if (!snapshot || snapshot !== getCurrentDbClientSnapshot())
           throwIpcError('PRECONDITION_FAILED', 'Account changed during Plan update');
       };
-      return withSessionPermissionChange(sessionId, async () => {
+      const apply = async () => {
         assertOwnerCurrent();
         await assertReviewSettingsUnlocked(sessionId);
         assertOwnerCurrent();
@@ -18070,7 +18127,21 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           markRemoteSettingPersistedInsideHandler(result);
           return result;
         }
-      });
+      };
+      return options?.permissionLockHeld ? apply() : withSessionPermissionChange(sessionId, apply);
+  };
+
+  ipcMain.handle(
+    MAKER_INVOKE.SET_PLAN_MODE,
+    async (event, sessionId: unknown, enabled: unknown) => {
+      // 轮 24-I3 HIGH:会话变更型 IPC 统一 sender 校验(对齐 SET_PERMISSION_MODE)。
+      if (!isDeviceLinkInvoke()) {
+        assertTrustedAppRendererEvent(event as Parameters<typeof assertTrustedAppRendererEvent>[0]);
+      }
+      if (typeof sessionId !== 'string' || typeof enabled !== 'boolean') {
+        throwIpcError('INVALID_PARAMS', 'sessionId + enabled required');
+      }
+      return handleSetPlanMode(sessionId, enabled);
     },
   );
 
