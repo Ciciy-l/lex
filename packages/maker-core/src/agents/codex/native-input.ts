@@ -1,4 +1,5 @@
 import type { CodexNativeApprovalEvent, CodexNativeApprovalFrontend } from './native-approvals.js';
+import type { CodexNativeToolEvent, CodexNativeToolFrontend } from './native-dynamic-tools.js';
 import { prepareCodexNativeInput } from './native-input-content.js';
 import type { CodexNativeSteerRequest } from './native-steer.js';
 import type { UserContentBlock, UserMessage } from '../../types/common.js';
@@ -32,6 +33,7 @@ export interface CodexNativeRuntimeSnapshot {
 export interface CodexNativeSessionHandle extends AgentSessionHandle {
   readNativeRuntimeSnapshot(): Readonly<CodexNativeRuntimeSnapshot>;
   attachNativeApprovalFrontend(receive: (event: CodexNativeApprovalEvent) => void): CodexNativeApprovalFrontend;
+  attachNativeToolFrontend?(receive: (event: CodexNativeToolEvent) => Promise<boolean>): CodexNativeToolFrontend;
   acceptNativeSteer(request: CodexNativeSteerRequest): Promise<TurnSteerResponse>;
   acceptNativeTurn(request: CodexNativeTurnRequest): Promise<TurnStartResponse>;
   applyNativeRuntimeSettings(params: unknown, signal: AbortSignal): Promise<Record<string, never>>;

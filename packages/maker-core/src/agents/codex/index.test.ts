@@ -4960,7 +4960,7 @@ describe('CodexAgent.refreshLocalModels', () => {
     return native;
   }
   const presentationOwner = () => ({ signal: new AbortController().signal, isCurrent: () => true });
-  function freshPresentationFixture() {
+  function freshPresentationFixture(nativeParams: Record<string, unknown> = {}, deps: Partial<AgentDeps> = {}) {
     const native = presentationTransport();
     const service = Object.assign(native, { endpoint: Promise.resolve({ url: 'ws://127.0.0.1:31415', token: 'fixture-only' }) });
     const delivered: unknown[] = [], close = vi.fn(async () => {});
@@ -4971,7 +4971,7 @@ describe('CodexAgent.refreshLocalModels', () => {
       pending = launch.creation.start({ request, signal: launch.signal, owningHost: launch.host,
         forward: async () => { throw new Error('root must use owning host'); },
         dispatchToHost: (params, beforeDispatch) => launch.host.request('thread/start', params, { beforeDispatch }),
-      }, () => launch.prepareStart({ model: 'ignored-ui-default', cwd: '/wrong-ui-default' })).then(value => {
+      }, () => launch.prepareStart({ model: 'ignored-ui-default', cwd: '/wrong-ui-default', ...nativeParams })).then(value => {
         delivered.push(value); launch.creation.responseDelivered(request, value); return value;
       });
       void pending.catch(() => {});
@@ -4982,7 +4982,7 @@ describe('CodexAgent.refreshLocalModels', () => {
     });
     const resume = vi.fn(async () => ({ presentation: {} as never, ready: Promise.resolve(), close }));
     const agent = new CodexAgent(createDeps({}, { createLocalCodexNativeService: () => service,
-      createLocalCodexNativePresentation: resume, prepareLocalCodexNativePresentation: fresh, disableCodexPluginRuntime: true }));
+      createLocalCodexNativePresentation: resume, prepareLocalCodexNativePresentation: fresh, disableCodexPluginRuntime: true, ...deps }));
     return { agent, native, fresh, resume, close, delivered, pending: () => pending,
       start: () => agent.startSession({ sessionId: 'native-presentation', model: 'gpt-5.4', workingDir: '/repo' }) };
   }
@@ -5001,6 +5001,56 @@ describe('CodexAgent.refreshLocalModels', () => {
       expect(await activation).toEqual({ status: 'ready' });
       expect(handle.presentation).toBeDefined(); expect(f.delivered).toHaveLength(1);
       await handle.close(); expect(f.close).toHaveBeenCalled();
+    } finally { await f.agent.dispose(); }
+  });
+
+  it('executes declared native dynamic tools through Core approval and the original frontend, preserving cancellation', async () => {
+    const f = freshPresentationFixture({ dynamicTools: [{ type: 'namespace', name: 'codex_tui', description: 'original task tools',
+      tools: [{ type: 'function', name: 'read_thread', description: 'read', inputSchema: { type: 'object' } }] }] },
+    { getMcpToolApprovalPolicy: () => 'prompt-each-time' });
+    try {
+      const handle = await f.start() as CodexNativeSessionHandle;
+      await handle.activatePresentation!(presentationOwner());
+      const received: Array<{ kind: string; request?: { id: string | number; params: unknown }; id?: string | number }> = [];
+      const frontend = handle.attachNativeToolFrontend!(async event => { received.push(event); return true; }); frontend.ready();
+      let allow = false;
+      handle.setInteractionResolver(async request => {
+        expect(request).toMatchObject({ kind: 'permission', toolName: 'dynamic:codex_tui:read_thread' });
+        return { kind: 'permission', behavior: allow ? 'allow' : 'deny' };
+      });
+      f.native.setMockResponse('turn/start', { result: { turn: { id: 'native-tool-turn', status: 'inProgress', items: [] } } });
+      await handle.send({ type: 'user', content: 'inspect task' });
+      const params = { threadId: handle.id, turnId: 'native-tool-turn', callId: 'actual-native-call', namespace: 'codex_tui',
+        tool: 'read_thread', arguments: { threadId: handle.id } };
+      const responseFor = (id: string) => f.native.lines.map(line => JSON.parse(line)).find(value => value.id === id && 'result' in value)?.result;
+      f.native.emitMockLine({ id: 'native-denied', method: 'item/tool/call', params });
+      await vi.waitFor(() => expect(responseFor('native-denied')).toMatchObject({ success: false }));
+      expect(received).toEqual([]);
+      allow = true;
+      f.native.emitMockLine({ id: 'native-execution', method: 'item/tool/call', params });
+      await vi.waitFor(() => expect(received).toEqual([{ kind: 'request', request: { id: 'native-execution', method: 'item/tool/call', params } }]));
+      const result = { success: true, contentItems: [{ type: 'inputText' as const, text: 'original native tool output' }] };
+      expect(frontend.answer('native-execution', result)).toBe(true);
+      await vi.waitFor(() => expect(responseFor('native-execution')).toEqual(result));
+      f.native.emitMockLine({ id: 'native-cancel', method: 'item/tool/call', params: { ...params, callId: 'second-native-call' } });
+      await vi.waitFor(() => expect(received).toHaveLength(2));
+      f.native.emitMockLine({ method: 'serverRequest/resolved', params: { threadId: handle.id, requestId: 'native-cancel' } });
+      await vi.waitFor(() => expect(received.at(-1)).toMatchObject({ kind: 'resolved', id: 'native-cancel' }));
+      expect(frontend.answer('native-cancel', result)).toBe(false);
+      expect(responseFor('native-cancel')?.success).toBe(false);
+      let releaseApproval!: () => void, observedApproval!: () => void;
+      const heldApproval = new Promise<void>(resolve => { releaseApproval = resolve; });
+      const approvalObserved = new Promise<void>(resolve => { observedApproval = resolve; });
+      handle.setInteractionResolver(async () => { observedApproval(); await heldApproval; return { kind: 'permission', behavior: 'allow' }; });
+      const beforeHeldApproval = received.length;
+      f.native.emitMockLine({ id: 'native-pending-approval', method: 'item/tool/call', params: { ...params, callId: 'held-native-call' } });
+      await approvalObserved;
+      f.native.emitMockLine({ method: 'serverRequest/resolved', params: { threadId: handle.id, requestId: 'native-pending-approval' } });
+      await vi.waitFor(() => expect(responseFor('native-pending-approval')?.success).toBe(false));
+      releaseApproval();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(received).toHaveLength(beforeHeldApproval);
+      frontend.detach(); await handle.close();
     } finally { await f.agent.dispose(); }
   });
 

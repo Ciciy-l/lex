@@ -2,6 +2,7 @@ import { describe, it } from 'vitest';
 import assert from 'node:assert/strict';
 import { connectCodexNativeFrontend, type CodexFrontendCall, type CodexNativeFrontendOptions } from './native-frontend.js';
 import { CodexNativeApprovals } from './native-approvals.js';
+import { CodexNativeDynamicTools } from './native-dynamic-tools.js';
 
 function transport() {
   const lines = new Set<(line: string) => void>(), closes = new Set<(info: { reason: string }) => void>();
@@ -21,8 +22,9 @@ function fixture(route: (call: CodexFrontendCall) => Promise<unknown> = c => c.f
   observe: Pick<CodexNativeFrontendOptions, 'responseDelivered' | 'closed'> = {}) {
   const frontend = transport(), upstream = transport(), approvals = new CodexNativeApprovals();
   let current = true;
+  const tools = new CodexNativeDynamicTools(() => current);
   const link = connectCodexNativeFrontend({ frontend, upstream, ...observe,
-    handle: { attachNativeApprovalFrontend: receiver => approvals.attach(receiver) },
+    handle: { attachNativeApprovalFrontend: receiver => approvals.attach(receiver), attachNativeToolFrontend: receiver => tools.attach(receiver) },
     isCurrent: () => current,
     request: route,
     notification: event => (event.params as { threadId?: string })?.threadId === 'owned' ? event : null,
@@ -32,9 +34,28 @@ function fixture(route: (call: CodexFrontendCall) => Promise<unknown> = c => c.f
     upstream.emit({ id: upstream.sent.at(-1)!.id, result: {} }); await tick();
     frontend.emit({ method: 'initialized' }); await tick(); frontend.sent.length = 0; upstream.sent.length = 0;
   };
-  return { frontend, upstream, approvals, link, ready, expire() { current = false; } };
+  return { frontend, upstream, approvals, tools, link, ready, expire() { current = false; } };
 }
 describe('task-bound Codex native protocol connection', () => {
+  it('relays an admitted tool to the initialized original executor and returns only through Core', async () => {
+    const f = fixture();
+    const params = { threadId: 'owned', turnId: 'turn', callId: 'actual-tool-call', namespace: 'codex_tui', tool: 'read_thread', arguments: { threadId: 'owned' } };
+    f.tools.register([{ type: 'namespace', name: 'codex_tui', tools: [{ type: 'function', name: 'read_thread' }] }]);
+    try {
+      assert.equal((await f.tools.execute('before-ready', params)).success, false);
+      await f.ready();
+      const result = f.tools.execute('native-server-id', params); await tick();
+      assert.deepEqual(f.frontend.sent, [{ id: 'native-server-id', method: 'item/tool/call', params }]);
+      assert.deepEqual(f.upstream.sent, []);
+      const response = { success: true, contentItems: [{ type: 'inputText', text: 'original executor result' }] };
+      f.frontend.emit({ id: 'native-server-id', result: response });
+      assert.deepEqual(await result, response); assert.deepEqual(f.upstream.sent, []);
+      const cancelled = f.tools.execute('cancel-native', params); await tick();
+      f.tools.cancel('cancel-native', 'owned'); await tick();
+      assert.equal((await cancelled).success, false);
+      assert.deepEqual(f.frontend.sent.at(-1), { method: 'serverRequest/resolved', params: { threadId: 'owned', requestId: 'cancel-native' } });
+    } finally { f.tools.close(); await f.link.close(); }
+  });
   it('reports delivery only after the successful ACK write and reports connection loss separately', async () => {
     const delivered: string[] = []; let closes = 0;
     const f = fixture(call => call.forward(), { responseDelivered: request => delivered.push(request.method), closed: () => { closes++; } });

@@ -13,7 +13,7 @@ import { createCodexNativeGateway } from './codex-native-gateway.js';
 
 type OwnedTerminal = AgentTerminalDriver & { readonly pid: number };
 export interface CodexNativePresentationOptions {
-  handle: Pick<CodexNativeSessionHandle, 'id' | 'attachNativeApprovalFrontend'>;
+  handle: Pick<CodexNativeSessionHandle, 'id' | 'attachNativeApprovalFrontend' | 'attachNativeToolFrontend'>;
   endpoint: CodexNativeEndpoint;
   executable: string;
   cwd: string;
@@ -44,7 +44,7 @@ export async function createCodexNativePresentation(
 
 /** Starts only the original UI. No native id or synthetic handle is needed. */
 async function prepareCodexNativeFrontend(
-  options: Omit<CodexNativePresentationOptions, 'handle'> & { handle: Pick<CodexNativeSessionHandle, 'attachNativeApprovalFrontend'> },
+  options: Omit<CodexNativePresentationOptions, 'handle'> & { handle: Pick<CodexNativeSessionHandle, 'attachNativeApprovalFrontend' | 'attachNativeToolFrontend'> },
   command: string[],
   launch: (spec: AgentTerminalLaunch) => OwnedTerminal = spec => new AgentTerminalPtyDriver(spec),
 ) {

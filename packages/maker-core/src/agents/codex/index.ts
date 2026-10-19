@@ -10,6 +10,7 @@ import { CodexNativeTaskPresentation } from './native-task-presentation.js';
 import type { CodexNativePreparedPresentation } from './native-task-presentation.js';
 import { CodexNativeTaskCreation } from './native-task-creation.js';
 import { mergeCodexNativeThreadStart } from './native-start-params.js';
+import { CodexNativeDynamicTools } from './native-dynamic-tools.js';
 import { CodexNativeAttachUnavailable, waitForCodexNativeAttach, type CodexNativeAttachOrigin } from './native-attach-readiness.js';
 import type { AgentPresentationOwner, AgentPresentationInitialization, AgentPresentationUnavailableReason } from '../presentation.js';
 import type { CodexNativeServiceBinding } from './native-service-slot.js';
@@ -4730,6 +4731,7 @@ assertRouteCurrent();
     const notificationProfile: CodexNotificationProfile = nativePresentation ? 'native-presentation' : 'legacy';
     const nativePresentationLifetime = nativePresentation ? new AbortController() : undefined;
     const nativeApprovals = new CodexNativeApprovals();
+    const nativeDynamicTools = new CodexNativeDynamicTools(() => !closed && isCurrentHost());
     let nativeCreation: CodexNativeTaskCreation | undefined;
     let preparedNativeFrontend: CodexNativePreparedPresentation | undefined;
     let freshNativeService: CodexNativeServiceBinding | undefined;
@@ -6911,6 +6913,7 @@ assertRouteCurrent();
         try {
           preparedNativeFrontend = await freshFactory({ sessionId: sid!, service, host, creation, cwd: opts.workingDir,
             signal, isCurrent: current, attachNativeApprovalFrontend: receive => nativeApprovals.attach(receive),
+            attachNativeToolFrontend: receive => nativeDynamicTools.attach(receive),
             readRuntime: () => Object.freeze({ catalogModel: mutableCatalogModel ?? mutableModel, nativeModel: mutableModel,
               providerId: mutableProviderId ?? null, nativeModelProvider: threadModelProvider,
               effort: mutableEffort, fastMode: isFastServiceTier(mutableServiceTier) }),
@@ -6918,6 +6921,7 @@ assertRouteCurrent();
               assertCurrentHost('native thread/start preparation');
               const configured = new Set((this.deps.mcpProviders ?? []).map(provider => provider.name));
               const merged = mergeCodexNativeThreadStart(params, nativeParams, configured);
+              nativeDynamicTools.register(nativeParams.dynamicTools);
               return merged;
             }),
           });
@@ -7737,6 +7741,8 @@ assertRouteCurrent();
         hostAutoApprove?: boolean;
         itemId?: string;
         nativeRequest?: CodexNativeApprovalRequest;
+        /** Cancellation identity only; never a synthetic native prompt. */
+        nativeRequestId?: string | number;
         nativePrompt?: {
           requestId: string | number;
           open(allowPersistent: boolean, accept: (decision: ApprovalDecision) => void): { close(): void };
@@ -7744,7 +7750,7 @@ assertRouteCurrent();
       },
     ): Promise<{ decision: ApprovalDecision; reason?: string; nativeResponse?: CodexNativeApprovalResponse }> {
       let nativeResponse: CodexNativeApprovalResponse | undefined;
-      const nativeRequestId = opts?.nativeRequest?.id ?? opts?.nativePrompt?.requestId;
+      const nativeRequestId = opts?.nativeRequest?.id ?? opts?.nativePrompt?.requestId ?? opts?.nativeRequestId;
       const nativeOwner = nativeRequestId === undefined ? undefined : nativeApprovalRequests.get(nativeRequestId);
       if (nativeOwner?.resolved || closed) return { decision: 'decline' };
       // Reasons stay inside Cindy for Host-owned dynamic tool results. Stock Codex
@@ -9991,10 +9997,8 @@ assertRouteCurrent();
         );
       }
 
-      if (
-        !hostDynamicToolProvider ||
-        !registeredHostDynamicToolKeys.has(dynamicToolCallKey(params))
-      ) {
+      const nativeTool = nativeDynamicTools.supports(params);
+      if (!nativeTool && (!hostDynamicToolProvider || !registeredHostDynamicToolKeys.has(dynamicToolCallKey(params)))) {
         return {
           contentItems: [{ type: 'inputText', text: `Unsupported dynamic tool: ${params.tool}` }],
           success: false,
@@ -10030,6 +10034,7 @@ assertRouteCurrent();
           {
             forcePrompt: approvalPolicy === 'prompt-each-time',
             hostAutoApprove: approvalPolicy === 'auto-approve',
+            ...(nativeTool ? { nativeRequestId: meta.requestId } : {}),
             ...(toolUseId ? { itemId: toolUseId } : {}),
           },
         );
@@ -10041,8 +10046,23 @@ assertRouteCurrent();
         }
       }
 
+      if (nativeTool) {
+        if (resolvedWhileBufferedRequestIds.delete(String(meta.requestId))
+          || nativeApprovalRequests.get(meta.requestId)?.resolved || closed || !isCurrentHost()) {
+          return cancelledDynamicToolResponse('server_request_resolved');
+        }
+        return dynamicToolBroker.track({ kind: 'dynamic_tool', connectionId, requestId: meta.requestId,
+          threadId: params.threadId, turnId: params.turnId, itemId: params.callId }, async settle => {
+          if (!(await gateServerRequestTurn(params.turnId, params.threadId)) || closed || !isCurrentHost()
+            || !dynamicToolBroker.has({ connectionId, requestId: meta.requestId })) {
+            settle(cancelledDynamicToolResponse('turn_not_active'));
+            return;
+          }
+          settle(await nativeDynamicTools.execute(meta.requestId, params));
+        }).finally(() => nativeDynamicTools.cancel(meta.requestId, params.threadId));
+      }
       try {
-        const response = await hostDynamicToolProvider.callTool(params, hostDynamicToolContext);
+        const response = await hostDynamicToolProvider?.callTool(params, hostDynamicToolContext);
         if (response) return response;
         return {
           contentItems: [{ type: 'inputText', text: `Unsupported dynamic tool: ${params.tool}` }],
@@ -13169,7 +13189,10 @@ assertRouteCurrent();
         () => permissionsApproval(params, meta)),
       serverRequestResolved: handleServerRequestResolved,
       requestUserInput,
-      dynamicToolCall,
+      dynamicToolCall: (params, meta) => nativeDynamicTools.supports(params)
+        ? withNativeApprovalRequest({ threadId: params.threadId,
+          itemId: `dynamic-tool:${dynamicToolApprovalIdentity(params).serverName}:${params.turnId}:${params.callId}` },
+        meta, () => dynamicToolCall(params, meta)) : dynamicToolCall(params, meta),
     };
     try {
       assertCurrentHost('thread subscription');
@@ -13199,6 +13222,7 @@ assertRouteCurrent();
       nativeRuntimeControls.close();
       nativeStop.retire();
       nativeApprovals.close();
+      nativeDynamicTools.close();
       await startup.remoteRoute?.release();
       cancelInteractionContinuation('session_closed', true);
       resetCodexGenerationTiming(translatorRt);
@@ -13256,6 +13280,7 @@ assertRouteCurrent();
           effort: mutableEffort, fastMode: isFastServiceTier(mutableServiceTier) });
       },
       attachNativeApprovalFrontend(receive) { assertCurrentHost("native approval frontend"); return nativeApprovals.attach(receive); },
+      attachNativeToolFrontend(receive) { assertCurrentHost("native tool frontend"); return nativeDynamicTools.attach(receive); },
       setNativeInputResolver(resolver, media) { nativeAdmission!.bind(resolver, media); nativeSteerAdmission.bind(resolver, media); },
       setNativeRuntimeResolver(resolver) { nativeRuntimeControls.bind(resolver); },
       setNativeStopResolver(resolver) { nativeStop.bind(resolver); },

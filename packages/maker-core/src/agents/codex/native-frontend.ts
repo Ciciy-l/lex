@@ -1,6 +1,7 @@
 import type { Transport } from './app-server/transport.js';
 import type { CodexNativeSessionHandle } from './native-input.js';
 import type { CodexNativeApprovalFrontend, CodexNativeApprovalEvent } from './native-approvals.js';
+import type { CodexNativeToolFrontend } from './native-dynamic-tools.js';
 import type { AppServerHost } from './app-server/host.js';
 import { AppServerRpcError } from './app-server/client.js';
 
@@ -22,7 +23,7 @@ export interface CodexNativeFrontendOptions {
   /** These are two connections, never the owning service's control transport. */
   frontend: Transport;
   upstream: Transport;
-  handle: Pick<CodexNativeSessionHandle, 'attachNativeApprovalFrontend'>;
+  handle: Pick<CodexNativeSessionHandle, 'attachNativeApprovalFrontend' | 'attachNativeToolFrontend'>;
   isCurrent(): boolean;
   /** Required task policy. It admits task input/controls before calling forward. */
   request(call: CodexFrontendCall): Promise<unknown>;
@@ -53,8 +54,9 @@ function isId(value: unknown): value is Id {
 
 /**
  * Task-owned RPC relay. Every native server request is withheld: the existing
- * Agent remains its only responder. Only a policy-approved prompt is projected
- * back into the native UI. No raw native reply is ever sent to app-server.
+ * Agent remains its only responder. Policy-approved prompts and registered
+ * tool executions are projected to the native UI. No raw native reply is ever
+ * sent to app-server.
  */
 export function connectCodexNativeFrontend(options: CodexNativeFrontendOptions): { close(): Promise<void> } {
   const lifetime = new AbortController();
@@ -63,6 +65,7 @@ export function connectCodexNativeFrontend(options: CodexNativeFrontendOptions):
   const stops: Array<() => void> = [];
   let closing: Promise<void> | undefined;
   let approval: CodexNativeApprovalFrontend | undefined;
+  let tools: CodexNativeToolFrontend | undefined;
   let initializeStarted = false, initializeCompleted = false, ready = false;
   const earlyApprovals: CodexNativeApprovalEvent[] = [];
   let pendingBytes = 0, earlyApprovalBytes = 0, requestSequence = 0;
@@ -78,7 +81,7 @@ export function connectCodexNativeFrontend(options: CodexNativeFrontendOptions):
       ]);
       for (const outcome of outcomes) if (outcome.status === 'rejected') throw outcome.reason;
     });
-    lifetime.abort(); approval?.detach();
+    lifetime.abort(); approval?.detach(); tools?.detach();
     try { options.closed?.(); } catch { /* Cleanup must still close both transports. */ }
     for (const stop of stops.splice(0)) stop();
     for (const request of waiting.values()) request.reject(new Error('Native frontend receipt unconfirmed'));
@@ -136,9 +139,9 @@ export function connectCodexNativeFrontend(options: CodexNativeFrontendOptions):
     const value = parse(line); if (!value) return;
     if (!('method' in value)) {
       if (!isId(value.id)) { fail(); return; }
-      // Native UI replies are choices for the current policy-approved prompt,
-      // not permission to answer an arbitrary upstream server request.
-      approval?.answer(value.id, value.result);
+      // Replies settle only the current admitted prompt or executor call;
+      // they never answer an arbitrary upstream server request.
+      if (!approval?.answer(value.id, value.result)) tools?.answer(value.id, value.result);
       return;
     }
     if (typeof value.method !== 'string' || !value.method || value.method.length > 256) { fail(); return; }
@@ -147,6 +150,7 @@ export function connectCodexNativeFrontend(options: CodexNativeFrontendOptions):
       if (value.method !== 'initialized' || !initializeCompleted || ready) { fail(); return; }
       ready = true;
       try { void options.upstream.writeLine(JSON.stringify({ method: 'initialized' })).catch(fail); } catch { fail(); }
+      tools?.ready();
       earlyApprovalBytes = 0;
       for (const event of earlyApprovals.splice(0)) publishApproval(event);
       return;
@@ -210,6 +214,8 @@ export function connectCodexNativeFrontend(options: CodexNativeFrontendOptions):
       throw new Error('Invalid owning-host RPC deadline');
     }
     approval = options.handle.attachNativeApprovalFrontend(publishApproval);
+    tools = options.handle.attachNativeToolFrontend?.(event => event.kind === 'request' ? send(event.request)
+      : send({ method: 'serverRequest/resolved', params: { threadId: event.threadId, requestId: event.id } }));
     if (lifetime.signal.aborted) { approval.detach(); throw new Error('Native frontend retired during attachment'); }
     const subscribe = (stop: () => void) => { if (lifetime.signal.aborted) stop(); else stops.push(stop); };
     subscribe(options.upstream.onClose(fail)); subscribe(options.frontend.onClose(fail));

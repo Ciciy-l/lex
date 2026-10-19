@@ -38,6 +38,7 @@ export interface CodexNativeFreshPresentationLaunch {
   readRuntime(): Readonly<CodexNativeRuntimeSnapshot>;
   prepareStart(params: Record<string, unknown>): Promise<ThreadStartParams>;
   attachNativeApprovalFrontend: CodexNativeSessionHandle['attachNativeApprovalFrontend'];
+  attachNativeToolFrontend?: CodexNativeSessionHandle['attachNativeToolFrontend'];
 }
 export interface CodexNativePreparedPresentation {
   bind(launch: CodexNativePresentationLaunch): CodexNativePresentationOwner;
