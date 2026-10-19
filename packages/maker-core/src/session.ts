@@ -470,7 +470,9 @@ export class Session {
     const input = this.nativeInputBinding, nativeId = this.sdkSessionId;
     const current = () => !activation.controller.signal.aborted && Boolean(input)
       && this.nativeInputBinding === input && !input!.controller.signal.aborted
-      && !this.terminationStarted && this.status === 'active' && this.sdkSessionId === nativeId
+      // Stop interrupts a turn, not the task-owned frontend. A presentation
+      // read during this transient state must not permanently retire its PTY.
+      && !this.terminationStarted && (this.status === 'active' || this.status === 'aborting') && this.sdkSessionId === nativeId
       && Boolean(this.interactionListener) && isOwnerCurrent();
     const retire = () => {
       activation.controller.abort();

@@ -3,6 +3,9 @@ import { Session, type SessionNativeInput, type SessionOptions } from './session
 import { AUTO_REVIEW_SOURCE_CONTENT, TurnDispatchRejectedError, TurnDispatchUnconfirmedError, type AgentSessionHandle } from './agents/base-agent.js';
 import type { AgentEvent } from './types/events.js';
 import type { AgentNativeInputRequest, AgentNativeInputResolver, AgentNativeMediaResolver } from './agents/native-input.js';
+import { AgentPresentationRuntime } from './agents/presentation.js';
+import { CodexNativeTaskPresentation } from './agents/codex/native-task-presentation.js';
+import type { CodexNativeSessionHandle } from './agents/codex/native-input.js';
 
 const sessions: Session[] = [];
 afterEach(async () => { await Promise.all(sessions.splice(0).map(session => session.close())); });
@@ -86,6 +89,54 @@ describe('native presentation activation through the product Session', () => {
     expect(await f.session.send('GUI remains available')).toEqual({ accepted: true });
     expect(f.handle.send).toHaveBeenCalledOnce();
     release.resolve(); expect(await f.session.presentationInitialization).toEqual({ status: 'ready' });
+  });
+
+  it('keeps the same frontend during Stop without admitting input until the turn interruption settles', async () => {
+    const release = deferred(), task = new CodexNativeTaskPresentation(vi.fn());
+    const close = vi.fn();
+    const presentation = new AgentPresentationRuntime('native-session', {
+      write: vi.fn(), resize: vi.fn(), close, onData: () => () => {}, onExit: () => () => {},
+    });
+    const service = new AbortController();
+    let mainOwnerCurrent = true;
+    const f = fixture({}, {
+      abort: async () => { await release.promise; },
+      activatePresentation: async owner => {
+        await task.start(async () => ({ presentation, ready: Promise.resolve(), close: () => presentation.close() }), {
+          handle: f.handle as CodexNativeSessionHandle, cwd: f.session.workDir, ownerSignal: owner.signal, isCurrent: owner.isCurrent,
+          service: { endpoint: { url: 'ws://127.0.0.1:1', token: 'fixture' }, signal: service.signal, isCurrent: () => !service.signal.aborted },
+          routingContext: { ownsDescendant: () => false, titleContext: () => ({ model: 'fixture-model', mcpServers: [] }) },
+        });
+        return { status: 'ready' };
+      },
+    });
+    Object.defineProperty(f.handle, 'presentation', { get: () => task.presentation });
+    f.session.onNativeInput(async input => { await f.session.acceptNativeInput(input, { signal: input.signal }); });
+    f.session.setInteractionListener(vi.fn());
+    f.session.activatePresentation(() => mainOwnerCurrent);
+    expect(await f.session.presentationInitialization).toEqual({ status: 'ready' });
+    const resolveInput = vi.mocked(f.handle.setNativeInputResolver!).mock.calls[0]![0];
+    const signal = new AbortController().signal;
+    const stop = f.session.abort();
+    try {
+      expect(f.session.getStatus()).toBe('aborting');
+      // Main resolves this getter while a terminal read is pending.
+      expect(f.session.presentation).toBe(presentation);
+      expect(close).not.toHaveBeenCalled();
+      await expect(resolveInput({ ...f.input, nativeMessageId: 'during-stop', signal })).rejects.toThrow('no longer current');
+      expect(f.accept).not.toHaveBeenCalled();
+    } finally { release.resolve(); await stop; }
+    expect(f.session.presentation).toBe(presentation);
+    expect(presentation.state().status).toBe('running');
+    await resolveInput({ ...f.input, nativeMessageId: 'after-stop', signal });
+    expect(f.accept).toHaveBeenCalledOnce();
+    expect(f.handle.send).not.toHaveBeenCalled();
+    // A real owner change still retires the same frontend.
+    mainOwnerCurrent = false;
+    expect(f.session.presentation).toBeUndefined();
+    await task.close();
+    expect(close).toHaveBeenCalledOnce();
+    expect(service.signal.aborted).toBe(false);
   });
 });
 
