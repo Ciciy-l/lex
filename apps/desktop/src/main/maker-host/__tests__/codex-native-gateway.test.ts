@@ -25,7 +25,10 @@ describe('native Codex per-task loopback gateway', () => {
     try { const socket = f.connect(); await once(socket, 'open');
       const response = once(socket, 'message'); socket.send('first'); assert.equal(String((await response)[0]), 'first');
       assert.deepEqual(f.messages, ['first']); assert.equal(f.connections.length, 1);
-      await f.gateway.close(); assert.equal(socket.readyState, WebSocket.CLOSED);
+      const closed = once(socket, 'close');
+      const closing = f.gateway.close();
+      assert.equal(f.gateway.close(), closing);
+      await closing; await closed; assert.equal(socket.readyState, WebSocket.CLOSED);
     } finally { await f.close(); }
   });
   it('rejects missing/wrong authorization, browser origins, routes and host rebinding', async () => {
