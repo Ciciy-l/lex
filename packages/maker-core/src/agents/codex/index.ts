@@ -14797,6 +14797,29 @@ assertRouteCurrent();
         if (!service) throw new Error('Native Codex presentation requires its owning native service');
         await nativePresentation.start(this.deps.createLocalCodexNativePresentation, {
           handle, service, cwd: opts.workingDir, isCurrent: () => !closed && isCurrentHost(),
+          routingContext: {
+            ownsDescendant: id => descendantParentThreadByThreadId.has(id) || descendantMcpThreadIds.has(id),
+            titleContext: async () => {
+              assertCurrentHost('native title context');
+              const capturedThread = threadId;
+              const mcpServers = new Set<string>();
+              let cursor: string | null = null;
+              const seen = new Set<string>();
+              for (let page = 0; page < 10; page++) {
+                const response: CodexMcpServerStatusListResponse = await host.request<CodexMcpServerStatusListResponse>(Method.McpServerStatusList,
+                  { threadId: capturedThread, cursor, limit: 100, detail: 'toolsAndAuthOnly' },
+                  { timeoutMs: CRITICAL_THREAD_RPC_TIMEOUT_MS });
+                assertCurrentHost('native title context receipt');
+                if (closed || threadId !== capturedThread) throw new Error('Native title task changed');
+                for (const server of response.data) mcpServers.add(server.name);
+                cursor = response.nextCursor;
+                if (cursor === null) return { model: mutableModel, modelProvider: codexThreadModelProviderId, mcpServers: [...mcpServers] };
+                if (seen.has(cursor)) break;
+                seen.add(cursor);
+              }
+              throw new Error('Native title task capability list was incomplete');
+            },
+          },
         });
       } catch (error) { await closeSessionHandle(); throw error; }
     }

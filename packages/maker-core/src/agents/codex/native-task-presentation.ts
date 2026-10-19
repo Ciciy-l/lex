@@ -1,3 +1,4 @@
+import type { CodexNativeTaskRoutingOptions } from './native-task-routing.js';
 import type { AgentSessionPresentation } from '../presentation.js';
 import type { CodexNativeSessionHandle } from './native-input.js';
 import type { CodexNativeServiceBinding } from './native-service-slot.js';
@@ -8,6 +9,7 @@ export interface CodexNativePresentationLaunch {
   cwd: string;
   signal: AbortSignal;
   isCurrent(): boolean;
+  routingContext: Pick<CodexNativeTaskRoutingOptions, 'ownsDescendant' | 'titleContext'>;
 }
 export interface CodexNativePresentationOwner {
   presentation: AgentSessionPresentation;

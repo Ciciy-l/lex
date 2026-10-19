@@ -994,6 +994,32 @@ with bounded attempts and unchanged authentication. Deterministic tests cover
 blocked allocations, failure and cleanup; this fixes the observed local
 `bad port` failure without changing machine networking or client protections.
 
+### Main settings binding and task-scoped native routing
+
+Main now binds native runtime requests to its existing model/profile transaction
+and shared Plan handler. It captures the task/account/database owner, retains the
+current provider and unchanged axes, and refuses a contended input lock instead
+of waiting in a cycle. Native responses cannot acknowledge a deferred selection,
+unresolved context-window confirmation or a required runtime replacement. Model
+and Plan operations remain sequential; this is not a cross-axis atomic commit.
+
+The Codex frontend router uses the Agent's actual descendant ownership and a
+bounded MCP capability snapshot. History/notifications stay with that task;
+native configuration exposes presentation metadata without credentials, origins
+or transport settings. Auxiliary title requests retain their original read-only
+context, with disabled MCP names completed by the authoritative task owner. The
+current native structured approval flags are preserved explicitly. Catalog and
+other controls still require Main's resolved provider bindings before ordinary
+startup can select this adapter.
+
+Managed Codex 0.162.1 `codex-catalog-native3.json` passes 31 positive checks with
+one service/thread, native menu selection, GUI/TUI/GUI turns, approval history,
+screen reattachment and confirmed cleanup. The second report sampled the screen
+before its asynchronous PTY rendering caught up with protocol completion; the
+third independently waits for the original screen. Its earlier failed report is
+retained. This uses an isolated provider catalog and runtime callback, not actual
+product database/UI, SSH or phone acceptance.
+
 ## Upstream reference
 
 VelaTerm reference: `vlinx-io/VelaTerm` at

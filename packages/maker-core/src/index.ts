@@ -132,3 +132,6 @@ export type { CodexNativeSessionHandle } from './agents/codex/native-input.js';
 export type { CodexNativeServiceBinding } from './agents/codex/native-service-slot.js';
 export type { CodexNativePresentationFactory, CodexNativePresentationLaunch, CodexNativePresentationOwner } from './agents/codex/native-task-presentation.js';
 export { connectCodexNativeFrontend, type CodexNativeFrontendOptions, type CodexFrontendCall, type CodexFrontendRequest, type CodexFrontendNotification } from './agents/codex/native-frontend.js';
+
+export { createCodexNativeTaskRouting, type CodexNativeTaskRoutingOptions } from './agents/codex/native-task-routing.js';
+export { projectCodexNativeConfig, projectCodexNativeModels, type CodexNativeCatalogChoice } from './agents/codex/native-catalog.js';

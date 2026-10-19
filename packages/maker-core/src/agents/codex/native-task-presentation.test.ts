@@ -8,7 +8,8 @@ function fixture() {
   const presentation = { marker: true } as never;
   const handle = { id: 'owned-thread' } as never;
   const launch = { handle, cwd: '/fixture', service: { endpoint: { url: 'ws://127.0.0.1:1', token: 'invalid-fixture-token' },
-    signal: service.signal, isCurrent: () => !service.signal.aborted }, isCurrent: () => current };
+    signal: service.signal, isCurrent: () => !service.signal.aborted }, isCurrent: () => current, routingContext: { ownsDescendant: () => false,
+      titleContext: () => ({ model: 'fixture-model', mcpServers: [] }) } };
   const owner = { presentation, async close() { closes++; } };
   return { task, launch, owner, service, warnings, expire() { current = false; }, get closes() { return closes; } };
 }

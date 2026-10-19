@@ -1,3 +1,4 @@
+import { createCodexNativeTaskRouting, type CodexNativeTaskRoutingOptions, type CodexNativePresentationLaunch } from '@cindy/maker-core';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -99,4 +100,20 @@ export async function createCodexNativePresentation(
   } catch (error) {
     await close(); throw error;
   }
+}
+
+/** Main selects catalog/controls while Core supplies actual task lineage. */
+export function createTaskCodexNativePresentation(launch: CodexNativePresentationLaunch,
+  options: Omit<CodexNativePresentationOptions, 'handle' | 'endpoint' | 'cwd' | 'isCurrent' | 'signal' | 'request' | 'notification'> & {
+    catalog: CodexNativeTaskRoutingOptions['catalog'];
+    control: CodexNativeTaskRoutingOptions['control'];
+  }) {
+  const routing = createCodexNativeTaskRouting({ handle: launch.handle, cwd: launch.cwd,
+    isCurrent: launch.isCurrent, ...launch.routingContext, catalog: options.catalog,
+    control: (call, scope) => call.request.method === 'thread/settings/update' && scope === 'task'
+      ? launch.handle.applyNativeRuntimeSettings(call.request.params, call.signal) : options.control(call, scope),
+  });
+  return createCodexNativePresentation({ ...options, handle: launch.handle, endpoint: launch.service.endpoint,
+    cwd: launch.cwd, signal: launch.signal, isCurrent: launch.isCurrent,
+    request: routing.request, notification: routing.notification });
 }
