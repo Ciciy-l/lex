@@ -7,6 +7,12 @@ import { projectNativePermissions } from './native-permissions.js';
 import { CodexNativeQuestions, type CodexNativeQuestionRequest } from './native-questions.js';
 import { projectNativeMcpConfirmation, decodeNativeMcpConfirmation } from './native-mcp-confirmation.js';
 import { CodexNativeTaskPresentation } from './native-task-presentation.js';
+import type { CodexNativePreparedPresentation } from './native-task-presentation.js';
+import { CodexNativeTaskCreation } from './native-task-creation.js';
+import { mergeCodexNativeThreadStart } from './native-start-params.js';
+import { CodexNativeAttachUnavailable, waitForCodexNativeAttach, type CodexNativeAttachOrigin } from './native-attach-readiness.js';
+import type { AgentPresentationOwner, AgentPresentationInitialization, AgentPresentationUnavailableReason } from '../presentation.js';
+import type { CodexNativeServiceBinding } from './native-service-slot.js';
 import { CodexNativeApprovals, type CodexNativeApprovalRequest, type CodexNativeApprovalResponse } from './native-approvals.js';
 import { CODEX_NATIVE_TURN, CodexNativeInputAdmission, type CodexNativeSendOptions, type CodexNativeSessionHandle } from './native-input.js';
 import { syncCodexArchiveState } from './archive-state.js';
@@ -203,7 +209,7 @@ import { CodexForkError, type CodexForkStage } from './fork-error.js';
 import { resolveForkTurnAnchor } from './fork-turn-anchor.js';
 import { parseReconnectAttemptMessage } from '../shared/network-error.js';
 import { extractNonSecretErrorSignals } from '@cindy/maker-shared/error-redaction';
-import { AppServerHost, CodexNativeInitializationStoppedError, type ThreadEventHandlers, type ThreadSubscription } from './app-server/host.js';
+import { AppServerHost, CodexNativeInitializationStoppedError, type ThreadEventHandlers, type ThreadSubscription, type CodexNotificationProfile } from './app-server/host.js';
 import { AppServerRequestTimeoutError } from './app-server/client.js';
 import { useCodexHistoryHome, type CodexExternalAuth } from './app-server/external-auth.js';
 import {
@@ -517,12 +523,16 @@ function localSessionHostIdentity(input: {
   customContext: boolean;
   storage?: { sqliteHome: string; historyHome: string };
   policy: 'isolated' | 'legacy-shared';
+  notificationProfile?: CodexNotificationProfile;
 }): string {
   const base = input.accountSessionHost
     ? `local-account:${input.accountProviderId ?? 'openai'}:session:${input.sessionId}`
     : input.reviewMode ? localReviewHostKey(input.sessionId)
       : input.customContext ? localCustomContextHostKey(input.sessionId) : hostKey(input.remoteHostId);
-  return codexLocalAuthHostIdentity(base + (input.storage
+  const presentationKey = input.notificationProfile === 'native-presentation' && !input.remoteHostId
+    ? `:native-presentation:session:${input.sessionId}` : '';
+  if (presentationKey && !input.sessionId) throw new Error('Native presentation requires a local Session identity');
+  return codexLocalAuthHostIdentity(base + presentationKey + (input.storage
     ? `:storage:${input.storage.sqliteHome}:history:${input.storage.historyHome}` : ''), input.policy);
 }
 
@@ -530,6 +540,10 @@ const LOCAL_CONTROL_PLANE_HOST_PREFIX = 'local-control:';
 // One bridge is shared by every local host, including account and utility hosts.
 const LOCAL_MCP_REFRESH_KEY = 'local-mcp-refresh';
 const LOCAL_CONFIGURATION_CHANGE_KEY = LOCAL_MCP_REFRESH_KEY;
+// An initialized host cannot gain a different notification profile by reuse.
+// This error never enters credential-change retirement/restart.
+class CodexNotificationProfileMismatchError extends Error {}
+
 // Only raised before a caller sends a thread RPC; safe to select a fresh route.
 class CodexRouteSelectionChangedError extends Error {
   constructor(message = 'Codex route changed during startup', readonly retryable = true) { super(message); }
@@ -2023,6 +2037,7 @@ export class CodexAgent extends BaseAgent {
     credentialMode: AgentCredentialMode | undefined;
     credentialModeResolved: boolean;
     generation: number;
+    notificationProfile: CodexNotificationProfile;
   }>();
 
   /**
@@ -2551,6 +2566,7 @@ export class CodexAgent extends BaseAgent {
       routeIsCurrent?: () => boolean;
       routeSignal?: AbortSignal;
       reuseExistingUtilityHost?: boolean;
+      notificationProfile?: CodexNotificationProfile;
       localAuthPolicy?: 'isolated' | 'legacy-shared';
       keyOverride?: string;
       hostPurpose?: 'control-plane' | 'review' | 'custom-context';
@@ -2560,6 +2576,15 @@ export class CodexAgent extends BaseAgent {
       historyHome?: string;
     } = {},
   ): Promise<AppServerHost> {
+    const notificationProfile = opts.notificationProfile ?? 'legacy';
+    if (notificationProfile === 'native-presentation' && (remoteHostId || !opts.keyOverride)) {
+      throw new CodexNotificationProfileMismatchError('Native presentation requires an explicit local task host');
+    }
+    const assertNotificationProfile = (actual: CodexNotificationProfile): void => {
+      if (actual !== notificationProfile) {
+        throw new CodexNotificationProfileMismatchError('Codex host notification profile cannot be upgraded in place');
+      }
+    };
     const key = opts.keyOverride ?? (opts.providerId ? `local-account:${opts.providerId}` : hostKey(remoteHostId));
     const assertRouteCurrent = (): void => {
       if (opts.routeIsCurrent && !opts.routeIsCurrent()) throw new CodexRouteSelectionChangedError();
@@ -2629,6 +2654,7 @@ export class CodexAgent extends BaseAgent {
 
       const existing = this.hosts.get(key);
       if (existing) {
+        assertNotificationProfile(existing.notificationProfile);
         // Preserve getUtilityHost's reuse semantics if a switch finished while it awaited getHost.
         if (opts.reuseExistingUtilityHost) return existing;
         const currentMode = this.hostCredentialModes.get(key);
@@ -2663,6 +2689,7 @@ assertRouteCurrent();
 
       const inflight = this.hostPromises.get(key);
       if (inflight) {
+        assertNotificationProfile(inflight.notificationProfile);
         if (opts.reuseExistingUtilityHost) {
           await inflight.promise;
           continue;
@@ -2761,6 +2788,7 @@ assertRouteCurrent();
         credentialMode: AgentCredentialMode | undefined;
         credentialModeResolved: boolean;
         generation: number;
+        notificationProfile: CodexNotificationProfile;
       } | null = null;
       const promise = this.createHost(
         remoteHostId,
@@ -2781,6 +2809,7 @@ assertRouteCurrent();
         opts.historyHome,
         opts.localAuthPolicy,
         opts.routeIsCurrent,
+        notificationProfile,
       ).finally(() => {
         // 成功: this.hosts 已赋值, 后续走快路径; 失败: 清掉 promise 让下次调用能重试
         const current = this.hostPromises.get(key);
@@ -2791,6 +2820,7 @@ assertRouteCurrent();
         credentialMode: spawnMode,
         credentialModeResolved: remoteHostId !== undefined || spawnMode !== 'gateway-key',
         generation,
+        notificationProfile,
       };
       this.hostPromises.set(key, inflightEntry);
       const host = await promise;
@@ -3049,6 +3079,7 @@ assertRouteCurrent();
     historyHome?: string,
     localAuthPolicy?: 'isolated' | 'legacy-shared',
     routeIsCurrent?: () => boolean,
+    notificationProfile: CodexNotificationProfile = 'legacy',
   ): Promise<AppServerHost> {
     const seq = (this.createHostSeqByKey.get(key) ?? 0) + 1;
     this.createHostSeqByKey.set(key, seq);
@@ -3345,6 +3376,7 @@ assertRouteCurrent();
     } else {
       const binaryPath = this.requireLocalBinaryPath();
       const createLocalTransport = hostPurpose !== 'control-plane' && this.deps.createLocalCodexNativeService
+        && (notificationProfile === 'native-presentation' || !this.deps.useLocalCodexNativePresentation)
         ? this.deps.createLocalCodexNativeService : createStdioTransport;
       createTransport = () => createLocalTransport({
         binaryPath,
@@ -3364,6 +3396,7 @@ assertRouteCurrent();
 
     const host = new AppServerHost({
       createTransport,
+      notificationProfile,
       externalAuth,
       requireEphemeralAuth,
       logger: this.deps.logger,
@@ -4690,8 +4723,16 @@ assertRouteCurrent();
     }
 
     let closed = false;
-    const nativePresentation = this.deps.createLocalCodexNativePresentation && !opts.remoteHostId
+    const nativePresentation = this.deps.createLocalCodexNativePresentation && !opts.remoteHostId && !reviewMode
+      && (this.deps.useLocalCodexNativePresentation?.(opts) ?? true)
       ? new CodexNativeTaskPresentation(message => log.warn(message)) : undefined;
+    // Frozen before any owning-host lookup, including GUI-first initialization.
+    const notificationProfile: CodexNotificationProfile = nativePresentation ? 'native-presentation' : 'legacy';
+    const nativePresentationLifetime = nativePresentation ? new AbortController() : undefined;
+    const nativeApprovals = new CodexNativeApprovals();
+    let nativeCreation: CodexNativeTaskCreation | undefined;
+    let preparedNativeFrontend: CodexNativePreparedPresentation | undefined;
+    let freshNativeService: CodexNativeServiceBinding | undefined;
     let subscriptionInvalidatedByTransport = false;
     let sessionHostForceRetired = false;
     let subscription: ThreadSubscription | null = null;
@@ -5000,6 +5041,8 @@ assertRouteCurrent();
     // was attempted, prefer resume before replacing the thread; "no rollout"
     // is the only safe proof that the thread is still unused.
     let threadMayHaveRollout = false;
+    // Actual initial ACK provenance, independent of the turn/rollout heuristic.
+    let nativeAttachOrigin: CodexNativeAttachOrigin | undefined;
     // 计划模式(与 permissionMode 正交, **一次性选择**): mutablePlanMode 是 UI 勾选的
     // "武装"态 —— send 消耗它并立即 emit plan_mode_changed(false) 让勾选熄灭;
     // 本轮「计划 → 审阅 → 修订/批准」循环由 planCycleActive 承载:
@@ -5132,6 +5175,7 @@ assertRouteCurrent();
     const resolveSessionHostKey = (): string => localSessionHostIdentity({
       sessionId: sid, remoteHostId: opts.remoteHostId, accountSessionHost, accountProviderId,
       reviewMode, customContext: usesCustomContextHost, storage: sessionStorage, policy: localAuthPolicy,
+      notificationProfile,
     });
     let currentHostKey = resolveSessionHostKey();
     let releaseHostBindingLease: (() => void) | null = null;
@@ -5156,7 +5200,9 @@ assertRouteCurrent();
         ...(accountProviderId ? { providerId: accountProviderId } : {}),
         ...(sessionSqliteHome ? { sqliteHome: sessionSqliteHome } : {}),
         ...(sessionStorage ? { historyHome: sessionStorage.historyHome } : {}),
-        ...(accountSessionHost || reviewMode || usesCustomContextHost || sessionSqliteHome ? { keyOverride: currentHostKey } : {}),
+        notificationProfile,
+        ...(notificationProfile === 'native-presentation' || accountSessionHost || reviewMode || usesCustomContextHost || sessionSqliteHome
+          ? { keyOverride: currentHostKey } : {}),
         ignoreBindingLeases: 1,
         routeIsCurrent: routeSelection.isCurrent,
         routeSignal: startupRouteSignal,
@@ -5200,23 +5246,24 @@ assertRouteCurrent();
     const hostGeneration = this.hostGenerations.get(currentHostKey) ?? 0;
     const capturedHostWasRegistered = this.hosts.get(currentHostKey) === host;
     const retireSingleSessionHost = async (): Promise<void> => {
-      if (!reviewMode && !usesCustomContextHost && !accountSessionHost && !sessionSqliteHome) return;
-      const purpose = reviewMode ? 'Review' : accountSessionHost ? 'account' : 'custom context';
+      if (notificationProfile === 'legacy' && !reviewMode && !usesCustomContextHost && !accountSessionHost && !sessionSqliteHome) return;
+      const purpose = reviewMode ? 'Review' : accountSessionHost ? 'account'
+        : notificationProfile === 'native-presentation' ? 'native presentation' : 'custom context';
       const reason = `Cindy ${purpose} host is single-session`;
       await this.retireHostKey(currentHostKey, reason, {
         failIfActive: false,
         logPrefix: `codex ${purpose.toLowerCase()} host cleanup`,
         ...(capturedHostWasRegistered ? { expectedHost: host } : {}),
         expectedGeneration: hostGeneration,
-        throwOnShutdownFailure: accountSessionHost,
+        throwOnShutdownFailure: accountSessionHost || notificationProfile === 'native-presentation',
       }).catch((error) => {
-        if (accountSessionHost) throw error;
+        if (accountSessionHost || notificationProfile === 'native-presentation') throw error;
         log.warn(`${purpose} host retire failed`, {
           error: error instanceof Error ? error.message : String(error),
         });
       });
     };
-    if (usesCustomContextHost || accountSessionHost) {
+    if (notificationProfile === 'native-presentation' || usesCustomContextHost || accountSessionHost) {
       registerFailedCustomContextStartupCleanup(async () => {
         releaseHostBindingLeaseIfNeeded();
         await retireSingleSessionHost();
@@ -6848,7 +6895,39 @@ assertRouteCurrent();
       };
       acquireHostBindingLeaseIfNeeded();
       assertCurrentHost('thread/start');
-      const resp = await withMcpDiscoveryContext(() => {
+      const freshFactory = nativePresentation && this.deps.prepareLocalCodexNativePresentation;
+      let resp: ThreadStartResponse;
+      if (freshFactory) {
+        if (nativeCreation) throw new Error('Native root creation is already reserved');
+        freshNativeService = await host.getNativeFrontendBinding();
+        if (!freshNativeService) throw new Error('Native fresh start requires its owning service');
+        const service = freshNativeService;
+        const signal = AbortSignal.any([nativePresentationLifetime!.signal, service.signal, startup.signal]);
+        const current = () => !signal.aborted && !closed && isCurrentHost() && service.isCurrent();
+        nativeCreation = new CodexNativeTaskCreation({ host, signal, isCurrent: current, timeoutMs: CRITICAL_THREAD_RPC_TIMEOUT_MS,
+          dispatchContext: withMcpDiscoveryContext, onDispatched: () => { startup.threadDispatched = true; },
+          onUnavailable: () => { void preparedNativeFrontend?.close().catch(() => log.warn('native fresh frontend close unconfirmed')); } });
+        const creation = nativeCreation;
+        try {
+          preparedNativeFrontend = await freshFactory({ sessionId: sid!, service, host, creation, cwd: opts.workingDir,
+            signal, isCurrent: current, attachNativeApprovalFrontend: receive => nativeApprovals.attach(receive),
+            readRuntime: () => Object.freeze({ catalogModel: mutableCatalogModel ?? mutableModel, nativeModel: mutableModel,
+              providerId: mutableProviderId ?? null, nativeModelProvider: threadModelProvider,
+              effort: mutableEffort, fastMode: isFastServiceTier(mutableServiceTier) }),
+            prepareStart: async nativeParams => withMcpDiscoveryContext(async () => {
+              assertCurrentHost('native thread/start preparation');
+              const configured = new Set((this.deps.mcpProviders ?? []).map(provider => provider.name));
+              const merged = mergeCodexNativeThreadStart(params, nativeParams, configured);
+              return merged;
+            }),
+          });
+          resp = await creation.created;
+        } catch (error) {
+          creation.close();
+          await preparedNativeFrontend?.close().catch(() => log.warn('native fresh startup cleanup unconfirmed'));
+          throw error;
+        }
+      } else resp = await withMcpDiscoveryContext(() => {
           assertCurrentHost('thread/start dispatch');
           return host.request<ThreadStartResponse>(Method.ThreadStart, params, {
             timeoutMs: CRITICAL_THREAD_RPC_TIMEOUT_MS,
@@ -6867,6 +6946,7 @@ assertRouteCurrent();
         mutableCatalogModel = resp.model;
       }
       threadId = resp.thread.id;
+      nativeAttachOrigin = Object.freeze({ kind: 'fresh', threadId });
       await recordNativeThreadLocation(resp.thread);
       codexThreadModelProviderId = resp.modelProvider?.trim();
       refreshCodexAutoReviewerRoute(threadId);
@@ -6956,6 +7036,8 @@ assertRouteCurrent();
         }
         if (preparedResumePath && resp.thread.id !== opts.resumeSessionId) throw new Error('Codex resumed an unexpected thread');
         threadId = resp.thread.id;
+        nativeAttachOrigin = resp.thread.id === opts.resumeSessionId
+          ? Object.freeze({ kind: 'resumed', threadId }) : undefined;
         await recordNativeThreadLocation(resp.thread);
         codexThreadModelProviderId = resp.modelProvider?.trim();
         refreshCodexAutoReviewerRoute(threadId);
@@ -7392,7 +7474,6 @@ assertRouteCurrent();
       onSystemDenied?: (reason: string) => void;
     }
     const pendingApprovals = new Map<string, PendingEntry>();
-    const nativeApprovals = new CodexNativeApprovals();
     const getNativeFileApprovalCopy = this.deps.getCodexNativeFileApprovalCopy;
     const nativeQuestions = new CodexNativeQuestions(nativeApprovals, (requestId, decision) => {
       eventQueue.push({ type: 'interaction_dismissed', data: { requestId, reason: 'native_answered',
@@ -13109,7 +13190,9 @@ assertRouteCurrent();
     ): Promise<void> {
       if (closed) return;
       closed = true;
-      const frontendClosed = nativePresentation?.close().then(
+      nativePresentationLifetime?.abort();
+      nativeCreation?.close();
+      const frontendClosed = Promise.all([nativePresentation?.close(), preparedNativeFrontend?.close()]).then(
         () => ({ ok: true as const }), error => ({ ok: false as const, error }));
       nativeAdmission?.close();
       nativeSteerAdmission.close();
@@ -13161,8 +13244,10 @@ assertRouteCurrent();
     // ── AgentSessionHandle ──────────────────────────────────────────────────
     nativeAdmission = new CodexNativeInputAdmission(
       () => closed ? '<closed>' : threadId, (message, options) => handle.send(message, options));
+    let nativePresentationActivation: Promise<AgentPresentationInitialization> | undefined;
     const handle: CodexNativeSessionHandle = {
       get presentation() { return nativePresentation?.presentation; },
+      activatePresentation: nativePresentation ? owner => activateNativePresentation(owner) : undefined,
       readNativeRuntimeSnapshot() {
         assertCurrentHost('native task runtime snapshot');
         if (closed) throw new Error('Native task runtime is closed');
@@ -14840,14 +14925,49 @@ assertRouteCurrent();
       },
     };
 
-    if (nativePresentation && this.deps.createLocalCodexNativePresentation) {
-      try {
+    // Core returns the handle first. Main binds Session/account/DB/input and all
+    // interaction/control handlers before explicitly activating this frontend.
+    // A view status query can await the receipt, but cannot call this function.
+    const activateNativePresentation = (owner: AgentPresentationOwner): Promise<AgentPresentationInitialization> => {
+      if (nativePresentationActivation) return nativePresentationActivation;
+      const factory = this.deps.createLocalCodexNativePresentation;
+      if (!nativePresentation || !factory) return Promise.resolve({ status: 'unavailable', reason: 'unsupported-service' });
+      const nativeId = handle.id, origin = nativeAttachOrigin;
+      const began = Date.now();
+      const timeout = new AbortController();
+      const timer = setTimeout(() => timeout.abort(), CRITICAL_THREAD_RPC_TIMEOUT_MS);
+      timer.unref?.();
+      const signal = AbortSignal.any([owner.signal, nativePresentationLifetime!.signal, timeout.signal]);
+      let service: CodexNativeServiceBinding | undefined;
+      const current = () => !signal.aborted && !closed && isCurrentHost() && owner.isCurrent()
+        && handle.id === nativeId && threadId === nativeId && nativeAttachOrigin === origin
+        && (!service || (!service.signal.aborted && service.isCurrent()));
+      const check = () => { if (!current()) throw new CodexNativeAttachUnavailable('owner-changed'); };
+      nativePresentationActivation = Promise.resolve().then(async (): Promise<AgentPresentationInitialization> => {
+        check();
+        if (!origin || origin.threadId !== nativeId) throw new CodexNativeAttachUnavailable('invalid-thread-receipt');
         assertCurrentHost('native frontend startup');
-        const service = await host.getNativeFrontendBinding();
+        service = freshNativeService ?? await waitForCodexNativeAttach(host.getNativeFrontendBinding(), signal);
+        check();
         if (!service) throw new Error('Native Codex presentation requires its owning native service');
-        await nativePresentation.start(this.deps.createLocalCodexNativePresentation, {
-          handle, service, cwd: opts.workingDir, isCurrent: () => !closed && isCurrentHost(),
+        if (origin.kind === 'fresh' && (!nativeCreation || !preparedNativeFrontend || nativeCreation.threadId !== nativeId)) {
+          throw new CodexNativeAttachUnavailable('startup-failed');
+        }
+        const selectedFactory = preparedNativeFrontend ? async (launch: Parameters<typeof factory>[0]) => {
+          const bound = preparedNativeFrontend!.bind(launch);
+          check(); nativeCreation!.releaseAfterBindings();
+          return bound;
+        } : factory;
+        await nativePresentation.start(selectedFactory, {
+          handle, service, cwd: opts.workingDir, ownerSignal: signal, isCurrent: current,
           routingContext: {
+            control: async (call, scope) => {
+              check();
+              if (scope === 'task' && ['thread/name/set', 'thread/goal/set', 'thread/goal/clear'].includes(call.request.method)) {
+                return call.forward();
+              }
+              throw new Error('Native control requires an admitted task target');
+            },
             ownsDescendant: id => descendantParentThreadByThreadId.has(id) || descendantMcpThreadIds.has(id),
             titleContext: async () => {
               assertCurrentHost('native title context');
@@ -14871,8 +14991,21 @@ assertRouteCurrent();
             },
           },
         });
-      } catch (error) { await closeSessionHandle(); throw error; }
-    }
+        check();
+        log.info('native Codex presentation ready', { durationMs: Date.now() - began, provenance: origin.kind });
+        return { status: 'ready' };
+      }).catch(async error => {
+        // Failed presentation never closes/unsubscribes/replaces the GUI task.
+        const reason: AgentPresentationUnavailableReason = error instanceof CodexNativeAttachUnavailable
+          ? error.reason : !current() ? 'owner-changed' : !service ? 'unsupported-service' : 'startup-failed';
+        await nativePresentation.close().catch(() => log.warn('native Codex frontend close unconfirmed'));
+        nativeCreation?.close();
+        await preparedNativeFrontend?.close().catch(() => log.warn('native prepared frontend close unconfirmed'));
+        log.warn('native Codex presentation unavailable', { reason, durationMs: Date.now() - began });
+        return { status: 'unavailable' as const, reason };
+      }).finally(() => { clearTimeout(timer); });
+      return nativePresentationActivation;
+    };
     return handle;
   }
 
@@ -14952,6 +15085,9 @@ assertRouteCurrent();
     opts: Parameters<BaseAgent['requiresCodexThreadHostTransfer']>[0],
   ): Promise<boolean> {
     if (opts.remoteHostId) return false;
+    const notificationProfile: CodexNotificationProfile = this.deps.createLocalCodexNativePresentation
+      && (this.deps.useLocalCodexNativePresentation?.(opts) ?? true)
+      ? 'native-presentation' : 'legacy';
     const observedHosts = new Set<AppServerHost>();
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const hosts = new Map([...this.hosts].filter(([key]) => key.startsWith('local')));
@@ -14986,7 +15122,7 @@ assertRouteCurrent();
         accountSessionHost: accountProviderId !== undefined || this.deps.isolateCodexAccountSessions === true,
         reviewMode: opts.reviewMode === true,
         customContext: typeof contextWindow === 'number' && Number.isFinite(contextWindow) && contextWindow > 0,
-        storage, policy: selection.policy,
+        storage, policy: selection.policy, notificationProfile,
       });
       if (!selection.isCurrent()) throw new CodexRouteSelectionChangedError();
       for (const [key, host] of hosts) {

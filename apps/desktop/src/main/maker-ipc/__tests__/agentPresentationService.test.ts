@@ -1,16 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AgentPresentationRuntime, type AgentTerminalDriver } from '@cindy/maker-core';
-import { AgentPresentationService, type PresentationPeer } from '../agentPresentationService.js';
+import { AgentPresentationRuntime, type AgentTerminalDriver, type AgentPresentationInitialization } from '@cindy/maker-core';
+import { AgentPresentationService, type PresentationPeer, type PresentationInitialization } from '../agentPresentationService.js';
 import type { AgentPresentationAttached, AgentTerminalControl } from '../../../shared/agentPresentation.js';
 
-function fixture() {
+function fixture(initialization?: (id: string) => PresentationInitialization | undefined) {
   let output!: (data: string) => void;
   const driver: AgentTerminalDriver = { write: vi.fn(), resize: vi.fn(), close: vi.fn(),
     onData: (listener) => { output = listener; return vi.fn(); }, onExit: () => vi.fn() };
   const runtime = new AgentPresentationRuntime('native', driver);
   let live: AgentPresentationRuntime | undefined = runtime;
   let now = 0;
-  const service = new AgentPresentationService((id) => id === 'task' ? live : undefined, () => now);
+  const service = new AgentPresentationService((id) => id === 'task' ? live : undefined, () => now, initialization);
   const peer = (id: string): PresentationPeer => ({ id, assertCurrent: vi.fn() });
   const a = peer('desktop'), b = peer('remote');
   const invoke = (owner: PresentationPeer, input: object) => service.invoke(owner, { sessionId: 'task', ...input });
@@ -20,6 +20,36 @@ function fixture() {
 }
 
 describe('task presentation host boundary', () => {
+  it('observes host activation before attaching without starting any task or writing input', async () => {
+    let complete!: (value: AgentPresentationInitialization) => void;
+    const settled = new Promise<AgentPresentationInitialization>(resolve => { complete = resolve; });
+    const initialization = vi.fn(() => ({ settled, isCurrent: () => true }));
+    const f = fixture(initialization);
+    let attached = false;
+    const pending = f.attach(f.a).then(value => { attached = true; return value; });
+    await Promise.resolve(); expect(attached).toBe(false); expect(f.driver.write).not.toHaveBeenCalled();
+    complete({ status: 'ready' }); expect(await pending).toHaveProperty('attachmentId');
+    expect(initialization).toHaveBeenCalledExactlyOnceWith('task'); f.service.close();
+  });
+
+  it.each(['peer', 'task'] as const)('rejects a stale %s after activation finishes', async boundary => {
+    let complete!: (value: AgentPresentationInitialization) => void, current = true;
+    const settled = new Promise<AgentPresentationInitialization>(resolve => { complete = resolve; });
+    const f = fixture(() => ({ settled, isCurrent: () => current }));
+    const pending = expect(f.attach(f.a)).rejects.toThrow(boundary === 'peer' ? 'revoked' : 'generation changed');
+    if (boundary === 'peer') vi.mocked(f.a.assertCurrent).mockImplementation(() => { throw new Error('revoked'); });
+    else current = false;
+    complete({ status: 'ready' }); await pending;
+    expect(f.runtime.state().controller).toBeNull(); expect(f.driver.write).not.toHaveBeenCalled(); f.service.close();
+  });
+
+  it('returns the controlled unavailability reason and leaves the GUI task alone', async () => {
+    const f = fixture(() => ({ settled: Promise.resolve({ status: 'unavailable', reason: 'unsupported-service' }), isCurrent: () => true }));
+    f.replace();
+    expect(await f.invoke(f.a, { action: 'status' })).toEqual({ supported: false, reason: 'unsupported-service' });
+    expect(f.driver.close).not.toHaveBeenCalled();
+  });
+
   it('reports unavailable without creating or resuming a task', async () => {
     const f = fixture(); f.replace();
     expect(await f.invoke(f.a, { action: 'status' })).toEqual({ supported: false });

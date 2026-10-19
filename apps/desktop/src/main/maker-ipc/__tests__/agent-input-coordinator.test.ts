@@ -1187,6 +1187,53 @@ describe('held native input adoption', () => {
     }
   });
 
+  it('keeps TUI → GUI → TUI on one task when vendor idle precedes the first product terminal', async () => {
+    const { h, input, dispatch } = fixture();
+    h.setAgentKind('codex');
+    h.setTurnGeneration(1);
+    await h.coordinator.acceptNativeInput(sid, makeItem('native-first', 'LEX_B0_TUI_FIRST'), input);
+    // The real provider can become idle before Session fans out its queued done.
+    // GUI must enter through the coordinator rather than start generation 2 via
+    // a direct Session.send and strand generation 1's native reservation.
+    h.setRunning(false);
+    h.coordinator.enqueue(sid, makeItem('gui', 'LEX_B0_GUI_AFTER'));
+    await flush();
+    expect(h.sendToAgent).not.toHaveBeenCalled();
+    expect(h.coordinator.getActiveInputClientId(sid)).toBe('native-first');
+    await expect(h.coordinator.acceptNativeInput(sid, makeItem('too-early', 'native'),
+      { ...input, messageId: 'different-input' })).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(mocks.logger.warn).toHaveBeenCalledWith('native input refused at task boundary', {
+      reason: 'dispatch-boundary-busy', boundGeneration: 1, currentGeneration: 1,
+    });
+
+    h.setTurnGeneration(2);
+    h.coordinator.onTurnEvent(sid, 'done', undefined, undefined,
+      { sessionTurnGeneration: 1, sessionInstanceId: 'harness-session' });
+    await flush();
+    expect(h.sendToAgent).toHaveBeenCalledOnce();
+    expect(h.sendToAgent.mock.calls[0]?.[1]).toMatchObject({ content: 'LEX_B0_GUI_AFTER' });
+    expect(h.coordinator.getActiveInputClientId(sid)).toBe('gui');
+    h.setRunning(false);
+    h.coordinator.onTurnEvent(sid, 'done', undefined, undefined,
+      { sessionTurnGeneration: 2, sessionInstanceId: 'harness-session' });
+
+    dispatch.mockImplementationOnce(async (id, _message, _create, options) => {
+      options.onVendorTurnReserved?.(3);
+      await persistQueuedUserMessage(id, options);
+      h.setRunning(true);
+      return sendSuccess();
+    });
+    h.setTurnGeneration(3);
+    await h.coordinator.acceptNativeInput(sid, makeItem('native-after', 'LEX_B0_TUI_AFTER_CONCURRENT'),
+      { ...input, messageId: 'f5e522e3-466a-4603-9dab-43659bdaa122' });
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(dispatch.mock.calls[1]?.[1]).toMatchObject({ content: 'LEX_B0_TUI_AFTER_CONCURRENT' });
+    expect(h.coordinator.getActiveInputClientId(sid)).toBe('native-after');
+    expect(h.coordinator.getProjection(sid)).toMatchObject({ pendingQueue: [], error: null, recovery: null });
+    expect(h.sendToAgent).toHaveBeenCalledOnce();
+    h.coordinator.onSessionClosed(sid);
+  });
+
   it('does not let native input overtake an older queued GUI input', async () => {
     const { h, input, dispatch } = fixture();
     h.setRunning(true);

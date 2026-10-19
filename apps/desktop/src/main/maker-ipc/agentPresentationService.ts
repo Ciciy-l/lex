@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { AgentPresentationAttachment, AgentSessionPresentation } from '@cindy/maker-core';
+import type { AgentPresentationAttachment, AgentSessionPresentation, AgentPresentationInitialization } from '@cindy/maker-core';
 import type { AgentPresentationRequest, AgentTerminalControl } from '../../shared/agentPresentation.js';
 
 export interface PresentationPeer {
@@ -7,6 +7,10 @@ export interface PresentationPeer {
   id: string;
   /** Recheck account, transport generation and task access after any wait. */
   assertCurrent(): void;
+}
+export interface PresentationInitialization {
+  readonly settled: Promise<AgentPresentationInitialization>;
+  isCurrent(): boolean;
 }
 interface Entry {
   sessionId: string;
@@ -21,14 +25,33 @@ interface Entry {
 export class AgentPresentationService {
   private readonly entries = new Map<string, Entry>();
   constructor(private readonly resolve: (sessionId: string) => AgentSessionPresentation | undefined,
-    private readonly now = Date.now) {}
+    private readonly now = Date.now,
+    private readonly initialization?: (sessionId: string) => PresentationInitialization | undefined) {}
 
   async invoke(peer: PresentationPeer, raw: unknown): Promise<unknown> {
     const request = validate(raw);
     peer.assertCurrent();
     this.prune();
+    let initialized: AgentPresentationInitialization | undefined;
+    if (request.action === 'status' || request.action === 'attach') {
+      const activation = this.initialization?.(request.sessionId);
+      if (activation) {
+        // Observe host-owned work only. A missing Main binding must not hang a
+        // view indefinitely or cause that view to create an engine/frontend.
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          initialized = await Promise.race([activation.settled, new Promise<AgentPresentationInitialization>(resolve => {
+            timer = setTimeout(() => resolve({ status: 'unavailable', reason: 'startup-failed' }), 60_000);
+            timer.unref();
+          })]);
+          peer.assertCurrent();
+          if (!activation.isCurrent()) throw new Error('Native task generation changed during activation');
+        } finally { if (timer) clearTimeout(timer); }
+      }
+    }
     const runtime = this.resolve(request.sessionId);
-    if (request.action === 'status') return runtime ? { supported: true, state: runtime.state() } : { supported: false };
+    if (request.action === 'status') return runtime ? { supported: true, state: runtime.state() }
+      : { supported: false, ...(initialized ? { reason: initialized.status === 'unavailable' ? initialized.reason : 'startup-failed' } : {}) };
     if (request.action === 'attach') {
       if (!runtime) throw new Error('Native presentation unavailable');
       if (this.entries.size >= 256 || [...this.entries.values()].filter((e) => e.peer.id === peer.id).length >= 16) {

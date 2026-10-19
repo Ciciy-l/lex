@@ -1,3 +1,6 @@
+import { CodexNativeTaskResumeReceipt } from './native-attach-readiness.js';
+import { isCodexNativeTaskCwd } from './native-task-cwd.js';
+import { projectCodexNativeTaskInventory } from './native-task-inventory.js';
 import type { CodexFrontendCall, CodexFrontendNotification } from './native-frontend.js';
 import type { CodexNativeSessionHandle } from './native-input.js';
 import type { TurnStartParams, TurnStartResponse } from './app-server/protocol.js';
@@ -7,6 +10,8 @@ export interface CodexNativeTaskRoutingOptions {
   handle: Pick<CodexNativeSessionHandle, 'id' | 'acceptNativeTurn'>;
   cwd: string;
   isCurrent(): boolean;
+  /** Fresh start has a delivered owning-host ACK instead of a resume receipt. */
+  fresh?: { readonly ready: Promise<void>; isReady(): boolean };
   /** Known lineage comes from the owning Agent, never frontend-supplied ids. */
   ownsDescendant(threadId: string): boolean;
   /** Current native route, with MCP names frozen from the owning task. */
@@ -32,6 +37,8 @@ export function createCodexNativeTaskRouting(options: CodexNativeTaskRoutingOpti
   const titles = new Map<string, string>();
   let titleStarting = false;
   const current = () => options.isCurrent() && options.handle.id === threadId;
+  const taskResume = new CodexNativeTaskResumeReceipt(threadId, current);
+  const attached = () => options.fresh ? options.fresh.isReady() : taskResume.confirmed;
   const check = (signal?: AbortSignal) => {
     if (!current() || signal?.aborted) throw new Error('Native Codex task owner changed');
   };
@@ -56,32 +63,33 @@ export function createCodexNativeTaskRouting(options: CodexNativeTaskRoutingOpti
     }
     if (catalogReads.has(method)) {
       if (params.threadId != null) requireScope(params);
-      if (params.cwd != null && params.cwd !== options.cwd) throw new Error('Native catalog has another working directory');
-      return result(call, () => options.catalog(call));
+      if (params.cwd != null && !isCodexNativeTaskCwd(options.cwd, params.cwd)) throw new Error('Native catalog has another working directory');
+      return result(call, () => options.catalog(params.cwd == null ? call
+        : { ...call, request: { ...call.request, params: { ...params, cwd: options.cwd } } }));
     }
     if (scopedLists.has(method)) {
-      if (!Array.isArray(params.cwds) || params.cwds.length !== 1 || params.cwds[0] !== options.cwd) {
+      if (!Array.isArray(params.cwds) || params.cwds.length !== 1 || !isCodexNativeTaskCwd(options.cwd, params.cwds[0])) {
         throw new Error('Native capability list has another working directory');
       }
-      return result(call, () => call.forward());
+      return result(call, () => call.forward({ ...params, cwds: [options.cwd] }));
     }
     if (method === 'thread/list' || method === 'thread/loaded/list') {
-      const page = await result(call, () => call.forward());
-      if (!record(page) || !Array.isArray(page.data)) throw new Error('Native task list is invalid');
-      // Do not expose cursors that encode unrelated thread identities. The
-      // current task is already attached; this is only the native switcher view.
-      return { ...page, data: page.data.filter(row => scope(typeof row === 'string' ? row : record(row) ? row.id : undefined)), nextCursor: null };
+      if (params.cwd != null && !isCodexNativeTaskCwd(options.cwd, params.cwd)) {
+        throw new Error('Native inventory has another working directory');
+      }
+      const page = await result(call, () => call.forward(params.cwd == null ? params : { ...params, cwd: options.cwd }));
+      return projectCodexNativeTaskInventory(page, id => scope(id) !== undefined);
     }
     if (taskReads.has(method)) {
       requireScope(params); return result(call, () => call.forward());
     }
     if (method === 'thread/resume') {
-      requireScope(params);
+      const owner = requireScope(params);
       const readFields = new Set(['threadId', 'excludeTurns', 'initialTurnsPage']);
       if (Object.entries(params).some(([key, value]) => value != null && !readFields.has(key))) {
         throw new Error('Native task attach cannot replace settings or history');
       }
-      return result(call, () => call.forward());
+      return result(call, () => owner === 'task' ? taskResume.forward(call) : call.forward());
     }
     if (method === 'thread/start' && params.threadSource === 'thread_title') {
       const context = await options.titleContext();
@@ -124,6 +132,7 @@ export function createCodexNativeTaskRouting(options: CodexNativeTaskRoutingOpti
     }
     if (method === 'turn/start') {
       const owner = requireScope(params);
+      if (owner === 'task' && !attached()) throw new Error('Native Codex task attach not confirmed');
       if (owner === 'task') return result(call, () => options.handle.acceptNativeTurn({ params: params as unknown as TurnStartParams,
         signal: call.signal, dispatch: prepared => call.forward(prepared) as Promise<TurnStartResponse> }));
       if (owner === 'title') {
@@ -143,6 +152,7 @@ export function createCodexNativeTaskRouting(options: CodexNativeTaskRoutingOpti
       return value;
     }
     const owner = params.threadId == null ? undefined : requireScope(params);
+    if (owner === 'task' && !attached()) throw new Error('Native Codex task attach not confirmed');
     return result(call, () => options.control(call, owner));
   }
   function notification(event: CodexFrontendNotification): CodexFrontendNotification | null {
@@ -153,5 +163,7 @@ export function createCodexNativeTaskRouting(options: CodexNativeTaskRoutingOpti
     const id = p.threadId ?? (record(p.thread) ? p.thread.id : undefined);
     return scope(id) ? event : null;
   }
-  return { request, notification };
+  return { request, notification, ready: options.fresh?.ready ?? taskResume.ready,
+    responseDelivered: (request: CodexFrontendCall['request'], value: unknown) => taskResume.delivered(request, value),
+    closed: () => taskResume.fail() };
 }

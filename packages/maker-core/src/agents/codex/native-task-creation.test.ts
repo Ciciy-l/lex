@@ -8,6 +8,7 @@ import type { ThreadStartParams } from './app-server/protocol.js';
 import { CodexNativeApprovals } from './native-approvals.js';
 import { connectCodexNativeFrontend, type CodexFrontendCall } from './native-frontend.js';
 import { CodexNativeTaskCreation } from './native-task-creation.js';
+import { createCodexNativeTaskRouting } from './native-task-routing.js';
 
 const OWNED = '019d6540-0134-7238-8cb3-4a833b083e2a';
 const FOREIGN = '019d6540-0134-7238-8cb3-4a833b083e2b';
@@ -76,6 +77,67 @@ async function fixture(timeoutMs = 30_000, optOutNotificationMethods?: string[],
 }
 
 describe('owning-host native fresh task creation', () => {
+  it('admits real startup inventory during the pending ACK and exposes only its genuine task with original cursors', async () => {
+    const f = await fixture();
+    const pages = {
+      'thread/list': { data: [{ id: FOREIGN }, { id: OWNED }], nextCursor: 'real-list-cursor', extra: true },
+      'thread/loaded/list': { data: [FOREIGN, OWNED], nextCursor: 'real-loaded-cursor' },
+    };
+    f.upstream.respond = frame => {
+      if (frame.id != null && frame.method && frame.method in pages) {
+        f.upstream.emit({ id: frame.id, result: pages[frame.method as keyof typeof pages] });
+      }
+    };
+    const inventoryParams = { cursor: null, limit: 100, sortKey: 'section_position',
+      modelProviders: [], sourceKinds: [], archived: false, cwd: null, useStateDbOnly: true };
+    try {
+      await f.start();
+      f.frontend.emit({ id: 'list', method: 'thread/list', params: inventoryParams });
+      f.frontend.emit({ id: 'loaded', method: 'thread/loaded/list', params: { cursor: null, limit: null } });
+      await tick();
+      assert.deepEqual(f.frontend.sent, []); // No guessed owner before the start ACK.
+      await f.ack();
+      assert.deepEqual(f.frontend.sent, [
+        { id: 'list', result: { ...pages['thread/list'], data: [{ id: OWNED }] } },
+        { id: 'loaded', result: { ...pages['thread/loaded/list'], data: [OWNED] } },
+      ]);
+      assert.deepEqual(f.upstream.sent.find(frame => frame.method === 'thread/list')?.params, inventoryParams);
+      assert.equal(f.creation.inputReady, false);
+      assert.equal(f.ownerWire.sent.filter(frame => frame.method === 'thread/start').length, 1);
+      assert.equal(f.ownerWire.sent.some(frame => frame.method === 'turn/start'), false);
+      f.creation.releaseAfterBindings(); await tick(); await f.creation.ready;
+    } finally { await f.close(); }
+  });
+  it('normalizes the real TUI config/read relative cwd before and after binding without admitting escaped paths', async () => {
+    const f = await fixture();
+    const seen: unknown[] = [];
+    const catalog = async (call: CodexFrontendCall) => { seen.push(call.request.params); return call.forward(call.request.params); };
+    f.policy.catalog = catalog;
+    const routing = createCodexNativeTaskRouting({ cwd: '/task', isCurrent: () => !f.owner.signal.aborted,
+      handle: { id: OWNED, acceptNativeTurn: async () => { throw new Error('No turn in configuration regression'); } },
+      fresh: { ready: f.creation.ready, isReady: () => f.creation.inputReady }, ownsDescendant: () => false,
+      titleContext: () => ({ model: 'gpt-6-astra', mcpServers: [] }), catalog,
+      control: async () => { throw new Error('No mutation in configuration regression'); },
+    });
+    f.policy.bound = routing.request;
+    try {
+      f.frontend.emit({ id: 'initial-config', method: 'config/read', params: { includeLayers: true, cwd: '.' } });
+      await tick();
+      await f.start(); await f.ack(); f.creation.releaseAfterBindings(); await tick(); await f.creation.ready;
+      f.frontend.emit({ id: 'bound-config', method: 'config/read', params: { includeLayers: true, cwd: './' } });
+      await tick();
+      assert.deepEqual(seen, [{ includeLayers: true, cwd: '/task' }, { includeLayers: true, cwd: '/task' }]);
+      assert.deepEqual(f.upstream.sent.filter(frame => frame.method === 'config/read').map(frame => frame.params), seen);
+      for (const cwd of ['/other', '../outside']) {
+        f.frontend.emit({ id: cwd, method: 'config/read', params: { includeLayers: true, cwd } });
+      }
+      await tick();
+      assert.equal(f.frontend.sent.filter(frame => frame.error).length, 2);
+      assert.equal(seen.length, 2);
+      assert.equal(f.ownerWire.sent.filter(frame => frame.method === 'thread/start').length, 1);
+      assert.equal(f.ownerWire.sent.some(frame => frame.method === 'turn/start'), false);
+    } finally { await f.close(); }
+  });
   it('returns the real host receipt to Core before Main bindings and the native ACK, without a name/read/resume/turn', async () => {
     const f = await fixture();
     try {

@@ -1,6 +1,8 @@
 import type { AppServerHost, AppServerNotification, CodexNativeNotificationReceipt } from './app-server/host.js';
 import type { ThreadStartParams, ThreadStartResponse } from './app-server/protocol.js';
 import type { CodexFrontendCall, CodexFrontendNotification, CodexFrontendRequest } from './native-frontend.js';
+import { isCodexNativeTaskCwd } from './native-task-cwd.js';
+import { projectCodexNativeTaskInventory } from './native-task-inventory.js';
 
 const MAX_EVENTS = 256;
 const MAX_BYTES = 16 * 1024 * 1024;
@@ -58,6 +60,8 @@ export class CodexNativeTaskCreation {
     signal: AbortSignal;
     isCurrent(): boolean;
     timeoutMs: number;
+    dispatchContext?<T>(run: () => Promise<T>): Promise<T>;
+    onDispatched?(): void;
     onUnavailable?(reason: Failure): void;
   }) {
     if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) throw new Error('Invalid native creation deadline');
@@ -104,13 +108,32 @@ export class CodexNativeTaskCreation {
     const params = call.request.params ?? {};
     if (!record(params)) throw new Error('Invalid native bootstrap parameters');
     const method = call.request.method;
+    // After the genuine ACK is delivered, the bound task router owns target
+    // admission (including legitimate title/helper operations).
+    if (this.inputReady) return policy.bound(call);
     if (method === 'initialize') return call.forward();
+    if (method === 'thread/list' || method === 'thread/loaded/list') {
+      if (params.cwd != null && !isCodexNativeTaskCwd(policy.cwd, params.cwd)) {
+        throw new Error('Native inventory has another working directory');
+      }
+      const page = await this.wait(call.forward(params.cwd == null ? params : { ...params, cwd: policy.cwd }));
+      this.check();
+      // These reads can race the pending start. Only its genuine ACK may
+      // establish visibility; inventory never creates or adopts a thread.
+      if (this.started && !this.threadId) await this.wait(this.created);
+      this.check();
+      return projectCodexNativeTaskInventory(page, id => id === this.threadId);
+    }
     if (BOOTSTRAP_READS.has(method)) {
       if ((params.threadId != null && params.threadId !== this.threadId)
-        || (params.cwd != null && params.cwd !== policy.cwd)
-        || (params.cwds != null && (!Array.isArray(params.cwds) || params.cwds.length !== 1 || params.cwds[0] !== policy.cwd))
+        || (params.cwd != null && !isCodexNativeTaskCwd(policy.cwd, params.cwd))
+        || (params.cwds != null && (!Array.isArray(params.cwds) || params.cwds.length !== 1 || !isCodexNativeTaskCwd(policy.cwd, params.cwds[0])))
         || (method === 'account/read' && params.refreshToken === true)) throw new Error('Native bootstrap catalog is outside its owner');
-      return policy.catalog(call);
+      const normalized = { ...params,
+        ...(params.cwd != null ? { cwd: policy.cwd } : {}), ...(params.cwds != null ? { cwds: [policy.cwd] } : {}),
+      };
+      return policy.catalog({ ...call, request: { ...call.request, params: normalized },
+        forward: (prepared = normalized) => call.forward(prepared) });
     }
     if (method === 'thread/start') return this.start(call, () => policy.prepareStart(params));
     if (!this.inputReady || params.threadId !== this.threadId) throw new Error('Native task bindings are not ready or are outside scope');
@@ -131,7 +154,10 @@ export class CodexNativeTaskCreation {
       if (!this.notificationReceipt?.isCurrent()) throw new Error('Owning host has no complete native initialization receipt');
       const params = typeof prepare === 'function' ? await this.wait(prepare()) : prepare;
       this.check();
-      const value = await this.wait(call.dispatchToHost(params, () => { this.check(); this.dispatched = true; }));
+      const dispatch = () => call.dispatchToHost!(params, () => {
+        this.check(); this.dispatched = true; this.options.onDispatched?.();
+      });
+      const value = await this.wait(this.options.dispatchContext ? this.options.dispatchContext(dispatch) : dispatch());
       this.check();
       if (!record(value) || !record(value.thread) || typeof value.thread.id !== 'string' || !THREAD_ID.test(value.thread.id)) {
         throw new Error('Invalid genuine thread/start receipt');

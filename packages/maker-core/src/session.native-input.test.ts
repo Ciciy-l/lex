@@ -11,7 +11,7 @@ const deferred = () => {
   const promise = new Promise<void>(r => { resolve = r; });
   return { promise, resolve };
 };
-function fixture(options: Partial<SessionOptions> = {}) {
+function fixture(options: Partial<SessionOptions> = {}, handleOptions: Partial<AgentSessionHandle> = {}) {
   const ended = deferred();
   let running = false;
   const logger = { trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {}, child() { return logger; } };
@@ -23,6 +23,7 @@ function fixture(options: Partial<SessionOptions> = {}) {
     async *events(): AsyncGenerator<AgentEvent> { await ended.promise; },
     isTurnRunning: () => running, setInteractionResolver: vi.fn(), setNativeInputResolver: vi.fn(), setNativeRuntimeResolver: vi.fn(), validateSendOptions: vi.fn(),
     getUsageSnapshot: () => ({ tokenUsage: 0, contextTokens: 0, contextWindow: 0, costUsd: 0 }),
+    ...handleOptions,
   } as unknown as AgentSessionHandle;
   const session = new Session({ id: 'task', agentKind: 'claude-code', workDir: '/owned/work', handle,
     capabilities: {} as never, logger, turnStallMs: 0, ...options });
@@ -31,6 +32,62 @@ function fixture(options: Partial<SessionOptions> = {}) {
   const input: SessionNativeInput = { nativeSessionId: 'native-session', message: { type: 'user', content: 'native input' }, accept };
   return { session, handle, input, accept };
 }
+
+describe('native presentation activation through the product Session', () => {
+  it('returns a receipt without launching, then activates once only after input and interaction ownership exist', async () => {
+    const activate = vi.fn<NonNullable<AgentSessionHandle['activatePresentation']>>(async owner => {
+      expect(owner.isCurrent()).toBe(true); expect(owner.signal.aborted).toBe(false); return { status: 'ready' };
+    });
+    const f = fixture({}, { activatePresentation: activate });
+    const receipt = f.session.presentationInitialization;
+    await Promise.resolve(); expect(receipt).toBeDefined(); expect(activate).not.toHaveBeenCalled();
+    f.session.onNativeInput(vi.fn()); f.session.setInteractionListener(vi.fn());
+    const dispose = f.session.activatePresentation(() => true);
+    f.session.activatePresentation(() => true);
+    expect(await receipt).toEqual({ status: 'ready' }); expect(activate).toHaveBeenCalledOnce();
+    dispose(); expect(activate.mock.calls[0]![0].signal.aborted).toBe(true);
+    expect(f.handle.send).not.toHaveBeenCalled();
+  });
+
+  it.each(['input', 'interaction', 'main-owner'] as const)('rejects missing %s ownership without launching', async missing => {
+    const activate = vi.fn<NonNullable<AgentSessionHandle['activatePresentation']>>(async () => ({ status: 'ready' }));
+    const f = fixture({}, { activatePresentation: activate });
+    if (missing !== 'input') f.session.onNativeInput(vi.fn());
+    if (missing !== 'interaction') f.session.setInteractionListener(vi.fn());
+    f.session.activatePresentation(() => missing !== 'main-owner');
+    expect(await f.session.presentationInitialization).toEqual({ status: 'unavailable', reason: 'owner-changed' });
+    expect(activate).not.toHaveBeenCalled(); expect(f.handle.close).not.toHaveBeenCalled();
+  });
+
+  it.each(['unbind', 'close', 'native-id', 'main-owner'] as const)('does not publish a delayed successful activation after %s changes', async boundary => {
+    const entered = deferred(), release = deferred(); let current = true;
+    const activate = vi.fn<NonNullable<AgentSessionHandle['activatePresentation']>>(async () => {
+      entered.resolve(); await release.promise; return { status: 'ready' };
+    });
+    const f = fixture({}, { activatePresentation: activate });
+    const unbind = f.session.onNativeInput(vi.fn()); f.session.setInteractionListener(vi.fn());
+    f.session.activatePresentation(() => current); await entered.promise;
+    if (boundary === 'unbind') unbind();
+    else if (boundary === 'close') await f.session.close();
+    else if (boundary === 'native-id') Object.defineProperty(f.handle, 'id', { value: 'replacement' });
+    else current = false;
+    expect(activate.mock.calls[0]![0].isCurrent()).toBe(false);
+    release.resolve();
+    expect(await f.session.presentationInitialization).toEqual({ status: 'unavailable', reason: 'owner-changed' });
+    expect(activate).toHaveBeenCalledOnce();
+    if (boundary !== 'close') expect(f.handle.close).not.toHaveBeenCalled();
+  });
+
+  it('retains GUI send while host-owned frontend initialization is pending', async () => {
+    const entered = deferred(), release = deferred();
+    const f = fixture({}, { activatePresentation: async () => { entered.resolve(); await release.promise; return { status: 'ready' }; } });
+    f.session.onNativeInput(vi.fn()); f.session.setInteractionListener(vi.fn());
+    f.session.activatePresentation(() => true); await entered.promise;
+    expect(await f.session.send('GUI remains available')).toEqual({ accepted: true });
+    expect(f.handle.send).toHaveBeenCalledOnce();
+    release.resolve(); expect(await f.session.presentationInitialization).toEqual({ status: 'ready' });
+  });
+});
 
 describe('native input through the product Session', () => {
   it('runs the existing policy/history lifecycle and accepts the original input without sending another prompt', async () => {

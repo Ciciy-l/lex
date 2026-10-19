@@ -13,7 +13,7 @@ import { AgentNativeStopBinding, type AgentNativeStopResolver } from './agents/n
  */
 
 import type { AutoReviewUserIntent } from './agents/shared/auto-review-decision.js';
-import type { AgentSessionPresentation } from './agents/presentation.js';
+import type { AgentSessionPresentation, AgentPresentationInitialization } from './agents/presentation.js';
 import type { AgentNativeInput, AgentNativeInputRequest, AgentNativeInputResolver, AgentNativeMediaInput, AgentNativeMediaResolver } from './agents/native-input.js';
 import { randomUUID } from 'node:crypto';
 import { ToolLoopGuard } from './agents/shared/loop-guard.js';
@@ -451,6 +451,46 @@ export class Session {
   get presentation(): AgentSessionPresentation | undefined {
     return this.handle.presentation;
   }
+  private presentationActivation?: {
+    controller: AbortController; started: boolean;
+    settled: Promise<AgentPresentationInitialization>;
+    complete(result: AgentPresentationInitialization): void;
+  };
+  /** Awaiting this receipt never launches a frontend or waits inside createSession. */
+  get presentationInitialization(): Promise<AgentPresentationInitialization> | undefined {
+    return this.presentationActivation?.settled;
+  }
+  activatePresentation(
+    isOwnerCurrent: () => boolean,
+    startup?: Promise<AgentPresentationInitialization>,
+  ): () => void {
+    const activation = this.presentationActivation;
+    if (!activation || activation.started) return () => {};
+    activation.started = true;
+    const input = this.nativeInputBinding, nativeId = this.sdkSessionId;
+    const current = () => !activation.controller.signal.aborted && Boolean(input)
+      && this.nativeInputBinding === input && !input!.controller.signal.aborted
+      && !this.terminationStarted && this.status === 'active' && this.sdkSessionId === nativeId
+      && Boolean(this.interactionListener) && isOwnerCurrent();
+    const retire = () => {
+      activation.controller.abort();
+      activation.complete({ status: 'unavailable', reason: 'owner-changed' });
+    };
+    if (!current()) { retire(); return retire; }
+    const signal = AbortSignal.any([activation.controller.signal, input!.controller.signal]);
+    signal.addEventListener('abort', () => activation.complete({ status: 'unavailable', reason: 'owner-changed' }), { once: true });
+    // Main may still be hydrating route/effort stores after installing owners.
+    // Only presentation waits for that receipt; GUI send and createSession do not.
+    // The abort listener above settles immediately even if hydration never returns.
+    void Promise.resolve(startup).then(result => {
+      if (!current()) return { status: 'unavailable' as const, reason: 'owner-changed' as const };
+      if (result?.status === 'unavailable') return result;
+      return this.handle.activatePresentation!({ signal, isCurrent: current });
+    }).then(result => {
+      activation.complete(current() ? result : { status: 'unavailable', reason: 'owner-changed' });
+    }, () => { activation.complete({ status: 'unavailable', reason: 'startup-failed' }); });
+    return retire;
+  }
   private readonly logger: Logger;
   /** 视觉桥钩子（层 B）。缺省 = 未启用，send 完全跳过。 */
   private readonly visionBridge: VisionBridgeHook | undefined;
@@ -633,6 +673,11 @@ export class Session {
     this.handle.setNativeInputResolver?.(input => this.resolveNativeInput(input), input => this.resolveNativeMedia(input));
     this.handle.setNativeRuntimeResolver?.(request => this.nativeRuntimeBinding.resolve(request));
     this.handle.setNativeStopResolver?.(request => this.nativeStopBinding.resolve(request));
+    if (this.handle.activatePresentation) {
+      let complete!: (result: AgentPresentationInitialization) => void;
+      const settled = new Promise<AgentPresentationInitialization>(resolve => { complete = resolve; });
+      this.presentationActivation = { controller: new AbortController(), started: false, settled, complete };
+    }
   }
 
   // ── 公开 API ─────────────────────────────────────────────────────────────
@@ -660,6 +705,8 @@ export class Session {
   }
 
   private retireNativeInputBinding(): void {
+    this.presentationActivation?.controller.abort();
+    this.presentationActivation?.complete({ status: 'unavailable', reason: 'owner-changed' });
     this.nativeInputBinding?.controller.abort();
     this.nativeInputBinding = null;
   }

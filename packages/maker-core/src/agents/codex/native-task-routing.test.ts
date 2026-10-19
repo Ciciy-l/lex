@@ -21,7 +21,11 @@ function fixture() {
   const title = () => ({ model: 'chosen', modelProvider: 'fixture', cwd: '/protocol/work', threadSource: 'thread_title', ephemeral: true, sandbox: 'read-only',
     config: { mcp_servers: { host: { enabled: false } }, web_search: 'disabled', default_permissions: ':read-only',
       ...Object.fromEntries(['shell_tool','unified_exec','hooks','plugins','apps','multi_agent','multi_agent_v2','image_generation','request_permissions_tool'].map(key => ['features.' + key, false])) } });
-  return { router, handle, call, title, forwarded, controls, catalogs, retire: () => { alive = false; } };
+  const attach = async () => {
+    const request = call('thread/resume', { threadId: 'owned' }, { thread: { id: 'owned' } });
+    const response = await router.request(request); router.responseDelivered(request.request, response); await router.ready;
+  };
+  return { router, handle, call, title, forwarded, controls, catalogs, attach, retire: () => { alive = false; } };
 }
 
 describe('one task owns original native frontend routing', () => {
@@ -34,23 +38,25 @@ describe('one task owns original native frontend routing', () => {
     }
     assert.equal(f.forwarded.length, 8);
   });
-  it('filters both thread-list forms and removes foreign cursor data', async () => {
+  it('filters both genuine inventory forms while preserving their original pagination', async () => {
     const f = fixture();
     assert.deepEqual(await f.router.request(f.call('thread/list', {}, { data: [{ id: 'foreign' }, { id: 'owned' }, { id: 'child' }], nextCursor: 'foreign-cursor' })),
-      { data: [{ id: 'owned' }, { id: 'child' }], nextCursor: null });
+      { data: [{ id: 'owned' }, { id: 'child' }], nextCursor: 'foreign-cursor' });
     assert.deepEqual(await f.router.request(f.call('thread/loaded/list', {}, { data: ['foreign', 'owned'], nextCursor: 'foreign-cursor' })),
-      { data: ['owned'], nextCursor: null });
+      { data: ['owned'], nextCursor: 'foreign-cursor' });
+    await assert.rejects(f.router.request(f.call('thread/list', { cwd: '/foreign' })), /another working/);
   });
   it('uses the same product reservation for native input and delegates descendant controls', async () => {
-    const f = fixture();
+    const f = fixture(); await f.attach();
     await f.router.request(f.call('turn/start', { threadId: 'owned', input: [{ type: 'text', text: 'native' }], model: 'unprepared' }));
-    assert.equal((f.forwarded[0]!.params as { model: string }).model, 'host-prepared');
+    assert.equal((f.forwarded[1]!.params as { model: string }).model, 'host-prepared');
+    assert.equal(f.forwarded.filter(entry => entry.method === 'thread/resume').length, 1);
     await f.router.request(f.call('turn/start', { threadId: 'child' }));
     assert.deepEqual(f.controls, ['turn/start']);
   });
   it('treats attach as a read, not authority to overwrite the task settings or history', async () => {
     const f = fixture();
-    await f.router.request(f.call('thread/resume', { threadId: 'owned', model: null, path: null, history: null, excludeTurns: true }));
+    await f.router.request(f.call('thread/resume', { threadId: 'owned', model: null, path: null, history: null, excludeTurns: true }, { thread: { id: 'owned' } }));
     for (const patch of [{ model: 'changed' }, { path: '/other' }, { history: [] }, { config: {} }, { permissions: ':full-access' }]) {
       await assert.rejects(f.router.request(f.call('thread/resume', { threadId: 'owned', ...patch })), /cannot replace/);
     }
@@ -74,11 +80,11 @@ describe('one task owns original native frontend routing', () => {
     assert.equal(f.forwarded.length, 3);
   });
   it('never directly forwards settings, configuration writes, forks or unknown mutations', async () => {
-    const f = fixture();
+    const f = fixture(); await f.attach();
     for (const method of ['thread/settings/update', 'config/batchWrite', 'thread/fork', 'thread/start', 'new/mutation']) {
       assert.deepEqual(await f.router.request(f.call(method, { threadId: 'owned' })), { source: 'product-control' });
     }
-    assert.equal(f.forwarded.length, 0); assert.equal(f.controls.length, 5);
+    assert.deepEqual(f.forwarded.map(entry => entry.method), ['thread/resume']); assert.equal(f.controls.length, 5);
     await assert.rejects(f.router.request(f.call('thread/settings/update', { threadId: 'foreign' })), /does not belong/);
   });
   it('filters unowned notifications without guessing ownership from payload content', () => {
@@ -120,5 +126,15 @@ describe('one task owns original native frontend routing', () => {
     await assert.rejects(f.router.request(call), /owner changed/);
     assert.equal(f.router.notification({ method: 'turn/completed', params: { threadId: 'owned' } }), null);
     await assert.rejects(f.router.request(f.call('turn/start', { threadId: 'owned' })), /owner changed/);
+  });
+  it('refuses native input before the original resume receipt reaches its frontend', async () => {
+    const f = fixture();
+    await assert.rejects(f.router.request(f.call('turn/start', { threadId: 'owned' })), /not confirmed/);
+    const call = f.call('thread/resume', { threadId: 'owned' }, { thread: { id: 'owned' } });
+    const response = await f.router.request(call);
+    await assert.rejects(f.router.request(f.call('turn/start', { threadId: 'owned' })), /not confirmed/);
+    f.router.responseDelivered(call.request, response); await f.router.ready;
+    await f.router.request(f.call('turn/start', { threadId: 'owned' }));
+    assert.deepEqual(f.forwarded.map(entry => entry.method), ['thread/resume', 'turn/start']);
   });
 });

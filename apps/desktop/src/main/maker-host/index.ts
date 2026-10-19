@@ -114,6 +114,8 @@ import { getThinkingEnabledFromMemory } from './newMakerDefaultsCache.js';
 import { registerUsagePricing, clearUsagePricing } from './model-usage-pricing.js';
 import { getSessionFastMode } from './session-effort-store.js';
 import { createSshDaemonTransport } from './codex-remote-transport.js';
+import { createCodexNativeHostService } from './codex-native-host.js';
+import { createTaskCodexNativePresentation, prepareTaskCodexNativePresentation } from './codex-native-presentation.js';
 import {
   getRemoteSshPool,
   broadcastSilentInstallStatus,
@@ -1499,6 +1501,20 @@ export function getMaker(): Maker {
         ?? 'default';
     };
     const codexAgent = new CodexAgent({
+      useLocalCodexNativePresentation: options => options.nativePresentation === true,
+      createLocalCodexNativeService: createCodexNativeHostService,
+      prepareLocalCodexNativePresentation: launch => prepareTaskCodexNativePresentation(launch, {
+        executable: codexPath, env: process.env as Record<string, string>, logger: desktopMakerLogger,
+        registerProcess: pid => registerCodexProcessRole(pid, 'task-host'),
+      }),
+      createLocalCodexNativePresentation: launch => createTaskCodexNativePresentation(launch, {
+        executable: codexPath, env: process.env as Record<string, string>, logger: desktopMakerLogger,
+        registerProcess: pid => registerCodexProcessRole(pid, 'task-host'),
+        control: (call, scope) => {
+          if (!launch.routingContext.control) throw new Error('Native task control is unavailable');
+          return launch.routingContext.control(call, scope);
+        },
+      }),
       getCodexNativeFileApprovalCopy: () => ({
         header: t('ccAgent.presentation.nativeFileApproval.header'),
         confirmation: t('ccAgent.presentation.nativeFileApproval.confirmation'),

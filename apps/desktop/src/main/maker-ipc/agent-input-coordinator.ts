@@ -1132,7 +1132,16 @@ export class AgentInputCoordinator {
     // Check the ordinary queue gates without inserting or persisting this native
     // row. An already-held first model step must never wait behind a GUI send.
     const gate = this.explainDrainBlockGate(sessionId, { ...state, pendingQueue: [item, ...state.pendingQueue] });
-    if (gate || state.pendingQueue.length > 0) throwIpcError('PRECONDITION_FAILED', 'Native input cannot enter the current task boundary');
+    if (gate || state.pendingQueue.length > 0) {
+      // Keep the wire refusal generic; host diagnostics distinguish an occupied
+      // input boundary from a stale owner without logging composer contents.
+      log.warn('native input refused at task boundary', {
+        reason: gate ?? 'queued-input',
+        boundGeneration: state.activeTurn?.vendorTurnGeneration ?? null,
+        currentGeneration: this.deps.getTurnGeneration?.(sessionId) ?? null,
+      });
+      throwIpcError('PRECONDITION_FAILED', 'Native input cannot enter the current task boundary');
+    }
     const native = { ...input, accepted: false };
     await this.dispatchInput(sessionId, item, 'native-input', native);
     if (!native.accepted) throwIpcError('PRECONDITION_FAILED', 'Native input was not admitted');

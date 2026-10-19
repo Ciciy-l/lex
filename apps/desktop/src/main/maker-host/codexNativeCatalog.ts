@@ -17,7 +17,8 @@ export interface CodexNativeCatalogRuntime {
 
 /** Same account/provider/visibility data as GUI, with no credential discovery side effects. */
 export function createDesktopCodexNativeCatalog(context: {
-  nativeSessionId: string;
+  nativeSessionId: string | (() => string | undefined);
+  taskIdentity?: string;
   cwd: string;
   isCurrent(): boolean;
   readRuntime(): CodexNativeCatalogRuntime;
@@ -25,7 +26,7 @@ export function createDesktopCodexNativeCatalog(context: {
   const owner = { ...getActiveAppSession() };
   const assertCurrent = (signal: AbortSignal) => {
     const active = getActiveAppSession();
-    if (signal.aborted || !context.isCurrent() || !context.nativeSessionId || isAppSessionBoundaryPending()
+    if (signal.aborted || !context.isCurrent() || !(context.taskIdentity || context.nativeSessionId) || isAppSessionBoundaryPending()
       || owner.dataOwnerId !== active.dataOwnerId || owner.generation !== active.generation) {
       throw new Error('Native catalog no longer belongs to this task');
     }
@@ -52,7 +53,8 @@ export function createDesktopCodexNativeCatalog(context: {
       // The task router has already validated any explicitly requested child.
       // An omitted id must resolve to this task, never the service's global list.
       const params = call.request.params as Record<string, unknown> | undefined;
-      const value = await call.forward({ ...params, threadId: params?.threadId ?? context.nativeSessionId });
+      const id = typeof context.nativeSessionId === 'function' ? context.nativeSessionId() : context.nativeSessionId;
+      const value = await call.forward({ ...params, ...(params?.threadId || id ? { threadId: params?.threadId ?? id } : {}) });
       check(); return value;
     }
     if (call.request.method !== 'model/list') throw new Error('Native catalog operation is not supported');

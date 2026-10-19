@@ -6,7 +6,7 @@ import type { StdioTransportOptions } from './codex/app-server/stdioTransport.js
 import type { CodexNativeService } from './codex/native-service.js';
 import type { CodexNativePresentationFactory } from './codex/native-task-presentation.js';
 import type { AutoReviewUserIntent } from './shared/auto-review-decision.js';
-import type { AgentSessionPresentation } from './presentation.js';
+import type { AgentSessionPresentation, AgentPresentationOwner, AgentPresentationInitialization } from './presentation.js';
 import type { AgentNativeInputResolver, AgentNativeMediaResolver } from './native-input.js';
 import type { ClaudeLocalNativeSessionOptions } from './claude-code/local-session-launch.js';
 import type { ClaudeNativeSessionHandle } from './claude-code/native-session.js';
@@ -711,6 +711,10 @@ export interface AgentDeps {
   createLocalCodexNativeService?: (options: StdioTransportOptions) => CodexNativeService;
   /** Optional task-owned frontend; requires the same concrete native service. */
   createLocalCodexNativePresentation?: CodexNativePresentationFactory;
+  /** Fresh original TUI and owning-host creation, before the native id exists. */
+  prepareLocalCodexNativePresentation?: import('./codex/native-task-presentation.js').CodexNativeFreshPresentationFactory;
+  /** Host selects ordinary local tasks before cache lookup; never a vendor flag. */
+  useLocalCodexNativePresentation?: (options: Pick<StartSessionOptions, 'sessionId' | 'nativePresentation' | 'reviewMode' | 'remoteHostId'>) => boolean;
   /** Host-only native adapter injection. Absent until native/remote acceptance; never a vendor option. */
   createLocalClaudeNativeSession?: (options: ClaudeLocalNativeSessionOptions) => Promise<ClaudeNativeSessionHandle>;
   /** Cindy-only local Skill overrides. Freeze at native runtime startup; never apply to SSH. */
@@ -1838,6 +1842,8 @@ export class TurnDispatchRejectedError extends Error {
 }
 
 export interface StartSessionOptions {
+  /** Host-owned GUI/TUI capability for this task, frozen before service lookup. */
+  nativePresentation?: boolean;
   /**
    * Business 层 session id (host 调用 maker.createSession 时传的 opts.id, 由
    * maker.ts 透传到这里)。agent 把它放到 McpProviderContext.sessionId, 让 MCP
@@ -2285,6 +2291,8 @@ export interface AgentSessionHandle {
   setNativeStopResolver?(resolver: AgentNativeStopResolver): void;
   /** Native UI of this running task; attaching a view must never start another agent. */
   readonly presentation?: AgentSessionPresentation;
+  /** Main calls only after account, DB, input, controls and interactions are bound. */
+  activatePresentation?(owner: AgentPresentationOwner): Promise<AgentPresentationInitialization>;
   /** Canonical physical Skill identities frozen at native runtime startup. */
   readonly disabledSkillPaths?: readonly string[];
   getCodexContextWindowInfo?(): Promise<CodexContextWindowInfo | null>;
@@ -2791,7 +2799,7 @@ export abstract class BaseAgent {
   }
 
   async requiresCodexThreadHostTransfer(
-    opts: Pick<StartSessionOptions, 'sessionId' | 'model' | 'providerId' | 'reviewMode' | 'remoteHostId'> & { threadId: string },
+    opts: Pick<StartSessionOptions, 'sessionId' | 'model' | 'providerId' | 'reviewMode' | 'remoteHostId' | 'nativePresentation'> & { threadId: string },
   ): Promise<boolean> {
     void opts;
     return false;

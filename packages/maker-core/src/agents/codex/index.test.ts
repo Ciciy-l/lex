@@ -4952,26 +4952,56 @@ describe('CodexAgent.refreshLocalModels', () => {
     } finally { await agent.dispose(); }
   });
 
-  it('publishes the task-owned native frontend and retires it before the shared service', async () => {
+  const presentationThread = '0199ae4e-d6b0-7755-a755-66754cd7a847';
+  function presentationTransport(thread = { id: presentationThread, historyMode: 'paginated', ephemeral: false }) {
+    MockCodexTransport.userAgent = 'codex_cli_rs/0.162.1 (fixture)';
     const native = new MockCodexTransport();
+    native.setMockResponse('thread/start', { result: { thread, model: 'gpt-5.4', modelProvider: 'openai', cwd: '/repo' } });
+    return native;
+  }
+  const presentationOwner = () => ({ signal: new AbortController().signal, isCurrent: () => true });
+  function freshPresentationFixture() {
+    const native = presentationTransport();
     const service = Object.assign(native, { endpoint: Promise.resolve({ url: 'ws://127.0.0.1:31415', token: 'fixture-only' }) });
-    const owners: Array<{ presentation: never; close: ReturnType<typeof vi.fn> }> = [];
-    const frontends: NonNullable<AgentDeps['createLocalCodexNativePresentation']> = vi.fn(async launch => {
-      expect(launch.handle.id).toBe('thread-1'); expect(launch.isCurrent()).toBe(true);
-      expect(launch.cwd).toBe('/repo'); expect(launch.service.endpoint.token).toBe('fixture-only');
-      const owner = { presentation: {} as never, close: vi.fn(async () => {}) }; owners.push(owner); return owner;
+    const delivered: unknown[] = [], close = vi.fn(async () => {});
+    let pending: Promise<unknown> | undefined;
+    const fresh: NonNullable<AgentDeps['prepareLocalCodexNativePresentation']> = vi.fn(async (launch: Parameters<NonNullable<AgentDeps['prepareLocalCodexNativePresentation']>>[0]) => {
+      launch.creation.subscribe(async event => { delivered.push(event); });
+      const request = { id: 'native-fresh', method: 'thread/start', params: {} };
+      pending = launch.creation.start({ request, signal: launch.signal, owningHost: launch.host,
+        forward: async () => { throw new Error('root must use owning host'); },
+        dispatchToHost: (params, beforeDispatch) => launch.host.request('thread/start', params, { beforeDispatch }),
+      }, () => launch.prepareStart({ model: 'ignored-ui-default', cwd: '/wrong-ui-default' })).then(value => {
+        delivered.push(value); launch.creation.responseDelivered(request, value); return value;
+      });
+      void pending.catch(() => {});
+      return { close, bind: vi.fn(bound => {
+        expect(bound.handle.id).toBe(presentationThread);
+        return { presentation: {} as never, ready: launch.creation.ready, close };
+      }) };
     });
+    const resume = vi.fn(async () => ({ presentation: {} as never, ready: Promise.resolve(), close }));
     const agent = new CodexAgent(createDeps({}, { createLocalCodexNativeService: () => service,
-      createLocalCodexNativePresentation: frontends, disableCodexPluginRuntime: true }));
+      createLocalCodexNativePresentation: resume, prepareLocalCodexNativePresentation: fresh, disableCodexPluginRuntime: true }));
+    return { agent, native, fresh, resume, close, delivered, pending: () => pending,
+      start: () => agent.startSession({ sessionId: 'native-presentation', model: 'gpt-5.4', workingDir: '/repo' }) };
+  }
+
+  it('returns the fresh handle at the owning-host ACK before Main releases the original TUI ACK', async () => {
+    const f = freshPresentationFixture();
     try {
-      const handle = await agent.startSession({ sessionId: 'native-presentation', model: 'gpt-5.4', workingDir: '/repo' });
-      const launch = vi.mocked(frontends).mock.calls[0]![0];
-      expect(handle.presentation).toBe(owners[0]!.presentation); expect(frontends).toHaveBeenCalledOnce();
-      await handle.close(); expect(owners[0]!.close).toHaveBeenCalledOnce();
-      expect(launch.signal.aborted).toBe(true); expect(launch.isCurrent()).toBe(false);
-      expect(handle.presentation).toBeUndefined(); expect(native.closed).toBe(false);
-    } finally { await agent.dispose(); }
-    expect(native.closed).toBe(true);
+      const handle = await f.start();
+      expect(handle.id).toBe(presentationThread); expect(handle.presentation).toBeUndefined();
+      expect(f.fresh).toHaveBeenCalledOnce(); expect(f.resume).not.toHaveBeenCalled(); expect(f.delivered).toEqual([]);
+      const starts = f.native.lines.map(line => JSON.parse(line)).filter(v => v.method === 'thread/start');
+      expect(starts).toHaveLength(1); expect(starts[0].params).toMatchObject({ model: 'gpt-5.4', cwd: '/repo' });
+      expect(f.native.lines.map(line => JSON.parse(line)).filter(v => v.method === 'thread/read' || v.method === 'thread/resume' || v.method === 'turn/start')).toEqual([]);
+      const activation = handle.activatePresentation!(presentationOwner());
+      expect(handle.activatePresentation!(presentationOwner())).toBe(activation);
+      expect(await activation).toEqual({ status: 'ready' });
+      expect(handle.presentation).toBeDefined(); expect(f.delivered).toHaveLength(1);
+      await handle.close(); expect(f.close).toHaveBeenCalled();
+    } finally { await f.agent.dispose(); }
   });
 
   it('routes native Stop through its product owner and reports strict interrupt failures', async () => {
@@ -5039,38 +5069,77 @@ describe('CodexAgent.refreshLocalModels', () => {
   });
 
   it('never creates a native frontend over a legacy task transport', async () => {
-    const frontend = vi.fn(async () => ({ presentation: {} as never, close: async () => {} }));
+    const frontend = vi.fn(async () => ({ presentation: {} as never, ready: Promise.resolve(), close: async () => {} }));
     const agent = new CodexAgent(createDeps({}, { createLocalCodexNativePresentation: frontend }));
     try {
-      await expect(agent.startSession({ sessionId: 'native-no-service', model: 'gpt-5.4', workingDir: '/repo' }))
-        .rejects.toThrow('requires its owning native service');
+      const handle = await agent.startSession({ sessionId: 'native-no-service', model: 'gpt-5.4', workingDir: '/repo' });
+      expect(await handle.activatePresentation!(presentationOwner())).toEqual({ status: 'unavailable', reason: 'unsupported-service' });
       expect(frontend).not.toHaveBeenCalled();
+      expect(createdTransports.flatMap(t => t.lines).map(line => JSON.parse(line))
+        .filter(v => v.method === 'thread/unsubscribe')).toHaveLength(0);
+      await handle.close();
       expect(createdTransports.flatMap(t => t.lines).map(line => JSON.parse(line))
         .filter(v => v.method === 'thread/unsubscribe')).toHaveLength(1);
     } finally { await agent.dispose(); }
   });
 
-  it('releases the thread if the Main frontend factory rejects startup', async () => {
-    const native = new MockCodexTransport();
-    const frontend = vi.fn(async () => { throw new Error('fixture native frontend startup failed'); });
+  it('allows GUI first input while the fresh native ACK waits for Main bindings without another start', async () => {
+    const f = freshPresentationFixture();
+    f.native.setMockResponse('turn/start', { result: { turn: { id: 'gui-first-turn', status: 'inProgress', items: [] } } });
+    try {
+      const handle = await f.start();
+      await handle.send({ type: 'user', content: 'GUI first turn' });
+      expect(handle.getCurrentTurnId!()).toBe('gui-first-turn'); expect(f.delivered).toEqual([]);
+      expect(await handle.activatePresentation!(presentationOwner())).toEqual({ status: 'ready' });
+      const wire = f.native.lines.map(line => JSON.parse(line));
+      expect(wire.filter(v => v.method === 'thread/start')).toHaveLength(1);
+      expect(wire.find(v => v.method === 'turn/start').params.threadId).toBe(handle.id);
+      expect(wire.filter(v => v.method === 'thread/read' || v.method === 'thread/resume')).toEqual([]);
+      await handle.close();
+    } finally { await f.agent.dispose(); }
+  });
+
+  it('cancels a fresh presentation at Main activation without retiring or replacing its GUI task', async () => {
+    const f = freshPresentationFixture(), owner = new AbortController();
+    try {
+      const handle = await f.start(); owner.abort();
+      expect(await handle.activatePresentation!({ signal: owner.signal, isCurrent: () => false }))
+        .toEqual({ status: 'unavailable', reason: 'owner-changed' });
+      await expect(f.pending()).rejects.toThrow();
+      expect(handle.id).toBe(presentationThread); expect(f.native.closed).toBe(false); expect(f.delivered).toEqual([]);
+      expect(f.native.lines.map(line => JSON.parse(line)).filter(v => v.method === 'thread/start')).toHaveLength(1);
+      await handle.close();
+    } finally { await f.agent.dispose(); }
+  });
+
+  it('keeps a genuine legacy host resume without reading full history or applying the new-thread version gate', async () => {
+    const historicalId = '0199ae4e-d6b0-7755-a755-66754cd7a847';
+    const native = presentationTransport({ id: historicalId, historyMode: 'legacy', ephemeral: false });
+    MockCodexTransport.userAgent = 'codex_cli_rs/0.145.0';
+    native.setMockResponse('thread/resume', { result: { thread: { id: historicalId, historyMode: 'legacy', ephemeral: false },
+      model: 'gpt-5.4', modelProvider: 'openai', cwd: '/repo' } });
+    const frontend = vi.fn(async () => ({ presentation: {} as never, ready: Promise.resolve(), close: async () => {} }));
     const agent = new CodexAgent(createDeps({}, {
       createLocalCodexNativeService: () => Object.assign(native, { endpoint: Promise.resolve({ url: 'ws://127.0.0.1:31415', token: 'fixture-only' }) }),
       createLocalCodexNativePresentation: frontend,
     }));
     try {
-      await expect(agent.startSession({ sessionId: 'native-start-failed', model: 'gpt-5.4', workingDir: '/repo' }))
-        .rejects.toThrow('fixture native frontend startup failed');
-      expect(frontend).toHaveBeenCalledOnce();
-      expect(native.lines.map(line => JSON.parse(line)).filter(v => v.method === 'thread/unsubscribe')).toHaveLength(1);
+      const handle = await agent.startSession({ sessionId: 'native-history', model: 'gpt-5.4', workingDir: '/repo', resumeSessionId: historicalId });
+      expect(await handle.activatePresentation!(presentationOwner())).toEqual({ status: 'ready' });
+      expect(frontend).toHaveBeenCalledOnce(); expect(handle.id).toBe(historicalId);
+      expect(native.lines.map(line => JSON.parse(line)).filter(v => v.method === 'thread/read' || v.method === 'thread/start')).toEqual([]);
+      await handle.close();
     } finally { await agent.dispose(); }
   });
 
   it('service retirement invalidates the published native frontend without starting a replacement', async () => {
-    const native = new MockCodexTransport(), closed = vi.fn(async () => {});
-    const frontend: NonNullable<AgentDeps['createLocalCodexNativePresentation']> = vi.fn(async () => ({ presentation: {} as never, close: closed }));
+    const native = presentationTransport(), closed = vi.fn(async () => {});
+    const frontend: NonNullable<AgentDeps['createLocalCodexNativePresentation']> = vi.fn(async () => ({ presentation: {} as never, ready: Promise.resolve(), close: closed }));
     const service = vi.fn(() => Object.assign(native, { endpoint: Promise.resolve({ url: 'ws://127.0.0.1:31415', token: 'fixture-only' }) }));
     const agent = new CodexAgent(createDeps({}, { createLocalCodexNativeService: service, createLocalCodexNativePresentation: frontend }));
-    const handle = await agent.startSession({ sessionId: 'native-retire', model: 'gpt-5.4', workingDir: '/repo' });
+    native.setMockResponse('thread/resume', { result: { thread: { id: presentationThread }, model: 'gpt-5.4', modelProvider: 'openai', cwd: '/repo' } });
+    const handle = await agent.startSession({ sessionId: 'native-retire', model: 'gpt-5.4', workingDir: '/repo', resumeSessionId: presentationThread });
+    expect(await handle.activatePresentation!(presentationOwner())).toEqual({ status: 'ready' });
     await agent.dispose();
     await vi.waitFor(() => expect(closed).toHaveBeenCalledOnce());
     expect(vi.mocked(frontend).mock.calls[0]![0].signal.aborted).toBe(true);

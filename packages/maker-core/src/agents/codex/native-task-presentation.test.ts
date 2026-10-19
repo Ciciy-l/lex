@@ -10,7 +10,7 @@ function fixture() {
   const launch = { handle, cwd: '/fixture', service: { endpoint: { url: 'ws://127.0.0.1:1', token: 'invalid-fixture-token' },
     signal: service.signal, isCurrent: () => !service.signal.aborted }, isCurrent: () => current, routingContext: { ownsDescendant: () => false,
       titleContext: () => ({ model: 'fixture-model', mcpServers: [] }) } };
-  const owner = { presentation, async close() { closes++; } };
+  const owner = { presentation, ready: Promise.resolve(), async close() { closes++; } };
   return { task, launch, owner, service, warnings, expire() { current = false; }, get closes() { return closes; } };
 }
 describe('Codex task-owned frontend lifetime', () => {
@@ -42,7 +42,7 @@ describe('Codex task-owned frontend lifetime', () => {
     assert.equal(f.closes, 1); assert.equal(f.task.presentation, undefined);
   });
   it('records unconfirmed close without reporting successful task disposal', async () => {
-    const f = fixture(); await f.task.start(async () => ({ presentation: f.owner.presentation,
+    const f = fixture(); await f.task.start(async () => ({ presentation: f.owner.presentation, ready: Promise.resolve(),
       async close() { throw new Error('fixture exit unconfirmed'); } }), f.launch);
     f.service.abort(); await assert.rejects(f.task.close(), /unconfirmed/);
     assert.equal(f.warnings.length, 1); assert.equal(f.task.presentation, undefined);
@@ -63,5 +63,26 @@ describe('Codex task-owned frontend lifetime', () => {
   it('does not expose a frontend after its task binding has changed', async () => {
     const f = fixture(); await f.task.start(async () => f.owner, f.launch);
     f.expire(); assert.equal(f.task.presentation, undefined); await f.task.close(); assert.equal(f.closes, 1);
+  });
+  it('keeps the PTY private until its real resume receipt and closes a pending receipt without a cycle', async () => {
+    const f = fixture(); let entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const start = f.task.start(async () => ({ ...f.owner,
+      get ready() { entered(); return new Promise<void>(() => {}); },
+    }), f.launch);
+    const rejected = assert.rejects(start, /owner-changed/);
+    await started; assert.equal(f.task.presentation, undefined);
+    await f.task.close(); await rejected;
+    assert.equal(f.closes, 1); assert.equal(f.service.signal.aborted, false);
+  });
+  it('does not launch after cancellation during storage preparation, including a late read', async () => {
+    const f = fixture(), owner = new AbortController(); let finish!: () => void, entered!: () => void;
+    const held = new Promise<void>(resolve => { finish = resolve; });
+    const begun = new Promise<void>(resolve => { entered = resolve; });
+    let factories = 0;
+    const start = f.task.start(async () => { factories++; return f.owner; }, { ...f.launch, ownerSignal: owner.signal }, async () => { entered(); await held; });
+    const rejected = assert.rejects(start, /owner-changed/);
+    await begun; owner.abort(); await rejected; finish(); await f.task.close();
+    assert.equal(factories, 0); assert.equal(f.service.signal.aborted, false);
   });
 });

@@ -74,6 +74,7 @@ import { AUTO_REVIEW_SOURCE_CONTENT, AUTO_REVIEW_USER_INTENT, INHERITED_CAPABILI
 import { AUTO_REVIEW_DELEGATED_CONTINUATION, readAutoReviewUserText, restoreAutoReviewSteerIntent, restoreAutoReviewUserIntent } from './autoReviewUserIntent.js';
 import type {
   AgentEvent,
+  AgentPresentationInitialization,
   AgentKind,
   Effort,
   ContextUsageData,
@@ -4676,7 +4677,10 @@ const sessionTurnObserverDependencies = {
   log,
 };
 
-export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void {
+export function wireSessionToIpc(
+  session: ReturnType<Maker['getSession']>,
+  presentationStartup?: Promise<AgentPresentationInitialization>,
+): void {
   if (!session) return;
   const registration = sessionBindings.beginBinding(session);
   if (!registration) return;
@@ -4749,6 +4753,7 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
     handleSessionEvent(ownerEventDependencies, session, event);
   };
   const ownerDb = getCurrentDbClientSnapshot();
+  const presentationOwnerGeneration = getActiveAppSession().generation;
   if (nativeInputBindingDepsHolder && typeof session.onNativeInput === 'function') {
     const nativeDeps = nativeInputBindingDepsHolder;
     const isCurrent = (current: typeof session) => Boolean(ownerDb && ownerDb === getCurrentDbClientSnapshot()
@@ -4809,6 +4814,18 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
       ghostSessionTap.interactionObserver.onEnd(request, route);
     },
   });
+  // Input owners exist now, but the create/resume funnel may still be hydrating
+  // its provider/effort/fast stores. Only the native frontend awaits that receipt.
+  // Direct headless creators already freeze their selected runtime before wiring;
+  // they retain that path without adding a wait to ordinary GUI sends.
+  const inputOwner = nativeInputBindingDepsHolder, stopOwner = nativeStopBindingDepsHolder, runtimeOwner = nativeRuntimeBindingDepsHolder;
+  registration.disposers.push(session.activatePresentation(() => Boolean(ownerDb
+    && ownerDb === getCurrentDbClientSnapshot() && !isAppSessionBoundaryPending()
+    && getActiveAppSession().generation === presentationOwnerGeneration
+    && inputOwner && inputOwner === nativeInputBindingDepsHolder
+    && stopOwner && stopOwner === nativeStopBindingDepsHolder
+    && runtimeOwner && runtimeOwner === nativeRuntimeBindingDepsHolder
+    && sessionBindings.getSession(session.id) === session), presentationStartup));
 }
 
 /**
@@ -4910,7 +4927,12 @@ export function registerModelVisibilitySyncIpc(): void {
 
 export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions): void {
   presentationHandler?.close();
-  presentationHandler = createAgentPresentationHandler((sessionId) => maker.getSession(sessionId)?.presentation);
+  presentationHandler = createAgentPresentationHandler((sessionId) => maker.getSession(sessionId)?.presentation, sessionId => {
+    const session = maker.getSession(sessionId), settled = session?.presentationInitialization;
+    if (!session || !settled) return undefined;
+    const nativeId = session.sdkSessionId;
+    return { settled, isCurrent: () => maker.getSession(sessionId) === session && session.sdkSessionId === nativeId };
+  });
   ipcMain.removeHandler(AGENT_PRESENTATION_CHANNEL);
   ipcMain.handle(AGENT_PRESENTATION_CHANNEL, presentationHandler.handle);
   // Catalog updates and explicit budget edits share one serial refresh boundary.
@@ -6789,6 +6811,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     didInjectOrcaInstructions: boolean;
     didInjectProjectContext: boolean;
   }> {
+    const presentationOwnerDb = getCurrentDbClientSnapshot();
+    const presentationOwnerGeneration = getActiveAppSession().generation;
     const sshCodexOwnerGeneration = o.agentKind === 'codex' && o.remoteHostId
       ? getActiveAppSession().generation
       : null;
@@ -6950,6 +6974,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (snapshot.status !== 'ready') sshCodexHostConnectionChanged = true;
     }) ?? (() => undefined);
     const sessionBeforeCreate = o.id ? maker.getSession(o.id) : undefined;
+    // All ordinary local GUI-first/TUI-first starts reserve the same capable
+    // host before cache lookup. Utility, Review, Orca and SSH keep legacy hosts.
+    o.nativePresentation = o.agentKind === 'codex' && !o.remoteHostId && !o.reviewMode && !o.orcaRole;
     let session: Awaited<ReturnType<typeof maker.createSession>> | undefined;
     try {
       assertSshCodexOwnerCurrent();
@@ -6998,98 +7025,117 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     }
     if (!session) throw new Error('Maker did not return the created session');
     await markProjectContextIfNeeded(session.id, didInjectProjectContext);
-    wireSessionToIpc(session);
-    markOrcaMcpHydratedIfNeeded(session.id, o);
-
-    // per-session 供应商:从 DB(sessions.provider_id)回填路由 store —— 跨重启恢复会话显式选定的
-    // 供应商,让首个请求就按所选来源路由;无值则保持未设(→ 默认路由,行为不变)。hydrate 不覆盖
-    // 运行中已有的选择。读失败不致命(回落默认路由)。所有 create/resume 路径都经本funnel,单点覆盖。
-    //
-    // device-link 远程 create(P2):DesktopSessionStorage.create 从 maker-core SessionMeta 建行,
-    // SessionMeta 不含 providerId → 远程新建行 provider_id 恒 NULL。这里在 hydrate 前用 create opts
-    // 的 providerId 补写 DB。providerId=null 是显式清除来源,也必须写库覆盖旧值;只有
-    // providerId=undefined 才表示调用方没有携带来源选择。懒启动路径会在 maker.createSession
-    // 前从 DB 预补 o.providerId,所以下面同时承担「新建落库」和「恢复路由 store」两件事。
+    let completePresentationStartup!: (result: AgentPresentationInitialization) => void;
+    const presentationStartup = new Promise<AgentPresentationInitialization>(resolve => {
+      completePresentationStartup = resolve;
+    });
+    let presentationStartupResult: AgentPresentationInitialization = { status: 'unavailable', reason: 'startup-failed' };
     try {
-      const db = getDbClient().drizzle;
-      await persistAndHydrateSessionProvider({
-        sessionId: session.id,
-        providerId: runtimeOverride ? undefined : o.providerId,
-        updateProviderId: async (targetSessionId, providerId) => {
-          await db.update(sessions).set({ providerId }).where(eq(sessions.id, targetSessionId));
-        },
-        readProviderId: async (targetSessionId) => {
-          const [pRow] = await db
-            .select({ providerId: sessions.providerId })
-            .from(sessions)
-            .where(eq(sessions.id, targetSessionId))
-            .limit(1);
-          return pRow?.providerId;
-        },
-        hydrateSessionProvider,
-      });
-      // bridge 会话态(effort / fast)同点 hydrate:让 resume / 重启后的首个 bridge 请求就带上
-      // 用户上次选定的思维深度与 Fast(否则要等用户再点一次开关才写进内存 store)。
-      const [efRow] = await db
-        .select({ effort: sessions.effort, fastMode: sessions.fastMode })
-        .from(sessions)
-        .where(eq(sessions.id, session.id))
-        .limit(1);
-      if (runtimeOverride) {
-        setSessionEffort(session.id, runtimeOverride.effort);
-        setSessionFastMode(session.id, runtimeOverride.fastMode);
-      } else {
-        // DB 行里的 effort 是历史合法值(固定 effort 模型切换时省略了字段),
-        // hydrate 时必须按**当前模型能力**归一化:固定 effort 模型 → null,
-        // 可调模型 → 兼容档位。直接回灌旧值会把不支持 reasoningEffort 的模型
-        // 请求打给 provider 被拒(issue #3691 / PR #3727 Greptile P1)。
-        const hydrateProviderId = getSessionProvider(session.id) ?? o.providerId ?? null;
-        const hydrateProvider = getActiveCatalog().providers.find(
-          (candidate) => candidate.id === hydrateProviderId,
-        );
-        const hydrateModel = findCatalogModel(
-          hydrateProvider,
-          session.model,
-          o.agentKind,
-        );
-        setSessionEffort(
-          session.id,
-          hydrateModel
-            ? resolveCompatibleSessionRuntimeEffort(hydrateModel, efRow?.effort ?? null)
-            : efRow?.effort,
-        );
-        setSessionFastMode(session.id, !!efRow?.fastMode);
-      }
-    } catch (err) {
-      // 来源没能落库 → 所选来源在下次冷启动后消失(本次路由已在启动边界冻结)。
-      log.warn('hydrate session provider failed (non-fatal)', {
-        sessionId: session.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+      wireSessionToIpc(session, presentationStartup);
+      markOrcaMcpHydratedIfNeeded(session.id, o);
 
-    // 预建 worktree 补快照:send_to_session / hook-control / device-link 远程 create 都是
-    // 「先 worktree:create(worktreeStore 绑定)后建会话」—— 绑定写入时 session 行还不
-    // 存在,worktreeStore.set 的 sessions.worktree_path 同步落空(仅 warn)。此处行已建,
-    // 统一补一次反范式快照(幂等;本地"先会话后 worktree"路径此时无绑定,天然跳过)。
-    // 失败非致命 —— 徽标与回收都以 worktreeStore 为准。
-    try {
-      const wtMeta = worktreeStore.get(session.id);
-      if (wtMeta?.path) {
+      // per-session 供应商:从 DB(sessions.provider_id)回填路由 store —— 跨重启恢复会话显式选定的
+      // 供应商,让首个请求就按所选来源路由;无值则保持未设(→ 默认路由,行为不变)。hydrate 不覆盖
+      // 运行中已有的选择。读失败不致命(回落默认路由)。所有 create/resume 路径都经本funnel,单点覆盖。
+      //
+      // device-link 远程 create(P2):DesktopSessionStorage.create 从 maker-core SessionMeta 建行,
+      // SessionMeta 不含 providerId → 远程新建行 provider_id 恒 NULL。这里在 hydrate 前用 create opts
+      // 的 providerId 补写 DB。providerId=null 是显式清除来源,也必须写库覆盖旧值;只有
+      // providerId=undefined 才表示调用方没有携带来源选择。懒启动路径会在 maker.createSession
+      // 前从 DB 预补 o.providerId,所以下面同时承担「新建落库」和「恢复路由 store」两件事。
+      try {
         const db = getDbClient().drizzle;
-        await db
-          .update(sessions)
-          .set({ worktreePath: wtMeta.path })
-          .where(eq(sessions.id, session.id));
+        await persistAndHydrateSessionProvider({
+          sessionId: session.id,
+          providerId: runtimeOverride ? undefined : o.providerId,
+          updateProviderId: async (targetSessionId, providerId) => {
+            await db.update(sessions).set({ providerId }).where(eq(sessions.id, targetSessionId));
+          },
+          readProviderId: async (targetSessionId) => {
+            const [pRow] = await db
+              .select({ providerId: sessions.providerId })
+              .from(sessions)
+              .where(eq(sessions.id, targetSessionId))
+              .limit(1);
+            return pRow?.providerId;
+          },
+          hydrateSessionProvider,
+        });
+        // bridge 会话态(effort / fast)同点 hydrate:让 resume / 重启后的首个 bridge 请求就带上
+        // 用户上次选定的思维深度与 Fast(否则要等用户再点一次开关才写进内存 store)。
+        const [efRow] = await db
+          .select({ effort: sessions.effort, fastMode: sessions.fastMode })
+          .from(sessions)
+          .where(eq(sessions.id, session.id))
+          .limit(1);
+        if (runtimeOverride) {
+          setSessionEffort(session.id, runtimeOverride.effort);
+          setSessionFastMode(session.id, runtimeOverride.fastMode);
+        } else {
+          // DB 行里的 effort 是历史合法值(固定 effort 模型切换时省略了字段),
+          // hydrate 时必须按**当前模型能力**归一化:固定 effort 模型 → null,
+          // 可调模型 → 兼容档位。直接回灌旧值会把不支持 reasoningEffort 的模型
+          // 请求打给 provider 被拒(issue #3691 / PR #3727 Greptile P1)。
+          const hydrateProviderId = getSessionProvider(session.id) ?? o.providerId ?? null;
+          const hydrateProvider = getActiveCatalog().providers.find(
+            (candidate) => candidate.id === hydrateProviderId,
+          );
+          const hydrateModel = findCatalogModel(
+            hydrateProvider,
+            session.model,
+            o.agentKind,
+          );
+          setSessionEffort(
+            session.id,
+            hydrateModel
+              ? resolveCompatibleSessionRuntimeEffort(hydrateModel, efRow?.effort ?? null)
+              : efRow?.effort,
+          );
+          setSessionFastMode(session.id, !!efRow?.fastMode);
+        }
+        presentationStartupResult = { status: 'ready' };
+      } catch (err) {
+        // 来源没能落库 → 所选来源在下次冷启动后消失(本次路由已在启动边界冻结)。
+        log.warn('hydrate session provider failed (non-fatal)', {
+          sessionId: session.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
-    } catch (err) {
-      log.debug('backfill worktree_path failed (non-fatal)', {
-        sessionId: session.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
 
-    return { session, didInjectOrcaInstructions, didInjectProjectContext };
+      // 预建 worktree 补快照:send_to_session / hook-control / device-link 远程 create 都是
+      // 「先 worktree:create(worktreeStore 绑定)后建会话」—— 绑定写入时 session 行还不
+      // 存在,worktreeStore.set 的 sessions.worktree_path 同步落空(仅 warn)。此处行已建,
+      // 统一补一次反范式快照(幂等;本地"先会话后 worktree"路径此时无绑定,天然跳过)。
+      // 失败非致命 —— 徽标与回收都以 worktreeStore 为准。
+      try {
+        const wtMeta = worktreeStore.get(session.id);
+        if (wtMeta?.path) {
+          const db = getDbClient().drizzle;
+          await db
+            .update(sessions)
+            .set({ worktreePath: wtMeta.path })
+            .where(eq(sessions.id, session.id));
+        }
+      } catch (err) {
+        log.debug('backfill worktree_path failed (non-fatal)', {
+          sessionId: session.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+
+      return { session, didInjectOrcaInstructions, didInjectProjectContext };
+    } finally {
+      // Hydration failure stays non-fatal for the original GUI task. It must not
+      // release a native first input using defaults or another account's stores.
+      completePresentationStartup(
+        presentationOwnerDb && presentationOwnerDb === getCurrentDbClientSnapshot()
+          && !isAppSessionBoundaryPending()
+          && getActiveAppSession().generation === presentationOwnerGeneration
+          && maker.getSession(session.id) === session
+          ? presentationStartupResult
+          : { status: 'unavailable', reason: 'owner-changed' },
+      );
+    }
   }
 
   // switchFocus 和 sendToWorker 都可能唤醒 idle worker；统一走这里才能保留 extraDirs。
@@ -17276,6 +17322,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         const transferMeta = runtimeAgentKind === 'codex' ? await maker.getSessionMeta(sessionId) : null;
         const transferTarget = {
           sessionId,
+          nativePresentation: !transferStatus.remoteHostId && !transferMeta?.reviewMode && !transferStatus.orcaRole,
           model,
           providerId: targetRouteProviderId,
           remoteHostId: transferStatus.remoteHostId ?? undefined,

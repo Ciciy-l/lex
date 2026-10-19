@@ -59,6 +59,17 @@ export interface AgentSessionPresentation {
   attach(peerId: string, notify: () => void): AgentPresentationAttachment;
 }
 
+/** Host-only, additive capability; a view cannot initiate activation. */
+export interface AgentPresentationOwner {
+  readonly signal: AbortSignal;
+  isCurrent(): boolean;
+}
+export type AgentPresentationUnavailableReason =
+  | 'unsupported-service' | 'invalid-thread-receipt' | 'owner-changed' | 'startup-failed';
+export type AgentPresentationInitialization =
+  | { status: 'ready' }
+  | { status: 'unavailable'; reason: AgentPresentationUnavailableReason };
+
 /**
  * One native runtime, independently attached views and one raw-input writer.
  * Semantic sends/approvals still belong to AgentSessionHandle. This class does
