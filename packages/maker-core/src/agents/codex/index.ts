@@ -202,6 +202,7 @@ import {
   isOversizedLiveTailStats,
   measureRolloutLiveTailStats,
   assertCodexRolloutRewriteSupported,
+  readCodexRolloutDynamicTools,
   readCodexRolloutModelProvider,
   sanitizeCodexForkRolloutFileInPlace,
 } from './rollout-sanitize.js';
@@ -14977,6 +14978,15 @@ assertRouteCurrent();
         if (!service) throw new Error('Native Codex presentation requires its owning native service');
         if (origin.kind === 'fresh' && (!nativeCreation || !preparedNativeFrontend || nativeCreation.threadId !== nativeId)) {
           throw new CodexNativeAttachUnavailable('startup-failed');
+        }
+        const resumeRolloutPath = preparedResumePath || sessionRolloutPath;
+        if (origin.kind === 'resumed' && resumeRolloutPath) {
+          // The server owns resumed declarations. Only recover Core's executor
+          // routing from that same thread's metadata;
+          // never inject new dynamicTools into the resume request.
+          const tools = await waitForCodexNativeAttach(readCodexRolloutDynamicTools(resumeRolloutPath, nativeId), signal);
+          check();
+          nativeDynamicTools.register(tools);
         }
         const selectedFactory = preparedNativeFrontend ? async (launch: Parameters<typeof factory>[0]) => {
           const bound = preparedNativeFrontend!.bind(launch);

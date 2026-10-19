@@ -474,20 +474,32 @@ function parseForkSessionMeta(line: string): ForkSessionMeta | null {
   }
 }
 
-/** Read native identity without loading or rewriting the account's history. */
-export async function readCodexRolloutModelProvider(filePath: string, threadId: string): Promise<string | undefined> {
+async function readCodexRolloutSessionMeta(filePath: string, threadId: string): Promise<Record<string, unknown>> {
   for await (const line of iterateRolloutLines(filePath)) {
     const meta = parseForkSessionMeta(line);
     if (!meta || meta.payload.id !== threadId) {
       throw new Error('Codex rollout metadata does not match the requested thread');
     }
-    const provider = meta.payload.model_provider;
-    if (provider != null && typeof provider !== 'string') {
-      throw new Error('Invalid Codex rollout model provider');
-    }
-    return provider ?? undefined;
+    return meta.payload;
   }
   throw new Error('Codex rollout metadata is missing');
+}
+
+/** Read native identity without loading or rewriting the account's history. */
+export async function readCodexRolloutModelProvider(filePath: string, threadId: string): Promise<string | undefined> {
+  const provider = (await readCodexRolloutSessionMeta(filePath, threadId)).model_provider;
+  if (provider != null && typeof provider !== 'string') {
+    throw new Error('Invalid Codex rollout model provider');
+  }
+  return provider ?? undefined;
+}
+
+/** Read saved declarations without loading turns or rewriting history. */
+export async function readCodexRolloutDynamicTools(filePath: string, threadId: string): Promise<unknown[]> {
+  const tools = (await readCodexRolloutSessionMeta(filePath, threadId)).dynamic_tools;
+  if (tools == null) return [];
+  if (!Array.isArray(tools)) throw new Error('Invalid Codex rollout dynamic tools');
+  return tools;
 }
 
 function detachForkLineage(meta: ForkSessionMeta): string {

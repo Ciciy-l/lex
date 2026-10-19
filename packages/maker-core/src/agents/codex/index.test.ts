@@ -5182,6 +5182,81 @@ describe('CodexAgent.refreshLocalModels', () => {
     } finally { await agent.dispose(); }
   });
 
+  it.each(['prepared-path', 'resume-ack-path'])('restores historical native dynamic execution from %s without redeclaring tools', async pathSource => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cindy-native-tool-resume-')); tempRoots.push(dir);
+    const source = path.join(dir, 'rollout.jsonl');
+    const savedTools = [{ type: 'namespace', name: 'codex_tui', description: 'original tools', tools: [
+      { type: 'function', name: 'read_thread', description: 'read', inputSchema: { type: 'object', required: ['threadId'] } },
+    ] }];
+    const history = JSON.stringify({ type: 'session_meta', payload: { id: presentationThread, dynamic_tools: savedTools } }) + '\n';
+    await fs.writeFile(source, history);
+    const native = presentationTransport();
+    native.setMockResponse('thread/resume', { result: { thread: { id: presentationThread, path: source },
+      model: 'gpt-5.4', modelProvider: 'openai', cwd: '/repo' } });
+    native.setMockResponse('turn/start', { result: { turn: { id: 'resumed-native-turn', status: 'inProgress', items: [] } } });
+    const factory = vi.fn(async () => ({ presentation: {} as never, ready: Promise.resolve(), close: async () => {} }));
+    const agent = new CodexAgent(createDeps({}, {
+      createLocalCodexNativeService: () => Object.assign(native, { endpoint: Promise.resolve({ url: 'ws://127.0.0.1:31415', token: 'fixture-only' }) }),
+      createLocalCodexNativePresentation: factory, getMcpToolApprovalPolicy: () => 'prompt-each-time',
+      ...(pathSource === 'prepared-path' ? { prepareCodexResumeSession: async () => source } : {}),
+    }));
+    try {
+      const handle = await agent.startSession({ sessionId: 'native-tool-history', model: 'gpt-5.4', workingDir: '/repo',
+        resumeSessionId: presentationThread }) as CodexNativeSessionHandle;
+      expect(await handle.activatePresentation!(presentationOwner())).toEqual({ status: 'ready' });
+      const received: unknown[] = [];
+      const frontend = handle.attachNativeToolFrontend!(async event => { received.push(event); return true; }); frontend.ready();
+      const approve = vi.fn(async (request: InteractionRequest) => {
+        expect(request).toMatchObject({ kind: 'permission', toolName: 'dynamic:codex_tui:read_thread' });
+        return { kind: 'permission', behavior: 'allow' } as const;
+      });
+      handle.setInteractionResolver(approve);
+      await handle.send({ type: 'user', content: 'read this resumed task' });
+      const params = { threadId: handle.id, turnId: 'resumed-native-turn', callId: 'saved-tool-call', namespace: 'codex_tui',
+        tool: 'read_thread', arguments: { threadId: handle.id } };
+      native.emitMockLine({ id: 'resumed-tool-request', method: 'item/tool/call', params });
+      await vi.waitFor(() => expect(received).toEqual([{ kind: 'request', request: { id: 'resumed-tool-request', method: 'item/tool/call', params } }]));
+      expect(approve).toHaveBeenCalledOnce();
+      const result = { success: true, contentItems: [{ type: 'inputText', text: 'original resumed executor result' }] };
+      expect(frontend.answer('resumed-tool-request', result)).toBe(true);
+      await vi.waitFor(() => expect(native.lines.map(line => JSON.parse(line))
+        .filter(value => value.id === 'resumed-tool-request' && 'result' in value)).toEqual([{ id: 'resumed-tool-request', result }]));
+      const wire = native.lines.map(line => JSON.parse(line));
+      const resumes = wire.filter(value => value.method === 'thread/resume');
+      expect(resumes).toHaveLength(1); expect(resumes[0].params).not.toHaveProperty('dynamicTools');
+      expect(wire.filter(value => value.method === 'thread/start' || value.method === 'thread/read')).toEqual([]);
+      expect(factory).toHaveBeenCalledOnce(); expect(await fs.readFile(source, 'utf8')).toBe(history);
+      frontend.detach(); await handle.close();
+    } finally { await agent.dispose(); }
+  });
+
+  it.each(['foreign-thread', 'invalid-declarations'])('keeps the GUI task when historical native metadata has %s', async failure => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cindy-native-tool-resume-invalid-')); tempRoots.push(dir);
+    const source = path.join(dir, 'rollout.jsonl');
+    await fs.writeFile(source, JSON.stringify({ type: 'session_meta', payload: {
+      id: failure === 'foreign-thread' ? 'foreign-thread' : presentationThread, dynamic_tools: {},
+    } }) + '\n');
+    const native = presentationTransport();
+    native.setMockResponse('thread/resume', { result: { thread: { id: presentationThread, path: source },
+      model: 'gpt-5.4', modelProvider: 'openai', cwd: '/repo' } });
+    native.setMockResponse('turn/start', { result: { turn: { id: 'gui-after-native-metadata-failure', status: 'inProgress', items: [] } } });
+    const factory = vi.fn(async () => ({ presentation: {} as never, ready: Promise.resolve(), close: async () => {} }));
+    const agent = new CodexAgent(createDeps({}, {
+      createLocalCodexNativeService: () => Object.assign(native, { endpoint: Promise.resolve({ url: 'ws://127.0.0.1:31415', token: 'fixture-only' }) }),
+      createLocalCodexNativePresentation: factory, prepareCodexResumeSession: async () => source,
+    }));
+    try {
+      const handle = await agent.startSession({ sessionId: 'native-invalid-history', model: 'gpt-5.4', workingDir: '/repo', resumeSessionId: presentationThread });
+      expect(await handle.activatePresentation!(presentationOwner())).toEqual({ status: 'unavailable', reason: 'startup-failed' });
+      expect(factory).not.toHaveBeenCalled(); expect(handle.id).toBe(presentationThread); expect(native.closed).toBe(false);
+      await handle.send({ type: 'user', content: 'GUI stays on the same task' });
+      expect(handle.getCurrentTurnId!()).toBe('gui-after-native-metadata-failure');
+      const wire = native.lines.map(line => JSON.parse(line));
+      expect(wire.filter(value => value.method === 'thread/start' || value.method === 'thread/unsubscribe')).toEqual([]);
+      await handle.close();
+    } finally { await agent.dispose(); }
+  });
+
   it('service retirement invalidates the published native frontend without starting a replacement', async () => {
     const native = presentationTransport(), closed = vi.fn(async () => {});
     const frontend: NonNullable<AgentDeps['createLocalCodexNativePresentation']> = vi.fn(async () => ({ presentation: {} as never, ready: Promise.resolve(), close: closed }));
