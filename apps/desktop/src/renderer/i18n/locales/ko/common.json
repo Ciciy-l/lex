@@ -9596,6 +9596,10 @@
   },
   "ccAgent": {
     "presentation": {
+      "startupUnavailable": {
+        "label": "TUI 사용 불가",
+        "startup": "TUI를 이 작업에 연결하지 못했습니다. GUI를 계속 사용할 수 있습니다."
+      },
       "nativeFileApproval": {
         "header": "파일 변경",
         "confirmation": "이 변경에는 확인이 필요합니다.",

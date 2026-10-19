@@ -1,5 +1,5 @@
 import { AgentNativeTerminal } from './AgentNativeTerminal';
-import { AgentPresentationSwitch } from './AgentPresentationSwitch';
+import { AgentPresentationSwitch, AgentPresentationUnavailable } from './AgentPresentationSwitch';
 import { useAgentPresentation } from './useAgentPresentation';
 import { enableCollabFromForm } from './enableCollabFromForm';
 import { ResponseSpeedStatus } from './ResponseSpeedStatus';
@@ -4393,8 +4393,20 @@ export function CCAgentSessionView({
     shareSelectionStore.exitIfNotSession(sessionId);
   }, [sessionId]);
 
+  const prepareNativePresentation = useCallback(async () => {
+    if (!sessionId || !session?.workingDir || session.agentKind !== 'codex' || session.remoteHostId || session.orcaRole) {
+      throw new Error('Native task startup is unavailable');
+    }
+    const createOpts = { id: sessionId, ...buildCreateOptsForCurrentSession(sessionId, session.model,
+      session.effort ?? undefined, session.permissionMode ?? 'ask', session.workingDir),
+      agentKind: 'codex' as const, extraDirs: session.extraDirs ?? [], writableDirs: session.writableDirs ?? [] };
+    if (remoteDeviceId) await window.electronAPI.deviceLink.invoke(remoteDeviceId, 'maker:create-session', [createOpts]);
+    else await window.electronAPI.maker.createSession(createOpts);
+  }, [sessionId, session, remoteDeviceId]);
   const presentation = useAgentPresentation({ sessionId, deviceId: remoteDeviceId, ownerId: dataOwnerId,
-    enabled: !readOnly && !!session, runtimeKey: String(session?.sdkSessionId ?? '') + ':' + String(agentStatus.isRunning) });
+    enabled: !readOnly && !!session, runtimeKey: String(session?.sdkSessionId ?? '') + ':' + String(agentStatus.isRunning),
+    prepare: session?.agentKind === 'codex' && !session.remoteHostId && !session.orcaRole && !!session.workingDir
+      ? prepareNativePresentation : undefined });
 
   // MessageStream 提成变量:perf/session-switch 的 <Profiler> 是纯诊断,只在 DEV
   // 包裹(见下方渲染处),生产直接渲染此 el,不引入多余 Profiler fiber。
@@ -4450,6 +4462,9 @@ export function CCAgentSessionView({
                 >
                   {/* Left: workingDir — 点击在系统文件管理器中打开;
                   click 区域宽度与文本一致(不拉伸到整行) */}
+                  <div className="flex min-w-0 items-center gap-3">
+                    {presentation.selectable && <AgentPresentationSwitch mode={presentation.mode} onChange={presentation.change} />}
+                    {!presentation.supported && presentation.unavailableReason && <AgentPresentationUnavailable />}
                   {worktreeCreation?.status === 'creating' ? (
                     <div className="flex min-w-0 items-center gap-1.5">
                       <Spinner size={12} className="text-[var(--workingdir-icon)]" />
@@ -4522,10 +4537,10 @@ export function CCAgentSessionView({
                       )}
                     </Tip>
                   )}
+                  </div>
 
                   {/* Right: Context capacity indicator */}
                   <div className="flex shrink-0 items-center gap-3">
-                    {presentation.supported && <AgentPresentationSwitch mode={presentation.mode} onChange={presentation.change} />}
                     {session?.usedProjectContext && (
                       <Tip text={t('ccAgent.layout.projectContextLoaded')} side="top">
                         <Brain

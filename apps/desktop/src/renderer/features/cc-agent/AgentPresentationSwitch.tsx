@@ -1,6 +1,14 @@
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 
+export function AgentPresentationUnavailable() {
+  const { t } = useTranslation();
+  const description = t('ccAgent.presentation.startupUnavailable.startup');
+  return <span role="status" title={description} aria-label={description} className="shrink-0 text-11 text-[var(--text-secondary)]">
+    {t('ccAgent.presentation.startupUnavailable.label')}
+  </span>;
+}
+
 export function AgentPresentationSwitch({ mode, onChange }: {
   mode: 'gui' | 'tui'; onChange(mode: 'gui' | 'tui'): void;
 }) {

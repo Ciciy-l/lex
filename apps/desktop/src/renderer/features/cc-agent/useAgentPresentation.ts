@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AGENT_PRESENTATION_CHANNEL, type AgentPresentationRequest, type AgentPresentationStatus } from '../../../shared/agentPresentation';
 
 const PREF_KEY = 'lex.agentPresentation.v1';
@@ -17,12 +17,15 @@ function persist(scope: string, mode: Mode) {
   } catch { /* View preference failure never changes the task. */ }
 }
 
-export function useAgentPresentation({ sessionId, deviceId, ownerId, enabled, runtimeKey }: {
+export function useAgentPresentation({ sessionId, deviceId, ownerId, enabled, runtimeKey, prepare }: {
   sessionId?: string; deviceId?: string | null; ownerId?: string | null; enabled: boolean; runtimeKey: string;
+  /** Explicit TUI selection uses the existing product creation funnel. */
+  prepare?: () => Promise<void>;
 }) {
   const scope = JSON.stringify([ownerId ?? '', deviceId ?? 'local', sessionId ?? '']);
   const [chosen, setChosen] = useState<{ scope: string; mode: Mode }>(() => ({ scope, mode: preference(scope) }));
-  const [availability, setAvailability] = useState<{ scope: string; generation?: string }>({ scope });
+  const [availability, setAvailability] = useState<{ scope: string; generation?: string;
+    reason?: Extract<AgentPresentationStatus, { supported: false }>['reason'] }>({ scope });
   const invoke = useCallback((request: AgentPresentationRequest) => deviceId
     ? window.electronAPI.deviceLink.invoke(deviceId, AGENT_PRESENTATION_CHANNEL, [request])
     : window.electronAPI.maker.presentation(request), [deviceId]);
@@ -32,13 +35,36 @@ export function useAgentPresentation({ sessionId, deviceId, ownerId, enabled, ru
     void invoke({ action: 'status', sessionId }).then((result) => {
       const status = result as AgentPresentationStatus;
       if (!cancelled) setAvailability({ scope, generation: status?.supported === true && status.state.status !== 'closed'
-        ? status.state.generation : undefined });
-    }, () => { if (!cancelled) setAvailability({ scope }); });
+        ? status.state.generation : undefined, reason: status?.supported === false ? status.reason : undefined });
+    }, () => { if (!cancelled) setAvailability({ scope, reason: 'startup-failed' }); });
     return () => { cancelled = true; };
   }, [scope, sessionId, enabled, runtimeKey, invoke]);
   const generation = enabled && availability.scope === scope ? availability.generation : undefined;
   const supported = !!generation;
   const mode = supported ? (chosen.scope === scope ? chosen.mode : preference(scope)) : 'gui';
-  const change = useCallback((mode: Mode) => { setChosen({ scope, mode }); persist(scope, mode); }, [scope]);
-  return { supported, mode, change, invoke, generation };
+  const opening = useRef<Promise<void> | undefined>(undefined);
+  const liveScope = useRef(scope); liveScope.current = scope;
+  const change = useCallback((mode: Mode) => {
+    if (mode === 'tui' && !supported && prepare && sessionId && enabled) {
+      if (opening.current) return;
+      opening.current = Promise.resolve().then(() => {
+        if (liveScope.current !== scope) throw new Error('Native task view owner changed');
+        return prepare();
+      }).then(async () => {
+        const status = await invoke({ action: 'status', sessionId }) as AgentPresentationStatus;
+        if (liveScope.current !== scope) return;
+        if (!status.supported || status.state.status === 'closed') {
+          setAvailability({ scope, reason: status.supported ? 'startup-failed' : status.reason ?? 'startup-failed' });
+          return;
+        }
+        setAvailability({ scope, generation: status.state.generation });
+        setChosen({ scope, mode }); persist(scope, mode);
+      }).catch(() => { if (liveScope.current === scope) setAvailability({ scope, reason: 'startup-failed' }); })
+        .finally(() => { opening.current = undefined; });
+      return;
+    }
+    setChosen({ scope, mode }); persist(scope, mode);
+  }, [scope, supported, prepare, sessionId, enabled, invoke]);
+  const unavailableReason = enabled && availability.scope === scope ? availability.reason : undefined;
+  return { supported, selectable: supported || (enabled && !!prepare), mode, change, invoke, generation, unavailableReason };
 }

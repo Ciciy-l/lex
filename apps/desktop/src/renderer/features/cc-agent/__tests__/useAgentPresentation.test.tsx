@@ -52,3 +52,43 @@ it('falls back to GUI for an old host or closed runtime without discarding the T
   ui.rerender({ ...args, runtimeKey: 'reconnected' });
   await waitFor(() => expect(ui.result.current.mode).toBe('tui'));
 });
+
+it('shows the current host unavailability reason in GUI and drops it across account and device scopes', async () => {
+  invoke.mockResolvedValue({ supported: false, reason: 'unsupported-service' });
+  const ui = renderHook(useAgentPresentation, { initialProps: { ...args, deviceId: null as string | null } });
+  await waitFor(() => expect(ui.result.current.unavailableReason).toBe('unsupported-service'));
+  expect(ui.result.current.mode).toBe('gui');
+  let complete!: (value: unknown) => void;
+  invoke.mockImplementation(() => new Promise(resolve => { complete = resolve; }));
+  ui.rerender({ ...args, ownerId: 'other', deviceId: 'remote' });
+  expect(ui.result.current.unavailableReason).toBeUndefined();
+  await act(async () => { complete({ supported: false }); });
+  expect(ui.result.current.unavailableReason).toBeUndefined();
+  expect(ui.result.current.supported).toBe(false);
+});
+
+it('creates an unnamed task only on explicit TUI selection and reuses it on later switches', async () => {
+  invoke.mockResolvedValue({ supported: false });
+  let release!: () => void;
+  const prepare = vi.fn(() => new Promise<void>(resolve => { release = resolve; }));
+  const ui = renderHook(useAgentPresentation, { initialProps: { ...args, prepare } });
+  await waitFor(() => expect(invoke).toHaveBeenCalledOnce());
+  expect(prepare).not.toHaveBeenCalled(); expect(ui.result.current.selectable).toBe(true);
+  act(() => { ui.result.current.change('tui'); ui.result.current.change('tui'); });
+  await waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+  expect(ui.result.current.mode).toBe('gui');
+  invoke.mockResolvedValue(available('same-task'));
+  await act(async () => { release(); });
+  await waitFor(() => expect(ui.result.current.mode).toBe('tui'));
+  act(() => { ui.result.current.change('gui'); ui.result.current.change('tui'); });
+  expect(prepare).toHaveBeenCalledOnce(); expect(ui.result.current.generation).toBe('same-task');
+});
+
+it('keeps GUI available when explicit task startup fails', async () => {
+  invoke.mockResolvedValue({ supported: false });
+  const prepare = vi.fn(async () => { throw new Error('original startup error'); });
+  const ui = renderHook(useAgentPresentation, { initialProps: { ...args, prepare } });
+  act(() => ui.result.current.change('tui'));
+  await waitFor(() => expect(ui.result.current.unavailableReason).toBe('startup-failed'));
+  expect(ui.result.current.mode).toBe('gui'); expect(prepare).toHaveBeenCalledOnce();
+});

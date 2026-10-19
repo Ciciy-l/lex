@@ -9596,6 +9596,10 @@
   },
   "ccAgent": {
     "presentation": {
+      "startupUnavailable": {
+        "label": "TUI は利用できません",
+        "startup": "TUI をこのタスクに接続できませんでした。GUI を引き続き利用できます。"
+      },
       "nativeFileApproval": {
         "header": "ファイルの変更",
         "confirmation": "これらの変更には確認が必要です。",

@@ -9596,6 +9596,10 @@
   },
   "ccAgent": {
     "presentation": {
+      "startupUnavailable": {
+        "label": "TUI 暫時無法使用",
+        "startup": "TUI 未能連線至此任務，可繼續使用 GUI"
+      },
       "nativeFileApproval": {
         "header": "檔案修改",
         "confirmation": "這些修改需要你確認。",
