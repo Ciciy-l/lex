@@ -407,7 +407,8 @@ function OmpCompactionThreshold({
   const [draft, setDraft] = useState(value);
   const saved = useRef(value);
   saved.current = value;
-  useEffect(() => {
+  // Apply the loaded/reset snapshot before the next user preview can be edited.
+  useLayoutEffect(() => {
     setDraft(value);
   }, [value, snapshot]);
   return (
