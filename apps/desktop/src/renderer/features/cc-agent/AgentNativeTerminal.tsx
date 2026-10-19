@@ -9,7 +9,7 @@ import { getTerminalTheme, openTerminalExternalLink } from '../right-sidebar/plu
 import type { AgentPresentationAttached, AgentPresentationRequest, AgentTerminalControl, AgentTerminalReplay } from '../../../shared/agentPresentation';
 
 export type PresentationInvoke = (request: AgentPresentationRequest) => Promise<unknown>;
-interface Controls { acquire(takeOver?: boolean): Promise<void>; release(): void; resize(): void }
+interface Controls { acquire(takeOver?: boolean): Promise<void>; suspend(): void; resize(): void }
 type Operation = AgentPresentationRequest extends infer R ? R extends { sessionId: string } ? Omit<R, 'sessionId'> : never : never;
 
 /** A task's original native display. This component never creates a process. */
@@ -65,9 +65,24 @@ export function AgentNativeTerminal({ sessionId, active, invoke }: {
       if (attachmentId && old) void send({ action: 'release', attachmentId, control: old }).catch(() => {});
       if (!disposed) setStatus((s) => s === 'controlling' ? 'viewing' : s);
     };
+    const suspend = () => {
+      terminal.options.disableStdin = true;
+      const lease = control, revision = ++controlRevision;
+      if (!pendingInputBytes) { release(); return; }
+      // A presentation switch stops new input, but an already accepted Enter
+      // must follow its text before this valid lease is released. Errors,
+      // disposal and a revoked lease still stop the queue without replay.
+      void writeChain.then(() => {
+        if (!disposed && !activeRef.current && control === lease && revision === controlRevision) release();
+      });
+    };
     const acquire = (takeOver = false): Promise<void> => {
       if (acquireInFlight) return acquireInFlight;
       if (!attachmentId || disposed || !activeRef.current) return Promise.resolve();
+      if (control && !takeOver) {
+        controlRevision++; terminal.options.disableStdin = false; setStatus('controlling');
+        resize(); terminal.focus(); return Promise.resolve();
+      }
       const id = attachmentId;
       const revision = ++controlRevision;
       acquireInFlight = send({ action: 'control', attachmentId: id, takeOver }).then((result) => {
@@ -82,7 +97,7 @@ export function AgentNativeTerminal({ sessionId, active, invoke }: {
       }).catch(fail).finally(() => { acquireInFlight = undefined; });
       return acquireInFlight;
     };
-    controls.current = { acquire, release, resize };
+    controls.current = { acquire, suspend, resize };
     const input = terminal.onData((data) => {
       const lease = control, id = attachmentId;
       if (!activeRef.current || !lease || !id || disposed) return;
@@ -91,7 +106,7 @@ export function AgentNativeTerminal({ sessionId, active, invoke }: {
       pendingInputBytes += bytes;
       const nextSequence = ++inputSequence;
       writeChain = writeChain.then(async () => {
-        if (disposed || control !== lease || !activeRef.current) return;
+        if (disposed || control !== lease) return;
         await send({ action: 'write', attachmentId: id, control: lease, sequence: nextSequence, data });
       }).catch(() => { if (control === lease) fail(); }).finally(() => { pendingInputBytes -= bytes; }); // Never replay an uncertain input.
     });
@@ -150,7 +165,7 @@ export function AgentNativeTerminal({ sessionId, active, invoke }: {
 
   useEffect(() => {
     if (active) { controls.current?.resize(); void controls.current?.acquire(); }
-    else controls.current?.release();
+    else controls.current?.suspend();
   }, [active]);
 
   return (

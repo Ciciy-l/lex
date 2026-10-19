@@ -47,7 +47,7 @@ describe('native task view', () => {
     await waitFor(() => expect(f.invoke).toHaveBeenCalledWith(expect.objectContaining({ action: 'write', data: 'draft', sequence: 1 })));
     ui.rerender(<AgentNativeTerminal sessionId="task" active={false} invoke={f.invoke} />);
     expect(terminal.options.disableStdin).toBe(true);
-    expect(f.invoke).toHaveBeenCalledWith(expect.objectContaining({ action: 'release' }));
+    await waitFor(() => expect(f.invoke).toHaveBeenCalledWith(expect.objectContaining({ action: 'release' })));
     expect(terminal.dispose).not.toHaveBeenCalled(); expect(mock.terminals).toHaveLength(1);
     ui.unmount(); expect(terminal.dispose).toHaveBeenCalledOnce();
     expect(f.invoke).toHaveBeenCalledWith({ action: 'detach', attachmentId: 'view', sessionId: 'task' });
@@ -75,6 +75,62 @@ describe('native task view', () => {
     await screen.findByText('ccAgent.presentation.unavailable');
     expect(f.invoke.mock.calls.filter(([r]) => r.action === 'write')).toHaveLength(1);
     expect(mock.terminals[0].options.disableStdin).toBe(true);
+  });
+
+  it('finishes accepted text and Enter exactly once before releasing a hidden terminal', async () => {
+    const f = fixture(), original = f.invoke.getMockImplementation()!;
+    const firstWrite = deferred<void>();
+    f.invoke.mockImplementation(request => request.action === 'write' && request.sequence === 1
+      ? firstWrite.promise : original(request));
+    const ui = render(<AgentNativeTerminal sessionId="task" active invoke={f.invoke} />);
+    await waitFor(() => expect(mock.terminals[0].options.disableStdin).toBe(false));
+    const terminal = mock.terminals[0];
+    act(() => { terminal.input('message'); terminal.input('\r'); });
+    await waitFor(() => expect(f.invoke).toHaveBeenCalledWith(expect.objectContaining({ action: 'write', sequence: 1 })));
+    ui.rerender(<AgentNativeTerminal sessionId="task" active={false} invoke={f.invoke} />);
+    expect(terminal.options.disableStdin).toBe(true);
+    act(() => terminal.input('hidden input'));
+    expect(f.invoke.mock.calls.filter(([r]) => r.action === 'release')).toHaveLength(0);
+    await act(async () => { firstWrite.resolve(); });
+    const calls = f.invoke.mock.calls.map(([request]) => request);
+    expect(calls.filter(r => r.action === 'write').map(r => [r.sequence, r.data])).toEqual([[1, 'message'], [2, '\r']]);
+    expect(calls.filter(r => r.action === 'release')).toHaveLength(1);
+    expect(calls.findIndex(r => r.action === 'release')).toBeGreaterThan(calls.findIndex(r => r.action === 'write' && r.sequence === 2));
+  });
+
+  it('keeps the same lease while switching back during an unfinished input write', async () => {
+    const f = fixture(), original = f.invoke.getMockImplementation()!;
+    const firstWrite = deferred<void>();
+    f.invoke.mockImplementation(request => request.action === 'write' && request.sequence === 1
+      ? firstWrite.promise : original(request));
+    const ui = render(<AgentNativeTerminal sessionId="task" active invoke={f.invoke} />);
+    await waitFor(() => expect(mock.terminals[0].options.disableStdin).toBe(false));
+    act(() => { mock.terminals[0].input('message'); mock.terminals[0].input('\r'); });
+    await waitFor(() => expect(f.invoke).toHaveBeenCalledWith(expect.objectContaining({ action: 'write' })));
+    ui.rerender(<AgentNativeTerminal sessionId="task" active={false} invoke={f.invoke} />);
+    ui.rerender(<AgentNativeTerminal sessionId="task" active invoke={f.invoke} />);
+    expect(f.invoke.mock.calls.filter(([r]) => r.action === 'control')).toHaveLength(1);
+    ui.rerender(<AgentNativeTerminal sessionId="task" active={false} invoke={f.invoke} />);
+    await act(async () => { firstWrite.resolve(); });
+    expect(f.invoke.mock.calls.filter(([r]) => r.action === 'write').map(([r]) => [r.sequence, r.data])).toEqual([[1, 'message'], [2, '\r']]);
+    expect(f.invoke.mock.calls.filter(([r]) => r.action === 'release')).toHaveLength(1);
+  });
+
+  it('drops queued Enter after an uncertain write even when the view is already hidden', async () => {
+    const f = fixture(), original = f.invoke.getMockImplementation()!;
+    let rejectWrite!: (error: Error) => void;
+    const firstWrite = new Promise<void>((_resolve, reject) => { rejectWrite = reject; });
+    f.invoke.mockImplementation(request => request.action === 'write' ? firstWrite : original(request));
+    const ui = render(<AgentNativeTerminal sessionId="task" active invoke={f.invoke} />);
+    await waitFor(() => expect(mock.terminals[0].options.disableStdin).toBe(false));
+    act(() => { mock.terminals[0].input('message'); mock.terminals[0].input('\r'); });
+    await waitFor(() => expect(f.invoke).toHaveBeenCalledWith(expect.objectContaining({ action: 'write' })));
+    ui.rerender(<AgentNativeTerminal sessionId="task" active={false} invoke={f.invoke} />);
+    await act(async () => { rejectWrite(new Error('receipt lost')); });
+    expect(f.invoke.mock.calls.filter(([r]) => r.action === 'write')).toHaveLength(1);
+    expect(f.invoke.mock.calls.filter(([r]) => r.action === 'release')).toHaveLength(1);
+    expect(mock.terminals[0].options.disableStdin).toBe(true);
+    await screen.findByText('ccAgent.presentation.unavailable');
   });
 
   it('restores a snapshot before subsequent frames and uses the original dimensions', async () => {

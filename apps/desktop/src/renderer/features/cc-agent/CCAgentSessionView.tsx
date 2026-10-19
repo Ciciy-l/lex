@@ -1,6 +1,7 @@
 import { AgentNativeTerminal } from './AgentNativeTerminal';
 import { AgentPresentationSwitch, AgentPresentationUnavailable } from './AgentPresentationSwitch';
 import { useAgentPresentation } from './useAgentPresentation';
+import { useAgentPresentationFocus } from './useAgentPresentationFocus';
 import { enableCollabFromForm } from './enableCollabFromForm';
 import { ResponseSpeedStatus } from './ResponseSpeedStatus';
 import type { ResponseSpeedSnapshot } from '@cindy/maker-shared/usage-format';
@@ -4412,6 +4413,9 @@ export function CCAgentSessionView({
       nativePresentationIntent.ownerId === dataOwnerId ? 'tui' : undefined,
     prepare: session?.agentKind === 'codex' && !session.remoteHostId && !session.orcaRole && !!session.workingDir
       ? prepareNativePresentation : undefined });
+  useAgentPresentationFocus(containerRef, presentation.mode,
+    JSON.stringify([dataOwnerId, remoteDeviceId, sessionId]),
+    ownsRoute && viewVisible && !readOnly && !isCompactRail && !disableAutofocus);
 
   // MessageStream 提成变量:perf/session-switch 的 <Profiler> 是纯诊断,只在 DEV
   // 包裹(见下方渲染处),生产直接渲染此 el,不引入多余 Profiler fiber。
