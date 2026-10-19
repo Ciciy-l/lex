@@ -205,9 +205,29 @@ describeMigrationReplay('migration replay', () => {
   );
 
   it('replays every drizzle migration into a fresh database', () => {
+    const startedAt = performance.now();
+    const appliedTimings: Array<{ migration: string; durationMs: number }> = [];
+    let phase = 'open';
     const { db, cleanup } = createTempDb();
     try {
-      const result = runMigrationReplay(db, { drizzleDir: drizzleDir() });
+      // Exercise the product's WAL journal for the full 118+ transaction replay.
+      // DELETE would recreate a rollback journal for every migration on the CI
+      // disk. Keep the original synchronous durability and all schema checks.
+      const synchronous = db.pragma('synchronous', { simple: true });
+      expect(db.pragma('journal_mode = WAL', { simple: true })).toBe('wal');
+      expect(db.pragma('synchronous', { simple: true })).toBe(synchronous);
+      phase = 'replay';
+      const result = runMigrationReplay(db, { drizzleDir: drizzleDir(),
+        onMigrationStart: migration => { phase = migration.fileName; },
+        onMigrationApplied: (migration, durationMs) => {
+          appliedTimings.push({ migration: migration.fileName, durationMs });
+          if (migration.seq % 25 === 0) console.info('fresh migration replay progress', {
+            applied: appliedTimings.length, migration: migration.fileName,
+            elapsedMs: Math.round(performance.now() - startedAt),
+          });
+        },
+      });
+      phase = 'schema assertions';
       const schemaVersion = db
         .prepare("SELECT value FROM migration_meta WHERE key='schema_version'")
         .pluck()
@@ -295,7 +315,14 @@ describeMigrationReplay('migration replay', () => {
           .all(),
       ).toEqual(['m-cjk']);
     } finally {
+      console.info('fresh migration replay timing', { phase,
+        elapsedMs: Math.round(performance.now() - startedAt), applied: appliedTimings.length,
+        journalMode: db.pragma('journal_mode', { simple: true }),
+        slowest: appliedTimings.toSorted((a, b) => b.durationMs - a.durationMs).slice(0, 5),
+      });
+      const cleanupStartedAt = performance.now();
       cleanup();
+      console.info('fresh migration replay cleanup', { elapsedMs: Math.round(performance.now() - cleanupStartedAt) });
     }
   });
 
