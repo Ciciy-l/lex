@@ -1,6 +1,7 @@
 export * from './base-agent.js';
 export * from './presentation.js';
 export type * from './native-input.js';
+export type * from './native-runtime.js';
 // toSdkModelString: host 侧标题 oneShot 需要把 catalog model id 还原成 Anthropic wire 串
 // (claude-haiku-4-5 → claude-haiku-4-5-20251001),复用 SSoT 映射,避免在 host 硬编码 dated id。
 export { ClaudeCodeAgent, toSdkModelString, setClaudeSupportedModelsListener } from './claude-code/index.js';

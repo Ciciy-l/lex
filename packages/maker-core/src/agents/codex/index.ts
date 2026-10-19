@@ -1,3 +1,5 @@
+import { CodexSettingsQueue } from './native-settings-queue.js';
+import { CodexNativeRuntimeControls } from './native-runtime-controls.js';
 import { projectNativeFileApproval } from './native-file-approval.js';
 import { projectNativePermissions } from './native-permissions.js';
 import { CodexNativeQuestions, type CodexNativeQuestionRequest } from './native-questions.js';
@@ -4905,6 +4907,7 @@ assertRouteCurrent();
 
     /** Phase 3: mutable 配置, 下一个 turn/start 透传; resume 时也透传一次。 */
     let mutableModel = opts.model;
+    let modelSelectionGeneration = 0, effortSelectionGeneration = 0, planSelectionGeneration = 0;
     /**
      * 运行时 provider 路由(会话创建时取 opts.providerId,setModel 可带新值覆盖)。
      * host 侧的 provider route 与它必须同步,窗口上限按 (provider, model) 解析。
@@ -6885,46 +6888,20 @@ assertRouteCurrent();
       });
     };
 
-    /**
-     * 会话中途把单个设置 (serviceTier / model / effort) 立即推给 app-server,
-     * 写入后续 turn 的 sticky context — 不必等下一个 turn/start 携带 (与官方
-     * Codex Desktop 的 thread/settings/update 通道对齐; experimentalApi 已恒开,
-     * 0.142.0 实测支持)。
-     *
-     * - 门: 只在 thread 已 start (threadId 就绪) 且会话未关时发; thread/start 前的
-     *   设置由首个 thread/start 携带, 不需要这条。
-     * - **串行化**: 用 promise 链把多条 update 排队顺序发 (前一条 ack 后再发下一条)。
-     *   renderer 单次切换会并发触发 setModel/setEffort/setFastMode, 若并发发送, server
-     *   回带的 thread/settings/updated 通知会乱序到达, reconcile 出现中间态闪现 (实测过
-     *   null→fast→default)。串行后 server 按序处理、通知按序回, 最终态一次到位。
-     * - serviceTier 双 Option: 调用方传 'fast' (开) / null (清空); 不传该 key = 不变。
-     * - **失败吞错**: settings/update 失败绝不抛 — turn/start 携带仍是兜底, 会话不受
-     *   影响。server 回 ack 后真正状态经 thread/settings/updated 通知回带 (见 handlers)。
-     *
-     * 返回入队任务的 promise (链已 catch, 永不 reject), 调用方可 await 到本次发送完成。
-     */
-    let settingsUpdateChain: Promise<void> = Promise.resolve();
-    const pushThreadSettings = (patch: Omit<ThreadSettingsUpdateParams, 'threadId'>): Promise<void> => {
-      if (!threadId || closed) return Promise.resolve();
-      const run = settingsUpdateChain.then(async () => {
-        if (!threadId || closed) return; // 排到队头时再校验一次 (期间可能已 close)
-        if (skipIfStaleHost('thread/settings/update')) return;
-        try {
-          await host.request<ThreadSettingsUpdateResponse>(Method.ThreadSettingsUpdate, {
-            threadId,
-            ...patch,
-          });
-        } catch (e) {
-          log.warn('thread/settings/update failed (turn/start carry remains fallback)', {
-            threadId,
-            patchKeys: Object.keys(patch),
-            error: e instanceof Error ? e.message : String(e),
-          });
-        }
-      });
-      settingsUpdateChain = run;
-      return run;
-    };
+    // GUI setters keep their desired-state fallback. A native menu response
+    // must instead await a confirmed write, bound to this thread and host.
+    const settingsQueue = new CodexSettingsQueue(
+      () => !closed && threadId && isCurrentHost() ? threadId : undefined,
+      patch => host.request<ThreadSettingsUpdateResponse>(Method.ThreadSettingsUpdate, { threadId, ...patch }),
+      (patchKeys, error) => log.warn('thread/settings/update failed', {
+        threadId, patchKeys, error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+    const pushThreadSettings = (patch: Omit<ThreadSettingsUpdateParams, 'threadId'>): Promise<void> =>
+      settingsQueue.update(patch);
+    const nativeRuntimeControls = new CodexNativeRuntimeControls(
+      () => closed || !isCurrentHost() ? '<closed>' : threadId,
+      (run, signal) => settingsQueue.confirmed(run, signal));
     if (opts.resumeSessionId && isLikelyValidThreadId(opts.resumeSessionId)) {
       // Phase 3: thread/resume is the historical-session path. Only the exact
       // provider "no rollout found" response below may fall back to thread/start.
@@ -13126,6 +13103,7 @@ assertRouteCurrent();
       const frontendClosed = nativePresentation?.close().then(
         () => ({ ok: true as const }), error => ({ ok: false as const, error }));
       nativeAdmission?.close();
+      nativeRuntimeControls.close();
       nativeApprovals.close();
       await startup.remoteRoute?.release();
       cancelInteractionContinuation('session_closed', true);
@@ -13176,6 +13154,12 @@ assertRouteCurrent();
       get presentation() { return nativePresentation?.presentation; },
       attachNativeApprovalFrontend(receive) { assertCurrentHost("native approval frontend"); return nativeApprovals.attach(receive); },
       setNativeInputResolver(resolver, media) { nativeAdmission!.bind(resolver, media); },
+      setNativeRuntimeResolver(resolver) { nativeRuntimeControls.bind(resolver); },
+      applyNativeRuntimeSettings(params, signal) {
+        assertCurrentHost('native runtime settings');
+        if (reviewMode) throw new Error('Native controls cannot replace a host-owned review policy');
+        return nativeRuntimeControls.apply(params, signal);
+      },
       acceptNativeTurn(request) {
         assertCurrentHost('native turn admission');
         return nativeAdmission!.accept(request);
@@ -14351,9 +14335,10 @@ assertRouteCurrent();
         }
         // provider 可能在 model 不变时单独切换(同一 id 换路由), 所以先记 provider 再做 model 去重。
         // 窗口上限按 (provider, model) 解析, 漏掉这一步会让后续 turn 拿新模型去问旧路由。
+        const selectionGeneration = ++modelSelectionGeneration;
         const prevProviderId = mutableProviderId;
         if (setOpts && Object.hasOwn(setOpts, 'providerId')) mutableProviderId = setOpts.providerId;
-        if (newModel === mutableModel) {
+        if (newModel === mutableModel && !settingsQueue.requiresConfirmation) {
           if (mutableProviderId !== prevProviderId) {
             autoReviewDecisionCache.clear();
             autoReviewUnavailableNotice.reset();
@@ -14395,27 +14380,28 @@ assertRouteCurrent();
           // 会把 session 的 provider route 恢复成旧值; 我们这边若留着新值, 下一 turn 就会
           // 走旧路由却按新 (provider, model) 解析窗口上限 —— 两边分叉正是收敛出错的根源。
           //
-          // 当前**走不到这里**: 上面两个调用各自内部都已 catch(registerCodexReviewer…
-          // 落 warn 后保留安全路由; pushThreadSettings 吞掉 RPC 失败, 靠 turn/start 透传
-          // 兜底)。留这层是结构性防御 —— 以后有人往这段加会抛的步骤时, 快照不会悄悄与
-          // 实际路由分叉。也因为当前不可达, 没有对应单测能触发它。
+          // Native settings require a receipt; restore the route on rejection.
+          if (selectionGeneration !== modelSelectionGeneration) throw e;
           mutableProviderId = prevProviderId;
           mutableModel = prevModel;
           mutableCatalogModel = prevCatalogModel;
           modelSwitchRecord = prevSwitchRecord;
+          refreshCodexAutoReviewerRoute(threadId);
           throw e;
         }
       },
 
       async setEffort(newEffort: Effort) {
         if (reviewMode) return;
-        if (newEffort === mutableEffort) return; // 去重: 值没变不重推
+        if (newEffort === mutableEffort && !settingsQueue.requiresConfirmation) return;
+        const previous = mutableEffort, generation = ++effortSelectionGeneration;
         const clamped = clampEffortForCodex(mutableModel, newEffort);
         log.debug('setEffort', { from: mutableEffort, to: newEffort, clamped });
         mutableEffort = newEffort;
         // thread 已启动 → 立即经 thread/settings/update 生效; 未启动由首个 turn/start
         // 携带 (TurnStartParams.effort, v2.rs:5800)。发 clamp 后的值, 与 turn/start 一致。
-        await pushThreadSettings({ effort: clamped });
+        try { await pushThreadSettings({ effort: clamped }); }
+        catch (error) { if (generation === effortSelectionGeneration) mutableEffort = previous; throw error; }
       },
 
       getEffort() {
@@ -14553,11 +14539,20 @@ assertRouteCurrent();
 
       async setPlanMode(enabled: boolean) {
         if (reviewMode) return;
-        if (mutablePlanMode === enabled) return;
+        if (mutablePlanMode === enabled && !settingsQueue.requiresConfirmation) return;
+        const previous = mutablePlanMode, generation = ++planSelectionGeneration;
         mutablePlanMode = enabled;
         log.debug('setPlanMode', { enabled });
-        // 下一 turn 经 turn/start.collaborationMode 生效 (与 permissionMode 同款
-        // "下一 turn 透传"语义); 中途关闭时挂起的 plan_review 由用户自行处理。
+        if (nativePresentation || settingsQueue.requiresConfirmation) {
+          try {
+            await pushThreadSettings({ collaborationMode: {
+              mode: enabled ? 'plan' : 'default',
+              settings: { model: mutableModel, reasoning_effort: clampEffortForCodex(mutableModel, mutableEffort),
+                developer_instructions: null },
+            } });
+          } catch (error) { if (generation === planSelectionGeneration) mutablePlanMode = previous; throw error; }
+        }
+        // The existing next-turn policy still controls the plan cycle and review.
       },
 
       getPlanMode() {
@@ -14569,7 +14564,8 @@ assertRouteCurrent();
         if (reviewMode) return;
         // 去重以"fast 是否开启"为准: undefined(未覆盖) / null / 'default' 都视为未开,
         // 重复关 fast 或重复开 fast 不重推 (renderer 单次切换会全量重调 set*)。
-        if (isFastServiceTier(mutableServiceTier) === enabled) return;
+        if (isFastServiceTier(mutableServiceTier) === enabled && !settingsQueue.requiresConfirmation) return;
+        const previous = mutableServiceTier;
         const next: ServiceTier | null = enabled ? 'fast' : null;
         log.debug('setFastMode', { from: mutableServiceTier ?? null, to: next });
         serviceTierMutationGeneration += 1;
@@ -14578,7 +14574,9 @@ assertRouteCurrent();
         // 'fast'=开 / null=清空 standard); 未启动则由首个 thread/start 携带。server 端
         // 若因模型不支持 fast 而降级, 会经 thread/settings/updated 通知回带, handlers
         // 里把 mutableServiceTier 对齐到权威值。失败时 turn/start 透传仍是兜底。
-        await pushThreadSettings({ serviceTier: next });
+        const generation = serviceTierMutationGeneration;
+        try { await pushThreadSettings({ serviceTier: next }); }
+        catch (error) { if (generation === serviceTierMutationGeneration) mutableServiceTier = previous; throw error; }
       },
 
       async setVendorOptions(patch: Record<string, unknown>) {

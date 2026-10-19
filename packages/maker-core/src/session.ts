@@ -1,3 +1,4 @@
+import { AgentNativeRuntimeBinding, type AgentNativeRuntimeResolver } from './agents/native-runtime.js';
 /**
  * Session — 单次 agent 会话的上层包装。
  *
@@ -574,6 +575,8 @@ export class Session {
   private turnControlState: TurnControlState | null = null;
   private readonly asyncUserQuestions: AsyncUserQuestions;
   private readonly nativeInputs = new WeakSet<SessionNativeInput>();
+  private readonly nativeRuntimeBinding = new AgentNativeRuntimeBinding(() => this.sdkSessionId,
+    () => !this.terminationStarted && this.status === 'active');
   private nativeInputBinding: { listener: AgentNativeInputResolver; importMedia?: AgentNativeMediaResolver; controller: AbortController } | null = null;
   private readonly nativeInputRequests = new WeakSet<AgentNativeInputRequest>();
 
@@ -625,9 +628,16 @@ export class Session {
       return await this.interactionListener(req);
     }));
     this.handle.setNativeInputResolver?.(input => this.resolveNativeInput(input), input => this.resolveNativeMedia(input));
+    this.handle.setNativeRuntimeResolver?.(request => this.nativeRuntimeBinding.resolve(request));
   }
 
   // ── 公开 API ─────────────────────────────────────────────────────────────
+
+  /** Bind settings to the same product task, independently of attached views. */
+  onNativeRuntimeSelection(resolve: AgentNativeRuntimeResolver): () => void {
+    this.ensureActive();
+    return this.nativeRuntimeBinding.bind(resolve);
+  }
 
   /** One product owner for native input; view subscriptions never own admission. */
   onNativeInput(listener: AgentNativeInputResolver, importMedia?: AgentNativeMediaResolver): () => void {
@@ -1532,6 +1542,7 @@ export class Session {
 
     this.terminationStarted = true;
     this.retireNativeInputBinding();
+    this.nativeRuntimeBinding.retire();
     this.asyncUserQuestions.expire('session_closed');
     // 拆除开始即作废进行中的工具循环复核,迟到结论不得再中断。
     this.turnControlState?.toolLoopMonitor?.dispose();
@@ -1684,6 +1695,7 @@ export class Session {
     if (this.status === 'closed') return;
     this.terminationStarted = true;
     this.retireNativeInputBinding();
+    this.nativeRuntimeBinding.retire();
     this.asyncUserQuestions.expire('session_closed');
     // 拆除开始即作废进行中的工具循环复核,迟到结论不得再中断。
     this.turnControlState?.toolLoopMonitor?.dispose();
@@ -3434,6 +3446,7 @@ export class Session {
     this.logger.debug('event loop ended (handle dead), auto-closing session', { unfinishedTurn });
     this.terminationStarted = true;
     this.retireNativeInputBinding();
+    this.nativeRuntimeBinding.retire();
     this.closePromise = Promise.resolve();
     this.settleUnfinishedTurn('Session event loop stopped unexpectedly without a terminal event');
     this.clearTurnStallWatchdog();

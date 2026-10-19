@@ -970,6 +970,24 @@ uses a bounded 60-second observation and preserves that failed report. Product
 timeouts were not changed. These proofs still use fixture routing/history and
 do not establish product UI, database, phone, SSH or non-Windows acceptance.
 
+### Native runtime choices through the product Session
+
+Codex model, reasoning, service tier and plan menu requests now enter an owned
+Session callback. They cannot change provider routes or permissions through this
+path. Native replies require a completed settings write; cancellation, task
+retirement and queued writes to a replaced thread cannot report success. Failed
+setters restore their own state without overwriting a newer selection. Existing
+GUI setters keep their desired-state fallback.
+
+The managed Windows Codex 0.162.1 proof `codex-runtime-native2.json` uses the
+original `/model` menu with its session-only choice. The actual Core Session
+receives the selection, and later GUI and TUI turns use that model on the same
+thread/service. All 29 positive checks pass and temporary processes/homes close.
+The first report counted a pending title request at deliberate frontend shutdown
+as a routing error; the second records both its aborted signal and closing owner.
+This is expected cancellation, not a successful title request. Main catalog and
+settings persistence are still fixture bindings, not product GUI acceptance.
+
 Claude's semantic bridge also avoids OS-assigned ports blocked by Fetch. It
 closes an unusable loopback listener before requesting another ephemeral port,
 with bounded attempts and unchanged authentication. Deterministic tests cover

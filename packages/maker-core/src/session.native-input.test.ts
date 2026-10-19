@@ -21,7 +21,7 @@ function fixture(options: Partial<SessionOptions> = {}) {
     abort: vi.fn(async () => { running = false; }),
     close: vi.fn(async () => { running = false; ended.resolve(); }),
     async *events(): AsyncGenerator<AgentEvent> { await ended.promise; },
-    isTurnRunning: () => running, setInteractionResolver: vi.fn(), setNativeInputResolver: vi.fn(), validateSendOptions: vi.fn(),
+    isTurnRunning: () => running, setInteractionResolver: vi.fn(), setNativeInputResolver: vi.fn(), setNativeRuntimeResolver: vi.fn(), validateSendOptions: vi.fn(),
     getUsageSnapshot: () => ({ tokenUsage: 0, contextTokens: 0, contextWindow: 0, costUsd: 0 }),
   } as unknown as AgentSessionHandle;
   const session = new Session({ id: 'task', agentKind: 'claude-code', workDir: '/owned/work', handle,
@@ -218,5 +218,29 @@ describe('adapter native input binding', () => {
     f.input.message.content = 'mutated';
     expect(received.message.content).toBe('native input');
     release.resolve(); await result; expect(f.accept).toHaveBeenCalledOnce();
+  });
+});
+
+describe('native menu ownership through Session', () => {
+  it('shares the exact native identity with the current product owner', async () => {
+    const f = fixture();
+    const resolve = vi.mocked(f.handle.setNativeRuntimeResolver!).mock.calls[0]![0];
+    const selected = vi.fn(async () => {});
+    const request = { nativeSessionId: 'native-session', patch: { model: 'chosen' }, signal: new AbortController().signal };
+    await expect(resolve(request)).rejects.toThrow('no product owner');
+    const dispose = f.session.onNativeRuntimeSelection(selected);
+    await resolve(request);
+    expect(selected).toHaveBeenCalledWith(expect.objectContaining({ nativeSessionId: 'native-session', patch: { model: 'chosen' } }));
+    expect(f.handle.send).not.toHaveBeenCalled();
+    dispose(); await expect(resolve(request)).rejects.toThrow('no product owner');
+  });
+  it('retirement aborts a pending settings request and does not accept its late receipt', async () => {
+    const f = fixture(), gate = deferred();
+    const resolve = vi.mocked(f.handle.setNativeRuntimeResolver!).mock.calls[0]![0];
+    let signal: AbortSignal | undefined;
+    f.session.onNativeRuntimeSelection(async request => { signal = request.signal; await gate.promise; });
+    const pending = expect(resolve({ nativeSessionId: 'native-session', patch: { effort: 'low' }, signal: new AbortController().signal })).rejects.toThrow('owner changed');
+    await f.session.close(); expect(signal?.aborted).toBe(true);
+    gate.resolve(); await pending;
   });
 });

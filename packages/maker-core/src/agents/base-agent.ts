@@ -1,3 +1,4 @@
+import type { AgentNativeRuntimeResolver } from './native-runtime.js';
 import type { CodexNativeFileApprovalCopy } from './codex/native-file-approval.js';
 import type { CodexNativePermissionCopy } from './codex/native-permissions.js';
 import type { StdioTransportOptions } from './codex/app-server/stdioTransport.js';
@@ -2278,6 +2279,8 @@ export interface AgentMcpServerToolsReport {
 export interface AgentSessionHandle {
   /** Native composer admission. A missing resolver must refuse provider execution. */
   setNativeInputResolver?(resolver: AgentNativeInputResolver, importMedia?: AgentNativeMediaResolver): void;
+  /** Native menus share the product runtime-selection transaction. */
+  setNativeRuntimeResolver?(resolver: AgentNativeRuntimeResolver): void;
   /** Native UI of this running task; attaching a view must never start another agent. */
   readonly presentation?: AgentSessionPresentation;
   /** Canonical physical Skill identities frozen at native runtime startup. */

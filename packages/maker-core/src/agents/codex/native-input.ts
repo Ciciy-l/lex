@@ -22,6 +22,7 @@ export interface CodexNativeTurnRequest {
 export interface CodexNativeSessionHandle extends AgentSessionHandle {
   attachNativeApprovalFrontend(receive: (event: CodexNativeApprovalEvent) => void): CodexNativeApprovalFrontend;
   acceptNativeTurn(request: CodexNativeTurnRequest): Promise<TurnStartResponse>;
+  applyNativeRuntimeSettings(params: unknown, signal: AbortSignal): Promise<Record<string, never>>;
 }
 
 /** Reuse the product reservation and normal Codex send policy before forwarding a native turn. */

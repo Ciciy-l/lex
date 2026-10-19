@@ -531,6 +531,8 @@ export interface ThreadUnsubscribeResponse {
 // personality / collaborationMode 等, 用到再加, 保持最小协议面。
 export interface ThreadSettingsUpdateParams {
   threadId: string;
+  /** Share the live native plan/default mode without submitting a turn. */
+  collaborationMode?: CollaborationModeParam;
   /** 覆盖后续 turn 的 model。省略 = 不变。 */
   model?: string;
   /** Route subsequent interactive approvals to the user or built-in reviewer. */

@@ -35535,3 +35535,62 @@ describe('native extended permissions share the existing policy decision', () =>
     } finally { await f.close(); }
   });
 });
+
+describe('Codex native menu uses the product runtime owner', () => {
+  async function fixture(fail = false) {
+    const agent = new CodexAgent(createDeps());
+    const host = installFakeHost(agent, method => {
+      if (method === Method.ThreadSettingsUpdate) {
+        if (fail) throw new Error('native write rejected');
+        return {};
+      }
+      return undefined;
+    });
+    const handle = await agent.startSession({ sessionId: 'native-settings', model: 'gpt-5.4', workingDir: '/repo' }) as import('./native-input.js').CodexNativeSessionHandle;
+    handle.setNativeRuntimeResolver!(async request => {
+      const patch = request.patch;
+      if (patch.model !== undefined) await handle.setModel!(patch.model);
+      if (patch.effort !== undefined) await handle.setEffort!(patch.effort);
+      if (patch.fastMode !== undefined) await handle.setFastMode!(patch.fastMode);
+      if (patch.planMode !== undefined) await handle.setPlanMode!(patch.planMode);
+    });
+    return { agent, host, handle };
+  }
+  it('applies model, effort, tier and plan through the same task settings channel without starting another turn', async () => {
+    const f = await fixture();
+    try {
+      await f.handle.applyNativeRuntimeSettings({ threadId: f.handle.id, model: 'gpt-5.4-codex', effort: 'low', serviceTier: 'fast',
+        collaborationMode: { mode: 'plan', settings: { model: 'gpt-5.4-codex', reasoning_effort: 'low', developer_instructions: null } } }, new AbortController().signal);
+      expect(f.handle.model).toBe('gpt-5.4-codex'); expect(f.handle.getEffort!()).toBe('low');
+      expect(f.handle.getFastMode!()).toBe(true); expect(f.handle.getPlanMode!()).toBe(true);
+      const writes = f.host.request.mock.calls.filter(([method]) => method === Method.ThreadSettingsUpdate).map(([, params]) => params);
+      expect(writes).toEqual([
+        { threadId: f.handle.id, model: 'gpt-5.4-codex' }, { threadId: f.handle.id, effort: 'low' },
+        { threadId: f.handle.id, serviceTier: 'fast' },
+        { threadId: f.handle.id, collaborationMode: { mode: 'plan', settings: { model: 'gpt-5.4-codex', reasoning_effort: 'low', developer_instructions: null } } },
+      ]);
+      expect(f.host.request.mock.calls.filter(([method]) => method === Method.TurnStart)).toHaveLength(0);
+    } finally { await f.handle.close(); }
+  });
+  it.each([
+    { patch: { model: 'gpt-5.4-codex' }, value: (h: import('./native-input.js').CodexNativeSessionHandle) => h.model, expected: 'gpt-5.4' },
+    { patch: { effort: 'low' }, value: (h: import('./native-input.js').CodexNativeSessionHandle) => h.getEffort!(), expected: 'high' },
+    { patch: { serviceTier: 'fast' }, value: (h: import('./native-input.js').CodexNativeSessionHandle) => h.getFastMode!(), expected: false },
+    { patch: { collaborationMode: { mode: 'plan', settings: {} } }, value: (h: import('./native-input.js').CodexNativeSessionHandle) => h.getPlanMode!(), expected: false },
+  ])('does not acknowledge or retain a rejected native choice: $patch', async ({ patch, value, expected }) => {
+    const f = await fixture(true);
+    try {
+      await expect(f.handle.applyNativeRuntimeSettings({ threadId: f.handle.id, ...patch }, new AbortController().signal)).rejects.toThrow('native write rejected');
+      expect(value(f.handle)).toBe(expected);
+    } finally { await f.handle.close(); }
+  });
+  it('rejects foreign tasks and policy replacements before dispatching a settings write', async () => {
+    const f = await fixture();
+    try {
+      for (const params of [{ threadId: 'foreign', model: 'gpt-5.4' }, { threadId: f.handle.id, permissions: ':full-access' }]) {
+        await expect(f.handle.applyNativeRuntimeSettings(params, new AbortController().signal)).rejects.toThrow();
+      }
+      expect(f.host.request.mock.calls.filter(([method]) => method === Method.ThreadSettingsUpdate)).toHaveLength(0);
+    } finally { await f.handle.close(); }
+  });
+});
