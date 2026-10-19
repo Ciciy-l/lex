@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 import { createCodexNativeTaskRouting } from './native-task-routing.js';
 
 type Call = Parameters<ReturnType<typeof createCodexNativeTaskRouting>['request']>[0];
-function fixture() {
+function fixture(fresh = false) {
   let alive = true;
   const forwarded: Array<{ method: string; params: unknown }> = [], controls: string[] = [], catalogs: string[] = [];
   const handle = { id: 'owned', acceptNativeTurn: async (request: { params: unknown; dispatch(params: unknown): Promise<unknown> }) => {
     return request.dispatch({ ...(request.params as object), model: 'host-prepared' });
   } };
   const router = createCodexNativeTaskRouting({ handle: handle as never, cwd: '/protocol/work', isCurrent: () => alive,
+    ...(fresh ? { fresh: { ready: Promise.resolve(), isReady: () => true } } : {}),
     ownsDescendant: id => id === 'child', titleContext: () => ({ model: 'chosen', modelProvider: 'fixture', mcpServers: ['host'] }),
     catalog: async call => { catalogs.push(call.request.method); return { source: 'product-catalog' }; },
     control: async call => { controls.push(call.request.method); return { source: 'product-control' }; },
@@ -136,5 +137,35 @@ describe('one task owns original native frontend routing', () => {
     f.router.responseDelivered(call.request, response); await f.router.ready;
     await f.router.request(f.call('turn/start', { threadId: 'owned' }));
     assert.deepEqual(f.forwarded.map(entry => entry.method), ['thread/resume', 'turn/start']);
+  });
+  it.each([false, true])('reattaches an acknowledged task after reconnect without replaying input (fresh=%s)', async fresh => {
+    const f = fixture(fresh);
+    if (!fresh) await f.attach();
+    f.router.closed();
+    const params = { threadId: 'owned', excludeTurns: true, initialTurnsPage: { limit: 20 } };
+    const response = { thread: { id: 'owned' } };
+    const resume = f.call('thread/resume', params, response);
+    assert.equal(await f.router.request(resume), response);
+    f.router.responseDelivered(resume.request, response);
+    assert.deepEqual(f.forwarded.at(-1), { method: 'thread/resume', params });
+    assert.equal(f.forwarded.some(entry => entry.method === 'turn/start' || entry.method === 'thread/start'), false);
+    for (const patch of [{ threadId: 'foreign' }, { model: 'changed' }, { history: [] }, { permissions: ':full-access' }]) {
+      await assert.rejects(f.router.request(f.call('thread/resume', { ...params, ...patch })));
+    }
+    const before = f.forwarded.length;
+    await assert.rejects(f.router.request(f.call('thread/resume', params, { thread: { id: 'foreign' } })), /another thread/);
+    assert.equal(f.forwarded.length, before + 1);
+    f.retire();
+    await assert.rejects(f.router.request(f.call('thread/resume', params, response)), /owner changed/);
+    assert.equal(f.forwarded.length, before + 1);
+  });
+  it('does not turn a lost initial resume ACK into a retryable attachment', async () => {
+    const f = fixture();
+    await f.router.request(f.call('thread/resume', { threadId: 'owned' }, { thread: { id: 'owned' } }));
+    f.router.closed();
+    await assert.rejects(f.router.ready, /unconfirmed/);
+    await assert.rejects(f.router.request(f.call('thread/resume', { threadId: 'owned' })), /already/);
+    await assert.rejects(f.router.request(f.call('turn/start', { threadId: 'owned' })), /not confirmed/);
+    assert.deepEqual(f.forwarded.map(entry => entry.method), ['thread/resume']);
   });
 });

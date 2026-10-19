@@ -89,7 +89,18 @@ export function createCodexNativeTaskRouting(options: CodexNativeTaskRoutingOpti
       if (Object.entries(params).some(([key, value]) => value != null && !readFields.has(key))) {
         throw new Error('Native task attach cannot replace settings or history');
       }
-      return result(call, () => owner === 'task' ? taskResume.forward(call) : call.forward());
+      return result(call, async () => {
+        if (owner !== 'task') return call.forward();
+        if (!attached()) return taskResume.forward(call);
+        // The original ACK establishes this task, not a lifetime ban on
+        // read-only reattachment. The native UI resumes the same thread after
+        // reconnecting; no input, settings or uncertain writes are replayed.
+        const value = await call.forward();
+        if (!record(value) || !record(value.thread) || value.thread.id !== threadId) {
+          throw new Error('Native Codex task resume returned another thread');
+        }
+        return value;
+      });
     }
     if (method === 'thread/start' && params.threadSource === 'thread_title') {
       const context = await options.titleContext();
