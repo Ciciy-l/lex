@@ -1136,6 +1136,48 @@ Agent methods only inside isolated probes; no prototype wrapping has been added
 to the product. Extension coexistence, reload, transformed/blocked inputs and
 queue cancellation still need a supported, task-owned correlation design.
 
+### Accepted native input versus actual consumption
+
+The actual coordinator/native binding probes exposed a history gap: a successful
+Codex steer receipt can precede consumption, and Stop can return that input to the
+native editor without a user item in the original turn. Escape can then submit a
+new UUID. Identical text is not evidence that the first input was consumed.
+
+Codex now tracks dispatched native steer UUIDs against root userMessage item
+events and the continuous terminal stream. History separately records pending,
+consumed, unconsumed or unknown. An observed item wins even if the RPC response
+is subsequently lost; disconnect, runtime replacement and close never infer
+unconsumed input from missing events. Early item/terminal notifications survive
+late receipts and history creation. No input is automatically replayed.
+
+Main persists the observation through the existing input coordinator and patches
+the exact visible user row atomically. Account/database/runtime, clear, rewind,
+native session/turn and message identity fence late updates. Renderer and remote
+metadata writes cannot mint or erase this evidence. Pending input retains its
+authored text in an unverified receipt; only confirmed consumption unwraps that
+receipt through the existing authority invalidation path. No schema or historical
+migration changes are required. Both presentation clients show a short status;
+idle stale pending rows are shown as unknown. Unconsumed/unknown rows cannot be
+used as native fork/rewind boundaries, including direct Main calls. Legacy and
+consumed rows retain the existing behavior.
+
+Managed Windows Codex 0.162.1 codex-consumption-gui1.json and
+codex-consumption-escape1.json each pass 42 positive checks with the actual Core
+Session, product input coordinator and native binding. The first input remains
+unconsumed after Stop; Escape's new UUID is admitted separately. Same-thread
+input, settings, live events, approval, view detachment and process/profile
+cleanup remain verified. These probes use in-memory persistence callbacks and a
+loopback provider, not actual product windows or a physical phone. SQLite
+ownership/authority and desktop/mobile history projection have separate focused
+regressions. Full adapter selection, GUI-originated steering consumption, actual
+window/multi-device/SSH acceptance and the other engine gates remain unfinished.
+
+The separate codex-consumed-coordinator1.json probe passes 37 positive checks
+with the same coordinator/native binding: five inputs across four native turns,
+and the consumed item's client UUID, item ID and turn match the persisted steer
+receipt. It retains the same fixture persistence and loopback-provider limits;
+SQL authority unwrapping is covered separately by the database regressions.
+
 ## Upstream reference
 
 VelaTerm reference: `vlinx-io/VelaTerm` at
