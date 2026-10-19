@@ -1,3 +1,4 @@
+import { createCodexNativeMediaImporter } from '../maker-host/codexNativeMedia.js';
 import { bindNativeSessionRuntime, type NativeRuntimeBindingDeps } from './nativeRuntimeBinding.js';
 import { assertNotRetiredCompanionSession } from '../localDb/retiredCompanions.js';
 import { createAgentPresentationHandler, AGENT_PRESENTATION_CHANNEL } from './agentPresentationHandlers.js';
@@ -4753,10 +4754,10 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
       ...nativeDeps,
       isCurrent,
       importMedia: async input => {
-        if (!isCurrent(session) || session.agentKind !== 'claude-code' || input.sessionId !== session.sdkSessionId) {
+        if (!isCurrent(session) || !['claude-code', 'codex'].includes(session.agentKind) || input.sessionId !== session.sdkSessionId) {
           throwIpcError('PRECONDITION_FAILED', 'Native attachment no longer belongs to this task');
         }
-        importMedia ??= createClaudeNativeMediaImporter({ sessionId: session.id, nativeSessionId: input.sessionId,
+        importMedia ??= (session.agentKind === 'codex' ? createCodexNativeMediaImporter : createClaudeNativeMediaImporter)({ sessionId: session.id, nativeSessionId: input.sessionId,
           isCurrent: () => isCurrent(session) && session.sdkSessionId === input.sessionId });
         return importMedia(input);
       },
