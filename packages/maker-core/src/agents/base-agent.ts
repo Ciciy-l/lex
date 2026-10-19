@@ -1,3 +1,5 @@
+import type { CodexNativeFileApprovalCopy } from './codex/native-file-approval.js';
+import type { CodexNativePermissionCopy } from './codex/native-permissions.js';
 import type { StdioTransportOptions } from './codex/app-server/stdioTransport.js';
 import type { CodexNativeService } from './codex/native-service.js';
 import type { CodexNativePresentationFactory } from './codex/native-task-presentation.js';
@@ -907,6 +909,10 @@ export interface AgentDeps {
    * interaction surfaces, so maker-core never hard-codes one UI language.
    */
   getPiExtensionUiStrings?: () => PiExtensionUiStrings;
+
+  /** Host-localized choices for native per-operation permission confirmation. */
+  getCodexNativePermissionCopy?: () => CodexNativePermissionCopy;
+  getCodexNativeFileApprovalCopy?: () => CodexNativeFileApprovalCopy;
 
   /**
    * Pi-only: start a durable Subagent runner through a host-supported Node

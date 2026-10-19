@@ -9591,6 +9591,24 @@
   },
   "ccAgent": {
     "presentation": {
+      "nativeFileApproval": {
+        "header": "파일 변경",
+        "confirmation": "이 변경에는 확인이 필요합니다.",
+        "once": "이번 변경만 적용",
+        "onceDescription": "이번 변경만 적용하며 이후 접근 권한은 부여하지 않습니다.",
+        "cancel": "이 변경 취소",
+        "cancelDescription": "이 변경을 적용하지 않습니다."
+      },
+      "nativePermissions": {
+        "header": "권한",
+        "confirmation": "이 작업에는 확인이 필요합니다.",
+        "once": "이번 턴에만 허용",
+        "onceDescription": "이번 턴에만 해당 권한을 부여합니다.",
+        "strict": "허용 후 엄격히 검토",
+        "strictDescription": "이번 턴에 권한을 부여하고 이후 모든 명령을 검토합니다.",
+        "deny": "권한 부여 없이 계속",
+        "denyDescription": "추가 권한을 부여하지 않습니다."
+      },
       "retry": "다시 연결",
       "label": "표시 모드",
       "gui": "GUI",

@@ -951,6 +951,25 @@ three GUI/TUI/GUI turns share one service/thread, and owned processes/profiles
 are cleaned. Main persistence/push behavior has focused integration coverage;
 this does not establish actual database, product UI, phone or SSH acceptance.
 
+### Codex extended permissions and single-operation file changes
+
+Extended filesystem/network grants now share the existing host policy and one
+GUI/TUI answer. Native grants preserve the exact reviewed permissions, turn or
+session scope, and strict automatic review. Cancellation fences the native RPC
+identity before review completes. The original permissions/file overlays always
+offer session persistence; when host policy requires one-operation confirmation,
+the upstream native question form instead displays only eligible choices. Host
+copy is localized in all five languages. File-change details come from the same
+item/started context already used by GUI approval when the RPC omits its patch.
+
+Managed Windows Codex 0.162.1 passed isolated network, filesystem, forced-turn
+and forced-file proofs. The file proof records only the native-approved file
+being written, exact content, three GUI/TUI/GUI turns and confirmed cleanup. Its
+first run exhausted a 15-second observation after native approval; the second
+uses a bounded 60-second observation and preserves that failed report. Product
+timeouts were not changed. These proofs still use fixture routing/history and
+do not establish product UI, database, phone, SSH or non-Windows acceptance.
+
 Claude's semantic bridge also avoids OS-assigned ports blocked by Fetch. It
 closes an unusable loopback listener before requesting another ephemeral port,
 with bounded attempts and unchanged authentication. Deterministic tests cover

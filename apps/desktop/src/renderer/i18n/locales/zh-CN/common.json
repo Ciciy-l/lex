@@ -9591,6 +9591,24 @@
   },
   "ccAgent": {
     "presentation": {
+      "nativeFileApproval": {
+        "header": "文件修改",
+        "confirmation": "这些修改需要你确认。",
+        "once": "仅允许本次修改",
+        "onceDescription": "仅应用这些修改，不授予后续访问权限。",
+        "cancel": "取消这些修改",
+        "cancelDescription": "不应用这些修改。"
+      },
+      "nativePermissions": {
+        "header": "权限",
+        "confirmation": "此操作需要你确认。",
+        "once": "允许本轮使用",
+        "onceDescription": "仅在本轮授予这些权限。",
+        "strict": "允许并逐条审查",
+        "strictDescription": "本轮授予权限，并审查后续每条命令。",
+        "deny": "不授予权限并继续",
+        "denyDescription": "不授予额外权限。"
+      },
       "retry": "重新连接",
       "label": "显示方式",
       "gui": "GUI",

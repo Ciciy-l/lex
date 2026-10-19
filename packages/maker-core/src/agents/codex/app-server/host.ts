@@ -217,6 +217,7 @@ export interface ThreadEventHandlers {
   /** server 要求审批 MCP 工具等权限请求 (item/permissions/requestApproval)。 */
   permissionsApproval?: (
     params: PermissionsRequestApprovalParams,
+    meta?: ServerRequestMeta,
   ) => Promise<PermissionsRequestApprovalResponse>;
   /** EXPERIMENTAL: model/native tool asks the client to collect user input. */
   requestUserInput?: (
@@ -783,7 +784,7 @@ export class AppServerHost {
       }
     });
 
-    client.setRequestHandler(Method.PermissionsRequestApproval, async (rawParams) => {
+    client.setRequestHandler(Method.PermissionsRequestApproval, async (rawParams, meta) => {
       const params = rawParams as PermissionsRequestApprovalParams;
       const resolvedHandlers = this.resolveRequestHandlers(params.threadId);
       const handlers = resolvedHandlers instanceof Promise
@@ -796,7 +797,7 @@ export class AppServerHost {
         return { permissions: {}, scope: 'turn' } satisfies PermissionsRequestApprovalResponse;
       }
       try {
-        return await handlers.permissionsApproval(params);
+        return await handlers.permissionsApproval(params, { requestId: meta.id });
       } catch (e) {
         this.logger.error('permissionsApproval handler threw → decline', {
           threadId: params.threadId,

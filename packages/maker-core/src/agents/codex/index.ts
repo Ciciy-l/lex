@@ -1,3 +1,5 @@
+import { projectNativeFileApproval } from './native-file-approval.js';
+import { projectNativePermissions } from './native-permissions.js';
 import { CodexNativeQuestions, type CodexNativeQuestionRequest } from './native-questions.js';
 import { projectNativeMcpConfirmation, decodeNativeMcpConfirmation } from './native-mcp-confirmation.js';
 import { CodexNativeTaskPresentation } from './native-task-presentation.js';
@@ -7409,6 +7411,7 @@ assertRouteCurrent();
     }
     const pendingApprovals = new Map<string, PendingEntry>();
     const nativeApprovals = new CodexNativeApprovals();
+    const getNativeFileApprovalCopy = this.deps.getCodexNativeFileApprovalCopy;
     const nativeQuestions = new CodexNativeQuestions(nativeApprovals, (requestId, decision) => {
       eventQueue.push({ type: 'interaction_dismissed', data: { requestId, reason: 'native_answered',
         nativeQuestionAnswers: decision.answers }, source: 'codex' });
@@ -7839,8 +7842,8 @@ assertRouteCurrent();
             resolve(forcePrompt && d === 'acceptForSession' ? 'accept' : d);
           };
           if (opts?.nativeRequest) {
-            try { nativePrompt = nativeApprovals.open(opts.nativeRequest, { allowPersistent: !forcePrompt,
-              accept: (response, behavior, session) => {
+            try {
+              const accept = (response: CodexNativeApprovalResponse, behavior: 'allow' | 'deny', session: boolean) => {
                 if (entry.settled) return;
                 nativeResponse = response;
                 if (behavior === 'deny') {
@@ -7851,8 +7854,15 @@ assertRouteCurrent();
                 eventQueue.push({ type: 'interaction_dismissed', data: { requestId, reason: 'native_answered',
                   resolvedAs: behavior, nativePermissionScope: session ? 'session'
                     : typeof response.decision === 'object' ? 'persistent' : 'once' }, source: 'codex' });
-              },
-            }); } catch { finalize('decline'); return; }
+              };
+              if (forcePrompt && opts.nativeRequest.method === 'item/fileChange/requestApproval') {
+                const prompt = projectNativeFileApproval(opts.nativeRequest, getNativeFileApprovalCopy?.());
+                nativePrompt = nativeApprovals.openInteraction(prompt.request, { normalize: prompt.decode,
+                  accept: response => accept(response, response.decision === 'accept' ? 'allow' : 'deny', false) });
+              } else {
+                nativePrompt = nativeApprovals.open(opts.nativeRequest, { allowPersistent: !forcePrompt, accept });
+              }
+            } catch { finalize('decline'); return; }
           }
           if (opts?.nativePrompt) {
             try { nativePrompt = opts.nativePrompt.open(!forcePrompt, d => {
@@ -8982,7 +8992,7 @@ assertRouteCurrent();
             : { kind: 'other' }
           : { kind: 'file-write', path: params.grantRoot ?? undefined },
         itemId: params.itemId,
-        ...(meta ? { nativeRequest: { id: meta.requestId, method: 'item/fileChange/requestApproval' as const, params } } : {}),
+        ...(meta ? { nativeRequest: { id: meta.requestId, method: 'item/fileChange/requestApproval' as const, params: { ...params, ...(changes ? { changes } : {}) } } } : {}),
       });
       return { decision: typeof decision.nativeResponse?.decision === 'string' ? decision.nativeResponse.decision : decision.decision };
     };
@@ -9303,6 +9313,7 @@ assertRouteCurrent();
 
     const permissionsApproval = async (
       params: PermissionsRequestApprovalParams,
+      nativeMeta?: { requestId: string | number },
     ): Promise<PermissionsRequestApprovalResponse> => {
       if (reviewMode) return { permissions: {}, scope: 'turn' };
       // buffered/墓碑 turn 的审批请求不得上 UI (codex R12 P1) — 孤儿直接拒
@@ -9310,6 +9321,7 @@ assertRouteCurrent();
       const turnGate = gateServerRequestTurn(params.turnId, params.threadId);
       if (turnGate === false) return { permissions: {}, scope: 'turn' };
       if (turnGate instanceof Promise && !(await turnGate)) return { permissions: {}, scope: 'turn' };
+      let nativeAnswer: PermissionsRequestApprovalResponse | undefined;
       const requestId = params.itemId ?? params.turnId;
       // Capability changes share the same decision lifecycle as command approvals.
       // Auto reviews their complete permission payload rather than inventing a command.
@@ -9323,7 +9335,19 @@ assertRouteCurrent();
         description: params.reason ?? undefined,
         suggestions: codexSessionApprovalSuggestions(),
         metadata: params.reason ? { reason: params.reason } : undefined,
-      }, { itemId: params.itemId ?? undefined });
+      }, { itemId: params.itemId ?? undefined,
+        ...(nativeMeta ? { nativePrompt: {
+          requestId: nativeMeta.requestId,
+          open: (allowPersistent: boolean, accept: (decision: ApprovalDecision) => void) => {
+            const prompt = projectNativePermissions(nativeMeta.requestId, params, allowPersistent, this.deps.getCodexNativePermissionCopy?.());
+            return nativeApprovals.openInteraction(prompt.request, {
+              normalize: prompt.decode,
+              accept: answer => { nativeAnswer = answer.response; accept(answer.decision); },
+            });
+          },
+        } } : {}),
+      });
+      if (nativeAnswer) return nativeAnswer;
       if (decision.decision === 'accept') {
         return { permissions: params.permissions as Record<string, unknown>, scope: 'turn' };
       }
@@ -13073,7 +13097,9 @@ assertRouteCurrent();
       mcpServerElicitation: (params, meta) => withNativeApprovalRequest(
         { threadId: params.threadId, itemId: meta ? serverInteractionId(meta.requestId) : '' }, meta,
         () => mcpServerElicitation(params, meta)),
-      permissionsApproval,
+      permissionsApproval: (params, meta) => withNativeApprovalRequest(
+        { threadId: params.threadId, itemId: params.itemId ?? params.turnId }, meta,
+        () => permissionsApproval(params, meta)),
       serverRequestResolved: handleServerRequestResolved,
       requestUserInput,
       dynamicToolCall,

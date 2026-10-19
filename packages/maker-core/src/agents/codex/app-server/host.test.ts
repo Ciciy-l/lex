@@ -1154,6 +1154,7 @@ describe('AppServerHost descendant thread routing', () => {
     );
     expect(permissionsApproval).toHaveBeenCalledWith(
       expect.objectContaining({ threadId: 'child-thread' }),
+      { requestId: 'server-permissions' },
     );
     expect(requestUserInput).toHaveBeenCalledWith(
       expect.objectContaining({ threadId: 'child-thread' }),

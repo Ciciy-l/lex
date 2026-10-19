@@ -35201,6 +35201,35 @@ describe('native frontend approval ownership', () => {
         data: expect.objectContaining({ requestId: 'file-item', resolvedAs: 'allow', nativePermissionScope: 'session' }) })));
     } finally { await f.close(); }
   });
+  it.each(['native', 'gui', 'cancelled'] as const)('native frontend file approval forced confirmation: %s wins once', async winner => {
+    const f = await fixture({ reviewAutoPermissionAction: async () => ({ verdict: 'ask', reason: 'Confirm these changes' }) }, 'auto');
+    try {
+      // Actual Codex announces changes in item/started, not necessarily in approval params.
+      f.handlers.itemStarted!({ threadId: f.params.threadId, turnId: f.params.turnId,
+        item: { id: 'forced-file-item', type: 'fileChange', status: 'inProgress',
+          changes: [{ path: '/repo/fixture.txt', kind: { type: 'add' }, diff: '+fixture' }] } });
+      const result = f.handlers.fileChangeApproval!({ threadId: f.params.threadId, turnId: f.params.turnId,
+        itemId: 'forced-file-item' }, { requestId: 75 });
+      await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      expect(f.prompts.find(event => event.kind === 'request')).toMatchObject({ request: { method: 'item/tool/requestUserInput' } });
+      expect(JSON.stringify(f.prompts)).toContain('+fixture');
+      expect(f.native.answer(75, { decision: 'acceptForSession' })).toBe(false);
+      const answer = { answers: { 'lex-file-change': { answers: ['Apply these changes once'] } } };
+      if (winner === 'native') {
+        expect(f.native.answer(75, answer)).toBe(true);
+        expect(await result).toEqual({ decision: 'accept' });
+        f.answer({ kind: 'permission', behavior: 'deny' });
+        await vi.waitFor(() => expect(f.events).toContainEqual(expect.objectContaining({ type: 'interaction_dismissed',
+          data: expect.objectContaining({ requestId: 'forced-file-item', resolvedAs: 'allow', nativePermissionScope: 'once' }) })));
+      } else {
+        if (winner === 'gui') f.answer({ kind: 'permission', behavior: 'deny' });
+        else f.handlers.serverRequestResolved!({ threadId: f.params.threadId, requestId: 75 });
+        expect(await result).toEqual({ decision: 'decline' });
+      }
+      expect(f.native.answer(75, answer)).toBe(false);
+      expect(f.prompts.map(event => event.kind)).toEqual(['request', 'resolved']);
+    } finally { await f.close(); }
+  });
   it('native denial of a network rule reaches the server unchanged and records denial', async () => {
     const f = await fixture();
     const decision = { applyNetworkPolicyAmendment: { network_policy_amendment: { host: 'example.test', action: 'deny' as const } } };
@@ -35424,6 +35453,85 @@ describe('native question mirrors retain one host-owned answer', () => {
       expect(f.resolver.mock.calls[0]?.[0]).toMatchObject({ kind: 'permission' });
       expect(f.prompts).toEqual([]); expect(f.native.answer(901, { answers: { q1: { answers: ['allow'] } } })).toBe(false);
       f.held.resolve({ kind: 'permission', behavior: 'deny' }); await pending;
+    } finally { await f.close(); }
+  });
+});
+
+describe('native extended permissions share the existing policy decision', () => {
+  async function fixture(overrides: Partial<AgentDeps> = {}, mode: 'ask' | 'auto' = 'ask') {
+    const agent = new CodexAgent(createDeps({}, overrides));
+    const host = installFakeHost(agent);
+    const handle = await agent.startSession({ sessionId: 'native-permissions', model: 'gpt-5.4', workingDir: '/repo', permissionMode: mode }) as CodexNativeSessionHandle;
+    const held = deferred<InteractionDecision>();
+    const resolver = vi.fn((_request: InteractionRequest) => held.promise); handle.setInteractionResolver(resolver);
+    const events: AgentEvent[] = [];
+    const drained = (async () => { for await (const event of handle.events()) events.push(event); })();
+    const prompts: import('./native-approvals.js').CodexNativeApprovalEvent[] = [];
+    const native = handle.attachNativeApprovalFrontend(event => prompts.push(event));
+    const handlers = host.getThreadHandlers()!;
+    const params = { threadId: handle.id, turnId: 'turn-1', itemId: 'permission-item',
+      permissions: { network: { enabled: true }, fileSystem: null } };
+    return { handle, held, resolver, events, prompts, native, handlers, params,
+      start: () => handlers.permissionsApproval!(params, { requestId: 902 }),
+      close: async () => { held.resolve({ kind: 'permission', behavior: 'deny' }); await handle.close(); await drained; await agent.dispose(); } };
+  }
+  it('native choice preserves the exact grant, scope and strict review, then retires GUI', async () => {
+    const f = await fixture();
+    try {
+      const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      const response = { permissions: { network: { enabled: true } }, scope: 'turn', strictAutoReview: true };
+      expect(f.native.answer(902, response)).toBe(true);
+      expect(await pending).toEqual(response);
+      f.held.resolve({ kind: 'permission', behavior: 'deny' });
+      expect(f.native.answer(902, response)).toBe(false);
+      await vi.waitFor(() => expect(f.events).toContainEqual(expect.objectContaining({ type: 'interaction_dismissed',
+        data: expect.objectContaining({ reason: 'native_answered', resolvedAs: 'allow', nativePermissionScope: 'once' }) })));
+    } finally { await f.close(); }
+  });
+  it('keeps session grants only when they are advertised and eligible', async () => {
+    const f = await fixture();
+    try {
+      const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      const response = { permissions: { network: { enabled: true } }, scope: 'session' };
+      expect(f.native.answer(902, response)).toBe(true); expect(await pending).toEqual(response);
+      await vi.waitFor(() => expect(f.events).toContainEqual(expect.objectContaining({ type: 'interaction_dismissed',
+        data: expect.objectContaining({ nativePermissionScope: 'session' }) })));
+    } finally { await f.close(); }
+  });
+  it('GUI denial retires the native request; invented grants cannot settle it first', async () => {
+    const f = await fixture();
+    try {
+      const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      expect(f.native.answer(902, { permissions: { fileSystem: { write: ['/foreign'] } }, scope: 'turn' })).toBe(false);
+      f.held.resolve({ kind: 'permission', behavior: 'deny' });
+      expect(await pending).toEqual({ permissions: {}, scope: 'turn' });
+      expect(f.native.answer(902, { permissions: { network: { enabled: true } }, scope: 'turn' })).toBe(false);
+    } finally { await f.close(); }
+  });
+  it('server cancellation before review completes cannot open a native prompt', async () => {
+    const reviewed = deferred<{ verdict: 'ask'; reason: string }>();
+    const review = vi.fn<AutoReviewDelegate>(() => reviewed.promise);
+    const f = await fixture({ reviewAutoPermissionAction: review }, 'auto');
+    try {
+      const pending = f.start(); await vi.waitFor(() => expect(review).toHaveBeenCalledOnce());
+      expect(f.prompts).toEqual([]);
+      f.handlers.serverRequestResolved!({ threadId: f.params.threadId, requestId: 902 });
+      reviewed.resolve({ verdict: 'ask', reason: 'fixture review' });
+      expect(await pending).toEqual({ permissions: {}, scope: 'turn' });
+      expect(f.prompts).toEqual([]); expect(f.resolver).not.toHaveBeenCalled();
+    } finally { await f.close(); }
+  });
+  it('a review requiring human confirmation uses a native one-turn form', async () => {
+    const review = vi.fn<AutoReviewDelegate>(async () => ({ verdict: 'ask', reason: 'fixture review' }));
+    const f = await fixture({ reviewAutoPermissionAction: review }, 'auto');
+    try {
+      const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      const prompt = f.prompts.find(event => event.kind === 'request');
+      expect(prompt).toMatchObject({ request: { method: 'item/tool/requestUserInput' } });
+      expect(f.native.answer(902, { permissions: { network: { enabled: true } }, scope: 'session' })).toBe(false);
+      expect(f.native.answer(902, { answers: { 'lex-permission-grant': { answers: ['Allow for this turn'] } } })).toBe(true);
+      expect(await pending).toEqual({ permissions: { network: { enabled: true } }, scope: 'turn' });
+      expect(review).toHaveBeenCalledOnce();
     } finally { await f.close(); }
   });
 });

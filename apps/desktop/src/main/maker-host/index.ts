@@ -1,3 +1,4 @@
+import { t } from '../i18n.js';
 import { assertNotRetiredCompanionSession } from '../localDb/retiredCompanions.js';
 import { scanLocalCustomizations } from '../skillhub/customizationScanHost';
 import { readAgentCapabilityCatalog, RUNTIME_MCP_NAMES_KEY, type AgentCapabilityQuery } from './agentCapabilityCatalog.js';
@@ -1498,6 +1499,24 @@ export function getMaker(): Maker {
         ?? 'default';
     };
     const codexAgent = new CodexAgent({
+      getCodexNativeFileApprovalCopy: () => ({
+        header: t('ccAgent.presentation.nativeFileApproval.header'),
+        confirmation: t('ccAgent.presentation.nativeFileApproval.confirmation'),
+        once: t('ccAgent.presentation.nativeFileApproval.once'),
+        onceDescription: t('ccAgent.presentation.nativeFileApproval.onceDescription'),
+        cancel: t('ccAgent.presentation.nativeFileApproval.cancel'),
+        cancelDescription: t('ccAgent.presentation.nativeFileApproval.cancelDescription'),
+      }),
+      getCodexNativePermissionCopy: () => ({
+        header: t('ccAgent.presentation.nativePermissions.header'),
+        confirmation: t('ccAgent.presentation.nativePermissions.confirmation'),
+        once: t('ccAgent.presentation.nativePermissions.once'),
+        onceDescription: t('ccAgent.presentation.nativePermissions.onceDescription'),
+        strict: t('ccAgent.presentation.nativePermissions.strict'),
+        strictDescription: t('ccAgent.presentation.nativePermissions.strictDescription'),
+        deny: t('ccAgent.presentation.nativePermissions.deny'),
+        denyDescription: t('ccAgent.presentation.nativePermissions.denyDescription'),
+      }),
       getDisabledSkillPaths: readDisabledSkillPaths,
       getManagedSkills: listCindyManagedSkills,
       scanLocalCustomizations,

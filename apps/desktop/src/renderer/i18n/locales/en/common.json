@@ -9606,6 +9606,24 @@
   },
   "ccAgent": {
     "presentation": {
+      "nativeFileApproval": {
+        "header": "File changes",
+        "confirmation": "Lex requires confirmation for these changes.",
+        "once": "Apply these changes once",
+        "onceDescription": "Apply only these changes without granting future access.",
+        "cancel": "Cancel these changes",
+        "cancelDescription": "Do not apply these changes."
+      },
+      "nativePermissions": {
+        "header": "Permissions",
+        "confirmation": "Lex requires confirmation for this operation.",
+        "once": "Allow for this turn",
+        "onceDescription": "Grant only these permissions for this turn.",
+        "strict": "Allow with strict review",
+        "strictDescription": "Grant for this turn and review every subsequent command.",
+        "deny": "Continue without permissions",
+        "denyDescription": "Do not grant additional permissions."
+      },
       "retry": "Reconnect",
       "label": "Presentation",
       "gui": "GUI",
