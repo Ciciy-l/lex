@@ -1,3 +1,4 @@
+import { CodexNativeQuestions, type CodexNativeQuestionRequest } from './native-questions.js';
 import { projectNativeMcpConfirmation, decodeNativeMcpConfirmation } from './native-mcp-confirmation.js';
 import { CodexNativeTaskPresentation } from './native-task-presentation.js';
 import { CodexNativeApprovals, type CodexNativeApprovalRequest, type CodexNativeApprovalResponse } from './native-approvals.js';
@@ -1064,6 +1065,7 @@ function userInputQuestionsFingerprint(
 type UserInputAnswersByPosition = string[][];
 
 interface PendingUserInputInteraction {
+  requestId: string;
   interactionPromise: Promise<UserInputAnswersByPosition>;
   cancelledPromise: Promise<void>;
   cancel: () => void;
@@ -7407,6 +7409,10 @@ assertRouteCurrent();
     }
     const pendingApprovals = new Map<string, PendingEntry>();
     const nativeApprovals = new CodexNativeApprovals();
+    const nativeQuestions = new CodexNativeQuestions(nativeApprovals, (requestId, decision) => {
+      eventQueue.push({ type: 'interaction_dismissed', data: { requestId, reason: 'native_answered',
+        nativeQuestionAnswers: decision.answers }, source: 'codex' });
+    });
     const nativeApprovalRequests = new Map<string | number, { requestId: string; threadId: string; resolved: boolean }>();
     async function withNativeApprovalRequest<T>(params: { threadId: string; itemId: string; approvalId?: string | null },
       meta: { requestId: string | number } | undefined, call: () => Promise<T>): Promise<T> {
@@ -7935,6 +7941,7 @@ assertRouteCurrent();
     });
 
     function dismissLiveAskUser(requestId: string, reason: string): void {
+      nativeQuestions.cancel(requestId);
       liveAskUserByRequestId.delete(requestId);
       forgetPendingUserInputRequest(requestId);
       eventQueue.push({
@@ -8005,6 +8012,7 @@ assertRouteCurrent();
         dismiss(live.requestId, live.delivery === 'async' ? 'turn_completed' : 'superseded');
       }
       for (const meta of [...cancelledUserInput, ...cancelledDynamicTools]) {
+        nativeQuestions.retireNative(meta.requestId);
         dismiss(serverInteractionId(meta.requestId), 'turn_completed');
       }
     }
@@ -9467,6 +9475,7 @@ assertRouteCurrent();
       isRequestPending: () => boolean = () => true,
       toolUseId?: string,
       delivery?: 'async',
+      nativeRequest?: CodexNativeQuestionRequest,
     ): Promise<ToolRequestUserInputResponse> {
       if (questions.some((q) => q.isSecret)) {
         log.warn('requestUserInput secret question refused', {
@@ -9509,25 +9518,28 @@ assertRouteCurrent();
           turnId,
           questionCount: questions.length,
         });
+        const nativeAlias = nativeRequest ? nativeQuestions.attach(pendingReplay.requestId, nativeRequest) : undefined;
         const joined = await Promise.race([
           pendingReplay.interactionPromise.then((answersByPosition) => ({
             kind: 'answered' as const,
             answersByPosition,
           })),
           pendingReplay.cancelledPromise.then(() => ({ kind: 'cancelled' as const })),
-        ]);
+        ]).finally(() => nativeAlias?.close());
         if (joined.kind === 'cancelled') {
           log.debug('joined duplicate same-turn user input request cancelled', {
             requestId,
             turnId,
           });
           return isRequestPending()
-            ? askUserViaInteraction(requestId, questions, turnId, isRequestPending, toolUseId, delivery)
+            ? askUserViaInteraction(requestId, questions, turnId, isRequestPending, toolUseId, delivery, nativeRequest)
             : emptyUserInputResponse(questions);
         }
         return responseFromUserInputAnswersByPosition(questions, joined.answersByPosition);
       }
 
+      const mirroredQuestion = nativeQuestions.open(requestId, questions,
+        () => !closed && isCurrentHost() && liveAskUserByRequestId.has(requestId) && isRequestPending());
       const interactionPromise = (async (): Promise<UserInputAnswersByPosition> => {
         liveAskUserByRequestId.set(requestId, {
           requestId,
@@ -9544,13 +9556,15 @@ assertRouteCurrent();
           ),
           autoReviewIntent: currentAutoReviewIntent,
         });
-        const decision = await dispatchInteraction({
+        const nativePrompt = nativeRequest ? nativeQuestions.attach(requestId, nativeRequest) : undefined;
+        void dispatchInteraction({
           kind: 'ask_user_question',
           requestId,
           ...(toolUseId ? { toolUseId } : {}),
           ...(delivery ? { delivery } : {}),
           questions: questionsToAskUserItems(questions),
-        });
+        }).then(mirroredQuestion.gui);
+        const decision = await mirroredQuestion.decision.finally(() => nativePrompt?.close());
         if (decision.kind !== 'ask_user_question') {
           log.warn('requestUserInput got mismatched ask decision', { requestId, decKind: decision.kind });
           finishInteractionWithoutFollowUp(requestId);
@@ -9602,6 +9616,7 @@ assertRouteCurrent();
         cancelPendingInteraction = resolve;
       });
       const pendingInteraction: PendingUserInputInteraction = {
+        requestId,
         interactionPromise,
         cancelledPromise,
         cancel: cancelPendingInteraction,
@@ -9639,6 +9654,7 @@ assertRouteCurrent();
         }
         return responseFromUserInputAnswersByPosition(questions, answersByPosition);
       } finally {
+        mirroredQuestion.close();
         liveAskUserByRequestId.delete(requestId);
         const ownedPending = pendingUserInputOwnerByRequestId.get(requestId);
         if (ownedPending?.pendingInteraction === pendingInteraction) {
@@ -9777,6 +9793,8 @@ assertRouteCurrent();
                 params.turnId,
                 () => userInputBroker.has({ connectionId, requestId: meta.requestId }),
                 params.itemId,
+                undefined,
+                { id: meta.requestId, params: { ...params, questions } },
               );
           settle(response);
         },
@@ -9878,6 +9896,8 @@ assertRouteCurrent();
               params.turnId,
               () => dynamicToolBroker.has({ connectionId, requestId: meta.requestId }),
               toolUseId,
+              undefined,
+              { id: meta.requestId, params: { threadId: params.threadId, turnId: params.turnId, itemId: params.callId, questions } },
             );
             settle(dynamicToolResponseFromUserInput(response));
           },
@@ -9977,6 +9997,9 @@ assertRouteCurrent();
       const userInputPending = userInputBroker.has(brokerKey);
       const dynamicPending = dynamicToolBroker.has(brokerKey);
       if (userInputPending || dynamicPending) {
+        nativeQuestions.retireNative(params.requestId);
+        liveAskUserByRequestId.delete(uiRequestId);
+        nativeQuestions.cancel(uiRequestId);
         // Wake joined duplicates before settling the owner's outer broker
         // response. This keeps them on the cancellation/reassignment path even
         // if a resolver starts mirroring broker settlement in the future.

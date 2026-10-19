@@ -261,6 +261,7 @@ function harness() {
     clearPendingInteraction: vi.fn<SessionEventDependencies['clearPendingInteraction']>(() => null),
     defaultDecisionForPending: vi.fn(),
     persistInteractionDecision: vi.fn(),
+    onQuestionAnswered: vi.fn(),
     broadcastToAllWindows: effects.fn('broadcast'),
     broadcastCodexImageAsToolResult: vi.fn(async () => {}),
     autoResumeBookkeeping: {
@@ -1371,6 +1372,61 @@ describe('native approval retirement preserves the actual product decision', () 
       h.emit(event('interaction_dismissed', { requestId: 'owned', reason: 'native_answered', resolvedAs: 'allow' }, { source: 'claude-code' }));
       expect(h.deps.defaultDecisionForPending).toHaveBeenCalledOnce();
       expect(resolve).toHaveBeenCalledExactlyOnceWith({ kind: 'permission', behavior: 'deny' });
+    } finally { await h.dispose(); }
+  });
+});
+
+
+describe('native question retirement preserves the actual product answer', () => {
+  it('persists the TUI answer and resolves the old GUI card with the same value', async () => {
+    const h = harness(), resolve = vi.fn();
+    const request = { kind: 'ask_user_question' as const, requestId: 'owned-question', questions: [{ question: 'Next step?' }] };
+    h.deps.clearPendingInteraction.mockReturnValue({ kind: 'ask_user_question', resolve, request, persistId: 'question-history' });
+    const answers = { 'Next step?': '["Continue"]' };
+    try {
+      h.emit(event('interaction_dismissed', { requestId: request.requestId, reason: 'native_answered', nativeQuestionAnswers: answers }));
+      expect(resolve).toHaveBeenCalledExactlyOnceWith({ kind: 'ask_user_question', answers });
+      expect(h.deps.defaultDecisionForPending).not.toHaveBeenCalled();
+      expect(h.deps.broadcastToAllWindows).toHaveBeenCalledWith('maker:interaction-dismissed', expect.objectContaining({
+        sessionId: 'task', requestId: request.requestId, reason: 'resolved', decision: { kind: 'ask_user_question', answers },
+      }));
+      expect(h.deps.onQuestionAnswered).toHaveBeenCalledExactlyOnceWith('task', request, { kind: 'ask_user_question', answers });
+      expect(h.deps.persistInteractionDecision).toHaveBeenCalledExactlyOnceWith('task', 'question-history', 'ask_user_question', request, { kind: 'ask_user_question', answers });
+    } finally { await h.dispose(); }
+  });
+  it.each([
+    { nativeQuestionAnswers: { 'unknown question': 'answer' } },
+    { nativeQuestionAnswers: { 'Next step?': 42 } },
+    { nativeQuestionAnswers: [] },
+    { nativeQuestionAnswers: { 'Next step?': 'answer' }, reason: 'server_request_resolved' },
+  ])('does not convert malformed or unrelated metadata into a question answer: %j', async data => {
+    const h = harness(), resolve = vi.fn();
+    const request = { kind: 'ask_user_question' as const, requestId: 'owned-question', questions: [{ question: 'Next step?' }] };
+    h.deps.clearPendingInteraction.mockReturnValue({ kind: 'ask_user_question', resolve, request });
+    h.deps.defaultDecisionForPending.mockReturnValue({ kind: 'ask_user_question', answers: {}, dismissed: true });
+    try {
+      h.emit(event('interaction_dismissed', { requestId: request.requestId, reason: 'native_answered', ...data }));
+      expect(h.deps.defaultDecisionForPending).toHaveBeenCalledOnce();
+      expect(h.deps.onQuestionAnswered).not.toHaveBeenCalled();
+      expect(resolve).toHaveBeenCalledExactlyOnceWith({ kind: 'ask_user_question', answers: {}, dismissed: true });
+    } finally { await h.dispose(); }
+  });
+  it('leaves another engine on its own interaction path', async () => {
+    const h = harness(), resolve = vi.fn();
+    const request = { kind: 'ask_user_question' as const, requestId: 'owned-question', questions: [{ question: 'Next step?' }] };
+    h.deps.clearPendingInteraction.mockReturnValue({ kind: 'ask_user_question', resolve, request });
+    try {
+      h.emit(event('interaction_dismissed', { requestId: request.requestId, reason: 'native_answered', nativeQuestionAnswers: { 'Next step?': 'answer' } }, { source: 'claude-code' }));
+      expect(h.deps.defaultDecisionForPending).toHaveBeenCalledOnce();
+    } finally { await h.dispose(); }
+  });
+  it('does not turn a retired or foreign request into an answered-card push', async () => {
+    const h = harness();
+    try {
+      h.emit(event('interaction_dismissed', { requestId: 'retired', reason: 'native_answered', nativeQuestionAnswers: { 'Next step?': 'answer' } }));
+      expect(h.deps.persistInteractionDecision).not.toHaveBeenCalled();
+      expect(h.deps.onQuestionAnswered).not.toHaveBeenCalled();
+      expect(h.deps.broadcastToAllWindows).not.toHaveBeenCalledWith('maker:interaction-dismissed', expect.objectContaining({ reason: 'resolved' }));
     } finally { await h.dispose(); }
   });
 });

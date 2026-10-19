@@ -932,6 +932,25 @@ also verify MCP status with/without reference directories and after revocation.
 Routing/history remain fixture bindings: ordinary boot, product UI and remote
 acceptance are still open. This evidence does not establish full adapter parity.
 
+### Codex native questions and GUI history
+
+Native questions and host dynamic-tool questions now share one existing GUI
+decision. The upstream TUI renders the form; its answer resolves the original
+host request once. Protocol aliases reuse the same prompt, and cancellation,
+host replacement and late GUI answers cannot submit a second response. Native
+tool completion can retire its prompt while retaining an existing GUI follow-up.
+
+Main validates native question ownership and records the actual answer. The
+existing resolved-card push updates other GUI windows immediately, and the same
+goal-clarification observer receives GUI and native answers. Unknown question
+keys and unrelated engine metadata are not converted into accepted answers.
+
+The isolated managed Codex 0.162.1 probe `codex-question-native1.json` proves
+one native form answer reaches both the provider tool result and the host event,
+three GUI/TUI/GUI turns share one service/thread, and owned processes/profiles
+are cleaned. Main persistence/push behavior has focused integration coverage;
+this does not establish actual database, product UI, phone or SSH acceptance.
+
 Claude's semantic bridge also avoids OS-assigned ports blocked by Fetch. It
 closes an unusable loopback listener before requesting another ephemeral port,
 with bounded attempts and unchanged authentication. Deterministic tests cover

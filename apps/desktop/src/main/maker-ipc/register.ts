@@ -2691,14 +2691,22 @@ function resolvePendingInteraction(requestId: string, decision: InteractionDecis
     decision.kind === 'ask_user_question' &&
     goalAskAnswerObserver
   ) {
-    try {
-      const questions = (resolver.request as { questions?: AskUserQuestions }).questions ?? [];
-      goalAskAnswerObserver(resolver.sessionId, decision.answers ?? {}, questions);
-    } catch (e) {
-      log.warn('goalAskAnswerObserver threw', { sessionId: resolver.sessionId, error: String(e) });
-    }
+    notifyQuestionAnswered(resolver.sessionId, resolver.request, decision);
   }
   return true;
+}
+
+function notifyQuestionAnswered(
+  sessionId: string,
+  request: RecoverableInteractionSnapshot,
+  decision: Extract<InteractionDecision, { kind: 'ask_user_question' }>,
+): void {
+  try {
+    const questions = (request as { questions?: AskUserQuestions }).questions ?? [];
+    goalAskAnswerObserver?.(sessionId, decision.answers ?? {}, questions);
+  } catch (e) {
+    log.warn('goalAskAnswerObserver threw', { sessionId, error: String(e) });
+  }
 }
 
 function resolvePendingPermissionFromAgentIsland(
@@ -4549,6 +4557,9 @@ const sessionEventDependencies: SessionEventDependencies = {
   },
   get persistInteractionDecision() {
     return persistInteractionDecision;
+  },
+  get onQuestionAnswered() {
+    return notifyQuestionAnswered;
   },
   get broadcastToAllWindows() {
     return broadcastToAllWindows;

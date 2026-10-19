@@ -35345,3 +35345,85 @@ describe('Codex native config reload after task sandbox selection', () => {
     } finally { await handle.close(); await agent.dispose(); }
   });
 });
+
+describe('native question mirrors retain one host-owned answer', () => {
+  async function fixture() {
+    const agent = new CodexAgent(createDeps());
+    const host = installFakeHost(agent);
+    const handle = await agent.startSession({ sessionId: 'native-question', model: 'gpt-5.4', workingDir: '/repo' }) as CodexNativeSessionHandle;
+    const events: AgentEvent[] = [];
+    const drained = (async () => { for await (const event of handle.events()) events.push(event); })();
+    const held = deferred<InteractionDecision>();
+    const resolver = vi.fn((_request: InteractionRequest) => held.promise); handle.setInteractionResolver(resolver);
+    const prompts: import('./native-approvals.js').CodexNativeApprovalEvent[] = [];
+    const native = handle.attachNativeApprovalFrontend(event => prompts.push(event));
+    const handlers = host.getThreadHandlers()!;
+    const params = { threadId: handle.id, turnId: 'turn-1', itemId: 'native-question-item', questions: [{
+      id: 'q1', header: 'Direction', question: 'What next?', isOther: false, isSecret: false, options: [],
+    }] };
+    return { agent, host, handle, events, resolver, prompts, native, handlers, params, held,
+      start: () => handlers.requestUserInput!(params, { requestId: 901 }),
+      close: async () => { held.resolve({ kind: 'ask_user_question', answers: {}, dismissed: true }); await handle.close(); await drained; await agent.dispose(); } };
+  }
+  it('native response settles the real host request and emits the answer for GUI history', async () => {
+    const f = await fixture();
+    try { const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      expect(f.native.answer(901, { answers: { q1: { answers: ['Keep going'] } } })).toBe(true);
+      expect(await pending).toEqual({ answers: { q1: { answers: ['Keep going'] } } });
+      f.held.resolve({ kind: 'ask_user_question', answers: { 'What next?': 'different late GUI answer' } });
+      await vi.waitFor(() => expect(f.events).toContainEqual(expect.objectContaining({ type: 'interaction_dismissed',
+        data: expect.objectContaining({ reason: 'native_answered', nativeQuestionAnswers: { 'What next?': '["Keep going"]' } }) })));
+      expect(f.native.answer(901, { answers: {} })).toBe(false);
+    } finally { await f.close(); }
+  });
+  it('GUI response retires the native question', async () => {
+    const f = await fixture();
+    try { const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      f.held.resolve({ kind: 'ask_user_question', answers: { 'What next?': 'GUI choice' } });
+      expect(await pending).toEqual({ answers: { q1: { answers: ['GUI choice'] } } });
+      expect(f.native.answer(901, { answers: {} })).toBe(false);
+      expect(f.prompts.map(e => e.kind)).toEqual(['request', 'resolved']);
+    } finally { await f.close(); }
+  });
+  it('server cancellation closes the native question before a late response can change intent', async () => {
+    const f = await fixture();
+    try { const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      f.handlers.serverRequestResolved!({ threadId: f.params.threadId, requestId: 901 });
+      expect(await pending).toEqual({ answers: {} });
+      expect(f.native.answer(901, { answers: { q1: { answers: ['late'] } } })).toBe(false);
+      expect(f.events.some(e => e.type === 'interaction_dismissed' && (e.data as Record<string, unknown>).reason === 'native_answered')).toBe(false);
+    } finally { await f.close(); }
+  });
+  it('joins a dynamic-tool question and maps native ids back to that same answer', async () => {
+    const f = await fixture();
+    try {
+      f.handlers.itemStarted!({ threadId: f.params.threadId, turnId: 'turn-1', item: {
+        id: 'dynamic-call-1', type: 'dynamicToolCall', namespace: null, tool: 'cindy__ask_user_question',
+      } });
+      const dynamic = f.handlers.dynamicToolCall!({ threadId: f.params.threadId, turnId: 'turn-1', callId: 'dynamic-call-1',
+        namespace: null, tool: 'cindy__ask_user_question', arguments: { questions: [{ header: 'Direction', question: 'What next?' }] },
+      }, { requestId: 'dynamic-first' });
+      const native = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      expect(f.native.answer(901, { answers: { q1: { answers: ['One answer'] } } })).toBe(false);
+      expect(f.native.answer('dynamic-first', { answers: { 'question-1': { answers: ['One answer'] } } })).toBe(true);
+      expect(await native).toEqual({ answers: { q1: { answers: ['One answer'] } } });
+      expect(await dynamic).toMatchObject({ success: true, contentItems: [{ type: 'inputText', text: JSON.stringify({ 'question-1': { answers: ['One answer'] } }) }] });
+      expect(f.resolver).toHaveBeenCalledOnce();
+    } finally { await f.close(); }
+  });
+  it('does not expose secret questions or tool permission fallback as ordinary native questions', async () => {
+    const f = await fixture();
+    try {
+      expect(await f.handlers.requestUserInput!({ ...f.params, questions: [{ ...f.params.questions[0]!, isSecret: true }] }, { requestId: 902 }))
+        .toEqual({ answers: { q1: { answers: [] } } });
+      expect(f.prompts).toEqual([]); expect(f.resolver).not.toHaveBeenCalled();
+      f.handlers.itemStarted!({ threadId: f.params.threadId, turnId: 'turn-1', item: {
+        id: f.params.itemId, type: 'mcpToolCall', server: 'fixture', tool: 'action', arguments: {},
+      } });
+      const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      expect(f.resolver.mock.calls[0]?.[0]).toMatchObject({ kind: 'permission' });
+      expect(f.prompts).toEqual([]); expect(f.native.answer(901, { answers: { q1: { answers: ['allow'] } } })).toBe(false);
+      f.held.resolve({ kind: 'permission', behavior: 'deny' }); await pending;
+    } finally { await f.close(); }
+  });
+});
