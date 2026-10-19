@@ -1020,6 +1020,37 @@ third independently waits for the original screen. Its earlier failed report is
 retained. This uses an isolated provider catalog and runtime callback, not actual
 product database/UI, SSH or phone acceptance.
 
+### Native images and the Desktop model catalog
+
+Claude and Codex original composers now share Main's existing image store and
+task-reference lifecycle. Codex data URLs enter as verified supplied bytes;
+there is no remote URL or local-path fallback. The account, database and native
+task are captured before ingestion. Real temporary SQLite/store tests cover
+byte identity, concurrent deduplication, separate task references and rollback
+after an account change during a committed reference write. These tests do not
+establish product-window or phone attachment acceptance.
+
+The Codex Main factory now defaults to Desktop's provider service and normal
+visibility rules. Model membership and known route abilities come from the
+exact task provider; bounded native metadata paging preserves the original
+frontend's display and multi-agent metadata. An Agent snapshot keeps catalog
+identity separate from the server's normalized model alias. An unresolved
+implicit provider is refused rather than inferred from a coincident model name;
+implicit-route resolution remains required before ordinary startup enablement.
+
+Managed Codex 0.162.1 `codex-main-catalog-native1.json` passes 31 positive checks
+using the real Main projection and Agent snapshot, with isolated provider-service
+and account fixtures: original model menu, three GUI/TUI/GUI turns, one native
+thread/service, approvals and confirmed cleanup. Windows node-pty's shutdown
+helper reported `AttachConsole failed` despite the owned processes exiting; that
+stderr is retained. This is not production account/database/UI acceptance.
+The fixed-reasoning observation `codex-no-reasoning-native1.json` records the
+upstream's two settings requests followed by a default-config write. The
+`effort: "none"` request and default write are currently rejected, so that probe
+only proves the request sequence, not successful model selection. Native default
+persistence and fixed-reasoning semantics remain open. Normal startup stays on
+the existing adapter until these and the other parity requirements are met.
+
 ## Upstream reference
 
 VelaTerm reference: `vlinx-io/VelaTerm` at

@@ -1,4 +1,5 @@
 import { createCodexNativeTaskRouting, type CodexNativeTaskRoutingOptions, type CodexNativePresentationLaunch } from '@cindy/maker-core';
+import { createDesktopCodexNativeCatalog } from './codexNativeCatalog.js';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -105,11 +106,21 @@ export async function createCodexNativePresentation(
 /** Main selects catalog/controls while Core supplies actual task lineage. */
 export function createTaskCodexNativePresentation(launch: CodexNativePresentationLaunch,
   options: Omit<CodexNativePresentationOptions, 'handle' | 'endpoint' | 'cwd' | 'isCurrent' | 'signal' | 'request' | 'notification'> & {
-    catalog: CodexNativeTaskRoutingOptions['catalog'];
+    catalog?: CodexNativeTaskRoutingOptions['catalog'];
     control: CodexNativeTaskRoutingOptions['control'];
   }) {
+  const nativeSessionId = launch.handle.id;
+  const catalog = options.catalog ?? createDesktopCodexNativeCatalog({
+    nativeSessionId, cwd: launch.cwd,
+    isCurrent: () => launch.isCurrent() && launch.handle.id === nativeSessionId,
+    readRuntime: () => {
+      const runtime = launch.handle.readNativeRuntimeSnapshot();
+      return { model: runtime.catalogModel, nativeModel: runtime.nativeModel, providerId: runtime.providerId,
+        nativeModelProvider: runtime.nativeModelProvider, effort: runtime.effort, fastMode: runtime.fastMode };
+    },
+  });
   const routing = createCodexNativeTaskRouting({ handle: launch.handle, cwd: launch.cwd,
-    isCurrent: launch.isCurrent, ...launch.routingContext, catalog: options.catalog,
+    isCurrent: launch.isCurrent, ...launch.routingContext, catalog,
     control: (call, scope) => call.request.method === 'thread/settings/update' && scope === 'task'
       ? launch.handle.applyNativeRuntimeSettings(call.request.params, call.signal) : options.control(call, scope),
   });

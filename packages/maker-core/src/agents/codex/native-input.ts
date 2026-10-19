@@ -18,8 +18,18 @@ export interface CodexNativeTurnRequest {
   /** The gateway forwards once on the original TUI connection, preserving request ownership. */
   dispatch(params: TurnStartParams): Promise<TurnStartResponse>;
 }
+/** A frozen read of the actual task route, never a global preference. */
+export interface CodexNativeRuntimeSnapshot {
+  catalogModel: string;
+  nativeModel: string;
+  providerId: string | null;
+  nativeModelProvider?: string;
+  effort: string;
+  fastMode: boolean;
+}
 /** Engine-specific host handle; this never becomes an IPC shape. */
 export interface CodexNativeSessionHandle extends AgentSessionHandle {
+  readNativeRuntimeSnapshot(): Readonly<CodexNativeRuntimeSnapshot>;
   attachNativeApprovalFrontend(receive: (event: CodexNativeApprovalEvent) => void): CodexNativeApprovalFrontend;
   acceptNativeTurn(request: CodexNativeTurnRequest): Promise<TurnStartResponse>;
   applyNativeRuntimeSettings(params: unknown, signal: AbortSignal): Promise<Record<string, never>>;

@@ -58,6 +58,7 @@ export function projectCodexNativeConfig(value: unknown, runtime: {
 export interface CodexNativeCatalogChoice {
   id: string; name: string; description?: string; visible: boolean;
   efforts: readonly string[]; defaultEffort: string; fastMode: boolean;
+  imageInput?: boolean;
 }
 /** Project only the owning provider's resolved choices; wire aliases stay explicit. */
 export function projectCodexNativeModels(choices: readonly CodexNativeCatalogChoice[],
@@ -84,6 +85,7 @@ export function projectCodexNativeModels(choices: readonly CodexNativeCatalogCho
       if (value === null || typeof value === 'string' || typeof value === 'boolean'
         || (Array.isArray(value) && value.every(item => typeof item === 'string'))) entry[key] = structuredClone(value);
     }
+    if (choice.imageInput !== undefined) entry.inputModalities = choice.imageInput ? ['text', 'image'] : ['text'];
     return [entry];
   });
   return { data, nextCursor: null };

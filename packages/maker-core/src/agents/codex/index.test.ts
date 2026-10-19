@@ -4974,6 +4974,25 @@ describe('CodexAgent.refreshLocalModels', () => {
     expect(native.closed).toBe(true);
   });
 
+  it('snapshots exact catalog and native model identities without borrowing a connection', async () => {
+    const agent = new CodexAgent(createDeps());
+    const host = installFakeHost(agent);
+    try {
+      const handle = await agent.startSession({ sessionId: 'native-catalog-identity', model: 'gpt-5.4',
+        providerId: 'fixture-provider', workingDir: '/repo', effort: 'high' }) as CodexNativeSessionHandle;
+      const first = handle.readNativeRuntimeSnapshot();
+      expect(first).toMatchObject({ catalogModel: 'gpt-5.4', nativeModel: 'gpt-5.4', providerId: 'fixture-provider', effort: 'high', fastMode: false });
+      expect(Object.isFrozen(first)).toBe(true);
+      host.getThreadHandlers()?.threadSettingsUpdated?.({ threadId: handle.id,
+        threadSettings: { model: 'gpt-5.4-codex', effort: 'low' } });
+      expect(handle.readNativeRuntimeSnapshot()).toMatchObject({ catalogModel: 'gpt-5.4', nativeModel: 'gpt-5.4-codex', providerId: 'fixture-provider', effort: 'low' });
+      expect(first.nativeModel).toBe('gpt-5.4'); expect(first.effort).toBe('high');
+      await handle.setModel!('gpt-5.5');
+      expect(handle.readNativeRuntimeSnapshot()).toMatchObject({ catalogModel: 'gpt-5.5', nativeModel: 'gpt-5.5', providerId: 'fixture-provider' });
+      await handle.close(); expect(() => handle.readNativeRuntimeSnapshot()).toThrow();
+    } finally { await agent.dispose(); }
+  });
+
   it('never creates a native frontend over a legacy task transport', async () => {
     const frontend = vi.fn(async () => ({ presentation: {} as never, close: async () => {} }));
     const agent = new CodexAgent(createDeps({}, { createLocalCodexNativePresentation: frontend }));

@@ -13152,6 +13152,13 @@ assertRouteCurrent();
       () => closed ? '<closed>' : threadId, (message, options) => handle.send(message, options));
     const handle: CodexNativeSessionHandle = {
       get presentation() { return nativePresentation?.presentation; },
+      readNativeRuntimeSnapshot() {
+        assertCurrentHost('native task runtime snapshot');
+        if (closed) throw new Error('Native task runtime is closed');
+        return Object.freeze({ catalogModel: mutableCatalogModel ?? mutableModel, nativeModel: mutableModel,
+          providerId: mutableProviderId ?? null, nativeModelProvider: codexThreadModelProviderId,
+          effort: mutableEffort, fastMode: isFastServiceTier(mutableServiceTier) });
+      },
       attachNativeApprovalFrontend(receive) { assertCurrentHost("native approval frontend"); return nativeApprovals.attach(receive); },
       setNativeInputResolver(resolver, media) { nativeAdmission!.bind(resolver, media); },
       setNativeRuntimeResolver(resolver) { nativeRuntimeControls.bind(resolver); },
