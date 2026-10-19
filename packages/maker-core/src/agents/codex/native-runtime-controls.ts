@@ -10,7 +10,8 @@ function model(value: unknown): string {
   if (typeof value !== 'string' || !value.trim() || value.length > 512 || /[\u0000-\u001f]/.test(value)) throw new Error('Invalid native model selection');
   return value;
 }
-function effort(value: unknown): Effort {
+function effort(value: unknown): Effort | null {
+  if (value === 'none') return null;
   if (typeof value !== 'string' || !efforts.has(value)) throw new Error('Native reasoning level requires a supported product selection');
   return value as Effort;
 }

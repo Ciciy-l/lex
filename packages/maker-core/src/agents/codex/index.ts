@@ -296,7 +296,7 @@ const TERMINAL_RATE_LIMIT_RETRY_POLICY: TurnReplayRetryPolicy = {
   delayMs: terminalRateLimitRetryDelayMs,
 };
 
-type CodexEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
+type CodexEffort = Effort | 'none';
 
 const CODEX_MINIMAL_EFFORT_MODELS = new Set([
   'bytedance-seed/seed-2.1-pro',
@@ -385,7 +385,7 @@ function shellCommandFromCodexItem(
  * 把 minimal 收敛到 low。max / ultra 直接透传，不再静默降级为 xhigh(issue #352)。
  * 某模型是否真支持某档位由目录 efforts 与 UI/reconcile 门控保证。
  */
-function clampEffortForCodex(model: string, e: Effort): CodexEffort {
+function clampEffortForCodex(model: string, e: Effort | 'none'): CodexEffort {
   if (e === 'minimal' && !CODEX_MINIMAL_EFFORT_MODELS.has(model)) return 'low';
   return e;
 }
@@ -4960,7 +4960,7 @@ assertRouteCurrent();
      * server 的 wire 规范化只动 mutableModel。
      */
     let mutableCatalogModel: string | undefined = opts.model;
-    let mutableEffort: Effort = opts.effort ?? 'high';
+    let mutableEffort: Effort | 'none' = opts.effort ?? 'high';
     let mutablePermissionMode: PermissionMode =
       reviewMode ? 'ask' : opts.permissionMode ?? 'ask';
     let mutableExtraDirs = [...(opts.extraDirs ?? [])];
@@ -12753,8 +12753,8 @@ assertRouteCurrent();
         if (mutableModel !== beforeModel) {
           refreshCodexAutoReviewerRoute(params.threadId);
         }
-        // ReasoningEffort 的 'none' 不属于 Effort; 排除后其余值都是合法 Effort, 无需 cast。
-        if (s.effort && s.effort !== 'none') mutableEffort = s.effort;
+        // Keep native fixed reasoning without inventing a product effort level.
+        if (s.effort) mutableEffort = s.effort;
         if (before !== (mutableServiceTier ?? null)) {
           log.debug('thread/settings/updated reconciled serviceTier', {
             threadId: params.threadId,
@@ -14411,8 +14411,18 @@ assertRouteCurrent();
         catch (error) { if (generation === effortSelectionGeneration) mutableEffort = previous; throw error; }
       },
 
+      async clearEffort() {
+        assertCurrentHost('clear native reasoning');
+        if (closed || reviewMode) throw new Error('Native reasoning cannot change this task');
+        const previous = mutableEffort, generation = ++effortSelectionGeneration;
+        mutableEffort = 'none';
+        const apply = () => pushThreadSettings({ effort: 'none' });
+        try { await (settingsQueue.requiresConfirmation ? apply() : settingsQueue.confirmed(apply)); }
+        catch (error) { if (generation === effortSelectionGeneration) mutableEffort = previous; throw error; }
+      },
+
       getEffort() {
-        return mutableEffort;
+        return mutableEffort === 'none' ? null : mutableEffort;
       },
 
       async setPermissionMode(newMode: PermissionMode) {

@@ -3,7 +3,8 @@ import type { Effort } from '../types/common.js';
 /** A native menu request, never an IPC-supplied provider or executable route. */
 export interface AgentNativeRuntimePatch {
   model?: string;
-  effort?: Effort;
+  /** null is an explicit fixed-reasoning selection, not an omitted field. */
+  effort?: Effort | null;
   fastMode?: boolean;
   planMode?: boolean;
 }

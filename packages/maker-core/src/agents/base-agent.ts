@@ -2466,6 +2466,8 @@ export interface AgentSessionHandle {
 
   /** 运行时切换 effort */
   setEffort?(effort: Effort): Promise<void>;
+  /** Clear the reasoning axis in place when the native runtime supports it. */
+  clearEffort?(): Promise<void>;
 
   /** 运行时切换 permission mode */
   setPermissionMode?(mode: PermissionMode): Promise<void>;

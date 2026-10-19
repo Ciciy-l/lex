@@ -113,6 +113,17 @@ describe('applyRuntimeSelectionAxesWithRecovery', () => {
     expect(setFastMode).toHaveBeenCalledWith(true);
   });
 
+  it('clears native fixed reasoning in place before committing without terminating the task', async () => {
+    const order: string[] = [];
+    await applyRuntimeSelectionAxesWithRecovery({
+      session: { agentKind: 'codex', setEffort: async () => { order.push('set'); }, setFastMode: async () => { order.push('fast'); } },
+      effort: null, fastMode: false, clearFixedEffort: async () => { order.push('clear'); },
+      commitControlStores: () => { order.push('commit'); }, restoreControlStores: () => { order.push('restore'); },
+      terminateSession: async () => { order.push('terminate'); },
+    });
+    expect(order).toEqual(['clear', 'fast', 'commit']);
+  });
+
   it('retires a live session before committing a fixed-effort profile', async () => {
     const order: string[] = [];
     const setEffort = vi.fn(async () => {

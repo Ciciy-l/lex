@@ -469,8 +469,11 @@ describe('session runtime control wiring', () => {
     expect(setModel).toContain('atomicSelection.effort === null');
     expect(setModel).toContain('isDeviceLinkInvoke() ||');
     expect(setModel).toContain(
-      "(atomicSelection?.effort === null && runtimeAgentKind !== 'pi')",
+      "(atomicSelection?.effort === null && runtimeAgentKind !== 'pi'",
     );
+    // Only a task-owned native selection with in-place support avoids rebuilding.
+    // Ordinary GUI/device-link selection retains the established rebuild path.
+    expect(setModel).toContain('&& !(internalOptions.nativeImmediateSelection && maker.getSession(sessionId)?.canClearEffort())');
     expect(setModel).toContain('!rebuildLiveOrcaWorker && !atomicSelection');
     expect(setModel).toContain('{ wake: false }');
     expect(setModel).toContain("runtimeAgentKind !== 'pi' &&");

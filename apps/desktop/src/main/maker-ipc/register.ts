@@ -17332,7 +17332,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               } : {}),
               forceSessionRebuild:
                 rebuildLiveOrcaWorker ||
-                (atomicSelection?.effort === null && runtimeAgentKind !== 'pi'),
+                (atomicSelection?.effort === null && runtimeAgentKind !== 'pi'
+                  && !(internalOptions.nativeImmediateSelection && maker.getSession(sessionId)?.canClearEffort())),
               isSessionInTurn,
               registerPendingCredentialSwitch: registerPendingCredentialSwitchForSession,
               clearPendingCredentialSwitch: internalOptions.applyingPiCredentialPending
@@ -17493,6 +17494,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
                 runtimeAgentKind !== 'pi' &&
                 (routeExplicit || internalOptions.effortExplicit === true),
               applyFastMode: routeExplicit || internalOptions.fastExplicit === true,
+              ...(internalOptions.nativeImmediateSelection && sess.canClearEffort()
+                ? { clearFixedEffort: () => sess.clearEffort() } : {}),
               assertCanCommit: assertRuntimeOwnerCurrent,
               commitControlStores,
               restoreControlStores,
@@ -17815,7 +17818,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         const current = profiles.effective;
         const result = await applySessionRuntimeSelection(session.id,
           patch.model ?? current.model, current.providerId,
-          { effort: patch.effort ?? current.effort, fastMode: patch.fastMode ?? current.fastMode },
+          { effort: patch.effort !== undefined ? patch.effort : current.effort, fastMode: patch.fastMode ?? current.fastMode },
           { source: 'user', sessionLockHeld: true, nativeImmediateSelection: true,
             assertSelectionCurrent: assertCurrent, effectiveProfile: current,
             routeExplicit: patch.model !== undefined,

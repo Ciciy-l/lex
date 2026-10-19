@@ -1957,6 +1957,14 @@ export class Session {
     return await this.handle.requiresModelSwitchRebuild?.(model, opts) ?? false;
   }
 
+  canClearEffort(): boolean { return typeof this.handle.clearEffort === 'function'; }
+
+  async clearEffort(): Promise<void> {
+    this.ensureActive();
+    if (!this.handle.clearEffort) throw new NotSupportedError('effort', { supported: false, reason: 'not-implemented' });
+    await this.handle.clearEffort();
+  }
+
   async setEffort(effort: Effort): Promise<void> {
     if (!this.capabilities.effort.supported) {
       throw new NotSupportedError('effort', this.capabilities.effort);

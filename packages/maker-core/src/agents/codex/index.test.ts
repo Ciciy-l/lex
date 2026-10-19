@@ -4974,6 +4974,26 @@ describe('CodexAgent.refreshLocalModels', () => {
     expect(native.closed).toBe(true);
   });
 
+  it('clears native reasoning in place and keeps later turns on the same thread', async () => {
+    const agent = new CodexAgent(createDeps()); const host = installFakeHost(agent, method => {
+      if (method === Method.ThreadSettingsUpdate) return {};
+      if (method === Method.TurnStart) return { turn: { id: 'fixed-turn', status: 'inProgress', items: [] } };
+    });
+    try {
+      const handle = await agent.startSession({ sessionId: 'fixed-reasoning', model: 'gpt-5.4', workingDir: '/repo', effort: 'high' }) as CodexNativeSessionHandle;
+      const thread = handle.id;
+      host.request.mockRejectedValueOnce(new Error('fixed reasoning refused'));
+      await expect(handle.clearEffort!()).rejects.toThrow('fixed reasoning refused');
+      expect(handle.getEffort!()).toBe('high');
+      await handle.clearEffort!(); expect(handle.getEffort!()).toBeNull();
+      expect(handle.readNativeRuntimeSnapshot().effort).toBe('none');
+      await handle.send({ type: 'user', content: 'fixed reasoning' });
+      expect(host.request).toHaveBeenCalledWith(Method.TurnStart, expect.objectContaining({ threadId: thread, effort: 'none' }), expect.anything());
+      await handle.setEffort!('low'); expect(handle.getEffort!()).toBe('low'); expect(handle.id).toBe(thread);
+      await handle.close();
+    } finally { await agent.dispose(); }
+  });
+
   it('snapshots exact catalog and native model identities without borrowing a connection', async () => {
     const agent = new CodexAgent(createDeps());
     const host = installFakeHost(agent);
@@ -35569,7 +35589,8 @@ describe('Codex native menu uses the product runtime owner', () => {
     handle.setNativeRuntimeResolver!(async request => {
       const patch = request.patch;
       if (patch.model !== undefined) await handle.setModel!(patch.model);
-      if (patch.effort !== undefined) await handle.setEffort!(patch.effort);
+      if (patch.effort === null) await handle.clearEffort!();
+      else if (patch.effort !== undefined) await handle.setEffort!(patch.effort);
       if (patch.fastMode !== undefined) await handle.setFastMode!(patch.fastMode);
       if (patch.planMode !== undefined) await handle.setPlanMode!(patch.planMode);
     });

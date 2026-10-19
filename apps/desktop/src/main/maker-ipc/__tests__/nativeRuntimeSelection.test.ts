@@ -42,6 +42,11 @@ describe('native menus use Main task setting transactions', () => {
     assert.deepEqual(args[4], { source: 'user', sessionLockHeld: true, nativeImmediateSelection: true,
       assertSelectionCurrent: f.check, effectiveProfile: f.profile, routeExplicit: true, effortExplicit: true, fastExplicit: false });
   });
+  it('preserves explicit fixed reasoning instead of restoring the previous level', async () => {
+    const f = fixture(); await f.run({ model: 'fixed', effort: null });
+    const args = f.events.find(e => e.kind === 'runtime')!.args!;
+    assert.deepEqual(args.slice(0, 4), ['task', 'fixed', 'chosen-provider', { effort: null, fastMode: true }]);
+  });
   it('uses the shared Plan handler within the already-held permission queue', async () => {
     const f = fixture(); await f.run({ planMode: true });
     assert.deepEqual(f.events, [{ kind: 'plan', args: ['task', true, { permissionLockHeld: true, assertCurrent: f.check }] }]);

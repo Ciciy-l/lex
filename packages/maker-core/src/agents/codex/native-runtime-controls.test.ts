@@ -9,6 +9,7 @@ describe('Codex native runtime menu', () => {
     assert.deepEqual(decode({ threadId: 'owned', model: 'chosen', effort: null, approvalPolicy: null,
       collaborationMode: { mode: 'plan', settings: { model: 'chosen', reasoning_effort: 'high', developer_instructions: null } } }, 'owned'),
       { model: 'chosen', effort: 'high', planMode: true });
+    assert.deepEqual(decode({ threadId: 'owned', effort: 'none' }, 'owned'), { effort: null });
     assert.deepEqual(decode({ threadId: 'owned', serviceTier: null }, 'owned'), { fastMode: false });
     assert.deepEqual(decode({ threadId: 'owned', serviceTier: 'priority' }, 'owned'), { fastMode: true });
     assert.deepEqual(decode({ threadId: 'owned', model: null, effort: null }, 'owned'), {});

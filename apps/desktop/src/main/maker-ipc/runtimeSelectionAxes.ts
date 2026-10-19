@@ -40,6 +40,8 @@ export interface ApplyRuntimeSelectionAxesWithRecoveryInput {
   fastMode: boolean;
   applyEffort?: boolean;
   applyFastMode?: boolean;
+  /** Optional native in-place clear; legacy adapters retain their rebuild path. */
+  clearFixedEffort?: () => Promise<void>;
   assertCanCommit?: () => void;
   commitControlStores: () => void;
   restoreControlStores: () => void;
@@ -103,7 +105,7 @@ export async function applyRuntimeSelectionAxesWithRecovery(
   // current Session would leave each harness's mutable effort on the previous
   // model, so retire the idle Session and let the next send rebuild from the
   // committed null-effort runtime profile.
-  if (applyEffort && input.effort === null) {
+  if (applyEffort && input.effort === null && !input.clearFixedEffort) {
     try {
       await input.terminateSession();
     } catch (terminationError) {
@@ -118,8 +120,8 @@ export async function applyRuntimeSelectionAxesWithRecovery(
   }
   try {
     if (applyEffort) {
-      // The null case returns through the fixed-effort rebuild branch above.
-      await input.session.setEffort(input.effort as Effort);
+      if (input.effort === null) await input.clearFixedEffort!();
+      else await input.session.setEffort(input.effort);
       input.assertCanCommit?.();
     }
     if (applyFastMode && (input.session.agentKind === 'codex' || input.session.agentKind === 'pi')) {
