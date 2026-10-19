@@ -1,6 +1,8 @@
 import type { Transport } from './app-server/transport.js';
 import type { CodexNativeSessionHandle } from './native-input.js';
 import type { CodexNativeApprovalFrontend, CodexNativeApprovalEvent } from './native-approvals.js';
+import type { AppServerHost } from './app-server/host.js';
+import { AppServerRpcError } from './app-server/client.js';
 
 type Id = string | number;
 export interface CodexFrontendRequest { id: Id; method: string; params?: unknown }
@@ -10,6 +12,11 @@ export interface CodexFrontendCall {
   signal: AbortSignal;
   /** One physical write on this connection. A lost receipt never retries. */
   forward(params?: unknown): Promise<unknown>;
+  /** Explicit owning-client dispatch, mutually exclusive with forward().
+   * beforeDispatch runs at the actual host write boundary. */
+  dispatchToHost?(params?: unknown, beforeDispatch?: () => void): Promise<unknown>;
+  /** Identity of that dispatcher, not a transport available to the native UI. */
+  readonly owningHost?: Pick<AppServerHost, 'request'>;
 }
 export interface CodexNativeFrontendOptions {
   /** These are two connections, never the owning service's control transport. */
@@ -21,6 +28,15 @@ export interface CodexNativeFrontendOptions {
   request(call: CodexFrontendCall): Promise<unknown>;
   /** Required task projection; null suppresses unrelated session data. */
   notification(event: CodexFrontendNotification): CodexFrontendNotification | null;
+  /** Fresh task creation must use the officially subscribed owning host. The
+   * native connection still performs its own genuine initialize/catalog RPCs. */
+  owningHost?: { host: Pick<AppServerHost, 'request'>; timeoutMs: number };
+  /** Already owner/scoped/bounded by the creation broker. When present, task
+   * notifications come only from this stream, never the native side connection. */
+  owningNotifications?: { subscribe(receive: (event: CodexFrontendNotification) => Promise<void>): () => void };
+  /** Runs only after the actual successful response write, not policy return. */
+  responseDelivered?(request: CodexFrontendRequest, result: unknown): void;
+  closed?(): void;
 }
 
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
@@ -63,18 +79,20 @@ export function connectCodexNativeFrontend(options: CodexNativeFrontendOptions):
       for (const outcome of outcomes) if (outcome.status === 'rejected') throw outcome.reason;
     });
     lifetime.abort(); approval?.detach();
+    try { options.closed?.(); } catch { /* Cleanup must still close both transports. */ }
     for (const stop of stops.splice(0)) stop();
     for (const request of waiting.values()) request.reject(new Error('Native frontend receipt unconfirmed'));
     waiting.clear(); active.clear(); earlyApprovals.length = 0; earlyApprovalBytes = 0;
     return closing;
   };
   const fail = () => { void close().catch(() => {}); };
-  const send = (value: unknown) => {
-    if (!current()) { fail(); return; }
+  const send = (value: unknown): Promise<boolean> => {
+    if (!current()) { fail(); return Promise.resolve(false); }
     let line: string;
-    try { line = JSON.stringify(value); } catch { fail(); return; }
-    if (Buffer.byteLength(line) > MAX_FRAME_BYTES) { fail(); return; }
-    try { void options.frontend.writeLine(line).catch(fail); } catch { fail(); }
+    try { line = JSON.stringify(value); } catch { fail(); return Promise.resolve(false); }
+    if (Buffer.byteLength(line) > MAX_FRAME_BYTES) { fail(); return Promise.resolve(false); }
+    return Promise.resolve().then(() => { assertCurrent(); return options.frontend.writeLine(line); })
+      .then(() => current(), () => { fail(); return false; });
   };
   const parse = (line: string): Record<string, unknown> | null => {
     if (!current() || Buffer.byteLength(line) > MAX_FRAME_BYTES) { fail(); return null; }
@@ -99,6 +117,7 @@ export function connectCodexNativeFrontend(options: CodexNativeFrontendOptions):
       // Even unimplemented/new native requests stay with the existing host;
       // forwarding them directly would race the host's permission decision.
       if ('id' in value) return;
+      if (options.owningNotifications) return;
       try {
         const projected = options.notification({ method: value.method, ...('params' in value ? { params: value.params } : {}) });
         if (projected) send(projected);
@@ -142,10 +161,13 @@ export function connectCodexNativeFrontend(options: CodexNativeFrontendOptions):
     const request: CodexFrontendRequest = { id: value.id, method: value.method, ...('params' in value ? { params: value.params } : {}) };
     const entry = { forwarded: false };
     active.set(request.id, entry); pendingBytes += bytes;
-    const forward = async (params: unknown = request.params): Promise<unknown> => {
+    const claimDispatch = () => {
       assertCurrent();
       if (entry.forwarded || active.get(request.id) !== entry) throw new Error('Native request already forwarded or retired');
       entry.forwarded = true;
+    };
+    const forward = async (params: unknown = request.params): Promise<unknown> => {
+      claimDispatch();
       // Frontends may reuse a completed request id. Use a unique upstream id so
       // a late duplicate receipt can never complete that later native request.
       if (requestSequence >= Number.MAX_SAFE_INTEGER) { fail(); throw new Error('Native request sequence exhausted'); }
@@ -162,23 +184,41 @@ export function connectCodexNativeFrontend(options: CodexNativeFrontendOptions):
         });
       });
     };
+    const dispatchToHost = options.owningHost ? async (params: unknown = request.params, beforeDispatch?: () => void): Promise<unknown> => {
+      claimDispatch();
+      return options.owningHost!.host.request(request.method, params, {
+        timeoutMs: options.owningHost!.timeoutMs,
+        beforeDispatch: () => { assertCurrent(); beforeDispatch?.(); },
+      });
+    } : undefined;
     void Promise.resolve().then(() => {
-      assertCurrent(); return options.request({ request, signal: lifetime.signal, forward });
-    }).then(result => {
+      assertCurrent(); return options.request({ request, signal: lifetime.signal, forward,
+        ...(dispatchToHost ? { dispatchToHost, owningHost: options.owningHost!.host } : {}) });
+    }).then(async result => {
       if (request.method === 'initialize') initializeCompleted = true;
-      if (current()) send({ id: request.id, result });
+      if (current() && await send({ id: request.id, result })) {
+        assertCurrent(); options.responseDelivered?.(request, result);
+      }
     }, error => {
-      if (current()) send({ id: request.id, error: error instanceof NativeRpcError ? error.payload
+      if (current()) return send({ id: request.id, error: error instanceof AppServerRpcError ? error.rpcError : error instanceof NativeRpcError ? error.payload
         : { code: -32600, message: 'This native action could not be accepted by the current Lex task.' } });
-    }).finally(() => { if (active.get(request.id) === entry) active.delete(request.id); pendingBytes -= bytes; });
+    }).catch(fail).finally(() => { if (active.get(request.id) === entry) active.delete(request.id); pendingBytes -= bytes; });
   };
   try {
     assertCurrent();
+    if (options.owningHost && (!Number.isFinite(options.owningHost.timeoutMs) || options.owningHost.timeoutMs <= 0)) {
+      throw new Error('Invalid owning-host RPC deadline');
+    }
     approval = options.handle.attachNativeApprovalFrontend(publishApproval);
     if (lifetime.signal.aborted) { approval.detach(); throw new Error('Native frontend retired during attachment'); }
     const subscribe = (stop: () => void) => { if (lifetime.signal.aborted) stop(); else stops.push(stop); };
     subscribe(options.upstream.onClose(fail)); subscribe(options.frontend.onClose(fail));
     subscribe(options.upstream.onLine(upstreamLine)); subscribe(options.frontend.onLine(frontendLine));
+    if (options.owningNotifications) {
+      subscribe(options.owningNotifications.subscribe(async event => {
+        if (!await send(event)) throw new Error('Native notification delivery unconfirmed');
+      }));
+    }
     assertCurrent();
   } catch (error) { fail(); throw error; }
   return { close };

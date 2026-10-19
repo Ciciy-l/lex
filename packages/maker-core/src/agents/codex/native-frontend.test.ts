@@ -1,6 +1,6 @@
 import { describe, it } from 'vitest';
 import assert from 'node:assert/strict';
-import { connectCodexNativeFrontend, type CodexFrontendCall } from './native-frontend.js';
+import { connectCodexNativeFrontend, type CodexFrontendCall, type CodexNativeFrontendOptions } from './native-frontend.js';
 import { CodexNativeApprovals } from './native-approvals.js';
 
 function transport() {
@@ -17,10 +17,11 @@ function transport() {
   };
 }
 const tick = async () => { for (let n = 0; n < 20; n++) await Promise.resolve(); };
-function fixture(route: (call: CodexFrontendCall) => Promise<unknown> = c => c.forward()) {
+function fixture(route: (call: CodexFrontendCall) => Promise<unknown> = c => c.forward(),
+  observe: Pick<CodexNativeFrontendOptions, 'responseDelivered' | 'closed'> = {}) {
   const frontend = transport(), upstream = transport(), approvals = new CodexNativeApprovals();
   let current = true;
-  const link = connectCodexNativeFrontend({ frontend, upstream,
+  const link = connectCodexNativeFrontend({ frontend, upstream, ...observe,
     handle: { attachNativeApprovalFrontend: receiver => approvals.attach(receiver) },
     isCurrent: () => current,
     request: route,
@@ -34,6 +35,22 @@ function fixture(route: (call: CodexFrontendCall) => Promise<unknown> = c => c.f
   return { frontend, upstream, approvals, link, ready, expire() { current = false; } };
 }
 describe('task-bound Codex native protocol connection', () => {
+  it('reports delivery only after the successful ACK write and reports connection loss separately', async () => {
+    const delivered: string[] = []; let closes = 0;
+    const f = fixture(call => call.forward(), { responseDelivered: request => delivered.push(request.method), closed: () => { closes++; } });
+    let finish!: () => void;
+    const held = new Promise<void>(resolve => { finish = resolve; });
+    try {
+      await f.ready(); delivered.length = 0;
+      const write = f.frontend.writeLine;
+      f.frontend.writeLine = async line => { await held; await write(line); };
+      f.frontend.emit({ id: 1, method: 'thread/resume', params: { threadId: 'owned' } }); await tick();
+      f.upstream.emit({ id: f.upstream.sent.at(-1)!.id, result: { thread: { id: 'owned' } } }); await tick();
+      assert.deepEqual(delivered, []); assert.deepEqual(f.frontend.sent, []);
+      finish(); await tick(); assert.deepEqual(delivered, ['thread/resume']);
+      await f.link.close(); assert.equal(closes, 1);
+    } finally { finish(); await f.link.close(); }
+  });
   it('returns correlated original RPC ids while the task policy prepares input exactly once', async () => {
     let admissions = 0;
     const f = fixture(async call => {

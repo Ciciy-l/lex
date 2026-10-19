@@ -33,6 +33,18 @@ import {
 } from './protocol.js';
 import type { Transport } from './transport.js';
 
+/** Keep the actual server error available to protocol brokers without changing
+ * the diagnostic message used by existing Core callers. */
+export class AppServerRpcError extends Error {
+  readonly code: number;
+  readonly data: unknown;
+  constructor(method: string, readonly rpcError: JsonRpcErrorObject) {
+    super(`codex app-server ${method} error ${rpcError.code}: ${rpcError.message}`);
+    this.code = rpcError.code;
+    this.data = rpcError.data;
+  }
+}
+
 /**
  * 单条 NDJSON line 的最大字节数 (UTF-16 字符近似)。
  * Codex 单 notification 正常 < 1MB; 设 16MB 给极端 reasoning text 留余量,
@@ -241,6 +253,7 @@ export class AppServerClient {
     { method: string; credentialGeneration?: string | null }
   >();
   private readonly notificationHandlers = new Map<string, NotificationHandler>();
+  private readonly notificationObservers = new Set<(method: string, params: unknown) => void>();
   private readonly requestHandlers = new Map<string, ServerRequestHandler>();
 
   private initialized = false;
@@ -427,6 +440,13 @@ export class AppServerClient {
     this.notificationHandlers.set(method, handler);
   }
 
+  /** Observe original notifications, including methods Core does not translate.
+   * This never installs a server-request responder or subscribes a thread. */
+  observeNotifications(observer: (method: string, params: unknown) => void): () => void {
+    this.notificationObservers.add(observer);
+    return () => { this.notificationObservers.delete(observer); };
+  }
+
   setRequestHandler(method: string, handler: ServerRequestHandler): void {
     if (this.requestHandlers.has(method)) {
       this.logger.warn('overwriting request handler', { method });
@@ -530,9 +550,7 @@ export class AppServerClient {
     if (pending.timeoutId) clearTimeout(pending.timeoutId);
     if (error) {
       this.notifyAuthInvalidated(error, pending.method, pending.credentialGeneration);
-      const err = new Error(`codex app-server ${pending.method} error ${error.code}: ${error.message}`);
-      // 把 code/data 挂上, 上层想区分 OVERLOADED 等可以判 (err as any).code。
-      Object.assign(err, { code: error.code, data: error.data });
+      const err = new AppServerRpcError(pending.method, error);
       pending.reject(err);
       return;
     }
@@ -574,6 +592,11 @@ export class AppServerClient {
   }
 
   private async dispatchNotification(method: string, params: unknown): Promise<void> {
+    for (const observer of this.notificationObservers) {
+      try { observer(method, params); } catch {
+        this.logger.warn('notification observer failed', { method });
+      }
+    }
     const handler = this.notificationHandlers.get(method);
     if (!handler) {
       // 没注册 handler 不算错 — 可能是我们没订阅的 delta。debug 级别即可。
