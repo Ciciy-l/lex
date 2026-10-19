@@ -1,5 +1,6 @@
 import { CodexSettingsQueue } from './native-settings-queue.js';
 import { CodexNativeRuntimeControls } from './native-runtime-controls.js';
+import { AgentNativeStopBinding } from '../native-stop.js';
 import { projectNativeFileApproval } from './native-file-approval.js';
 import { projectNativePermissions } from './native-permissions.js';
 import { CodexNativeQuestions, type CodexNativeQuestionRequest } from './native-questions.js';
@@ -6899,6 +6900,7 @@ assertRouteCurrent();
     );
     const pushThreadSettings = (patch: Omit<ThreadSettingsUpdateParams, 'threadId'>): Promise<void> =>
       settingsQueue.update(patch);
+    const nativeStop = new AgentNativeStopBinding(() => threadId, () => !closed && !reviewMode && isCurrentHost(), () => currentTurnId);
     const nativeRuntimeControls = new CodexNativeRuntimeControls(
       () => closed || !isCurrentHost() ? '<closed>' : threadId,
       (run, signal) => settingsQueue.confirmed(run, signal));
@@ -13104,6 +13106,7 @@ assertRouteCurrent();
         () => ({ ok: true as const }), error => ({ ok: false as const, error }));
       nativeAdmission?.close();
       nativeRuntimeControls.close();
+      nativeStop.retire();
       nativeApprovals.close();
       await startup.remoteRoute?.release();
       cancelInteractionContinuation('session_closed', true);
@@ -13162,6 +13165,15 @@ assertRouteCurrent();
       attachNativeApprovalFrontend(receive) { assertCurrentHost("native approval frontend"); return nativeApprovals.attach(receive); },
       setNativeInputResolver(resolver, media) { nativeAdmission!.bind(resolver, media); },
       setNativeRuntimeResolver(resolver) { nativeRuntimeControls.bind(resolver); },
+      setNativeStopResolver(resolver) { nativeStop.bind(resolver); },
+      async interruptNativeTurn(params, signal) {
+        if (!params || typeof params !== 'object' || Array.isArray(params)) throw new Error('Invalid native stop');
+        const p = params as Record<string, unknown>;
+        if (p.threadId !== threadId || typeof p.turnId !== 'string'
+          || Object.keys(p).some(key => !['threadId', 'turnId'].includes(key))) throw new Error('Invalid native stop');
+        await nativeStop.resolve({ nativeSessionId: threadId, nativeTurnId: p.turnId, signal });
+        return {};
+      },
       applyNativeRuntimeSettings(params, signal) {
         assertCurrentHost('native runtime settings');
         if (reviewMode) throw new Error('Native controls cannot replace a host-owned review policy');
@@ -14221,7 +14233,11 @@ assertRouteCurrent();
         }
       },
 
-      async abort() {
+      async abort(options) {
+        if (options) {
+          assertCurrentHost('native turn/interrupt');
+          if (closed || options.signal.aborted || currentTurnId !== options.expectedTurnId) throw new Error('Native stop turn changed');
+        }
         const cancelledInteraction = cancelInteractionContinuation('turn_interrupted', true);
         if (cancelledInteraction) dismissAllPendingUserInput('turn_interrupted');
         const cancelledYield = cancelActiveYieldContinuation('aborted');
@@ -14262,8 +14278,14 @@ assertRouteCurrent();
         resetUpstreamIdleForTurnEnd();
         dismissPendingUserInputForTurn(currentTurnId, 'turn_interrupted');
         try {
-          await host.request(Method.TurnInterrupt, { threadId, turnId: currentTurnId });
+          if (options && (options.signal.aborted || currentTurnId !== options.expectedTurnId)) throw new Error('Native stop turn changed');
+          if (options) await host.request(Method.TurnInterrupt, { threadId, turnId: currentTurnId }, { beforeDispatch: () => {
+            assertCurrentHost('native turn/interrupt');
+            if (closed || options.signal.aborted || currentTurnId !== options.expectedTurnId) throw new Error('Native stop turn changed');
+          } });
+          else await host.request(Method.TurnInterrupt, { threadId, turnId: currentTurnId });
         } catch (e) {
+          if (options) throw e;
           log.warn('turn/interrupt threw', { error: String(e) });
         }
       },

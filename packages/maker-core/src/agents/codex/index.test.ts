@@ -4974,6 +4974,31 @@ describe('CodexAgent.refreshLocalModels', () => {
     expect(native.closed).toBe(true);
   });
 
+  it('routes native Stop through its product owner and reports strict interrupt failures', async () => {
+    const agent = new CodexAgent(createDeps());
+    const host = installFakeHost(agent, method => {
+      if (method === Method.TurnStart) return { turn: { id: 'owned-stop-turn', status: 'inProgress', items: [] } };
+      if (method === Method.TurnInterrupt) return {};
+    });
+    try {
+      const handle = await agent.startSession({ sessionId: 'native-stop', model: 'gpt-5.4', workingDir: '/repo' }) as CodexNativeSessionHandle;
+      await handle.send({ type: 'user', content: 'start turn' });
+      const signal = new AbortController().signal;
+      const params = { threadId: handle.id, turnId: 'owned-stop-turn' };
+      await expect(handle.interruptNativeTurn(params, signal)).rejects.toThrow('no available');
+      const owner = vi.fn(async (request: { nativeTurnId: string; signal: AbortSignal }) => handle.abort({ expectedTurnId: request.nativeTurnId, signal: request.signal }));
+      handle.setNativeStopResolver!(owner);
+      await expect(handle.interruptNativeTurn({ ...params, turnId: 'previous' }, signal)).rejects.toThrow('turn changed');
+      await expect(handle.interruptNativeTurn({ ...params, threadId: 'foreign' }, signal)).rejects.toThrow('Invalid native stop');
+      expect(owner).not.toHaveBeenCalled();
+      host.request.mockRejectedValueOnce(new Error('interrupt refused'));
+      await expect(handle.interruptNativeTurn(params, signal)).rejects.toThrow('interrupt refused');
+      await handle.interruptNativeTurn(params, signal); expect(owner).toHaveBeenCalledTimes(2);
+      expect(host.request).toHaveBeenCalledWith(Method.TurnInterrupt, params, expect.objectContaining({ beforeDispatch: expect.any(Function) }));
+      await handle.close();
+    } finally { await agent.dispose(); }
+  });
+
   it('clears native reasoning in place and keeps later turns on the same thread', async () => {
     const agent = new CodexAgent(createDeps()); const host = installFakeHost(agent, method => {
       if (method === Method.ThreadSettingsUpdate) return {};

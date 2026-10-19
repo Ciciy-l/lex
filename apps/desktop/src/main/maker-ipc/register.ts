@@ -1,5 +1,6 @@
 import { createCodexNativeMediaImporter } from '../maker-host/codexNativeMedia.js';
 import { bindNativeSessionRuntime, type NativeRuntimeBindingDeps } from './nativeRuntimeBinding.js';
+import { bindNativeSessionStop, type NativeStopBindingDeps } from './nativeStopBinding.js';
 import { assertNotRetiredCompanionSession } from '../localDb/retiredCompanions.js';
 import { createAgentPresentationHandler, AGENT_PRESENTATION_CHANNEL } from './agentPresentationHandlers.js';
 import { resolveSafe as resolveCindyMediaUrl } from '../cindy-media/blobStore.js';
@@ -3216,6 +3217,7 @@ async function syncLibraryReadonlyExtraDir(
 let agentInputCoordinatorHolder: AgentInputCoordinator | null = null;
 let nativeInputBindingDepsHolder: Omit<NativeInputBindingDeps, 'isCurrent'> | null = null;
 let nativeRuntimeBindingDepsHolder: Omit<NativeRuntimeBindingDeps, 'isCurrent'> | null = null;
+let nativeStopBindingDepsHolder: Omit<NativeStopBindingDeps, 'isCurrent'> | null = null;
 let contextOverflowRolloverHolder: ReturnType<typeof createContextOverflowRollover> | null = null;
 const overflowSuppressedBroadcasts = new Map<
   string,
@@ -4761,6 +4763,14 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
           isCurrent: () => isCurrent(session) && session.sdkSessionId === input.sessionId });
         return importMedia(input);
       },
+    }));
+  }
+  if (nativeStopBindingDepsHolder && typeof session.onNativeStop === 'function') {
+    const stopDeps = nativeStopBindingDepsHolder;
+    registration.disposers.push(bindNativeSessionStop(session, {
+      ...stopDeps,
+      isCurrent: current => Boolean(ownerDb && ownerDb === getCurrentDbClientSnapshot()
+        && nativeStopBindingDepsHolder === stopDeps && sessionBindings.getSession(current.id) === current),
     }));
   }
   if (nativeRuntimeBindingDepsHolder && typeof session.onNativeRuntimeSelection === 'function') {
@@ -16141,8 +16151,16 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     },
   );
 
-  ipcMain.handle(MAKER_INVOKE.ABORT_SESSION, async (_e, sessionId: unknown) => {
-    if (typeof sessionId !== 'string') throwIpcError('INVALID_PARAMS', 'sessionId required');
+  async function abortSessionFromProduct(sessionId: string, nativeOwner?: {
+    session: Session; turnId: string; signal: AbortSignal; assertCurrent(): void;
+  }): Promise<void> {
+    const nativeOwnerDb = nativeOwner ? getCurrentDbClientSnapshot() : null;
+    const nativeGeneration = nativeOwner?.session.getTurnGeneration();
+    if (nativeOwner) {
+      nativeOwner.assertCurrent();
+      if (getStableSessionForTurnBoundary(sessionId) !== nativeOwner.session
+        || nativeOwner.session.getCurrentTurnId() !== nativeOwner.turnId) throwIpcError('PRECONDITION_FAILED', 'Native stop turn changed');
+    }
     markWorkerManualInterruptIfKnown(sessionId, 'abort_session');
     resetAutomaticRecoveryForExplicitStop(sessionId);
     // 调用本身先同步撤销 Goal 续跑资格；paused 落库与 vendor abort 并行。
@@ -16163,7 +16181,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     let abortFailed = false;
     let abortError: unknown;
     try {
-      await sess.abort();
+      if (nativeOwner) {
+        nativeOwner.assertCurrent();
+        if (sess !== nativeOwner.session) throwIpcError('PRECONDITION_FAILED', 'Native stop owner changed');
+        await sess.abort({ expectedTurnId: nativeOwner.turnId, signal: nativeOwner.signal });
+      } else await sess.abort();
     } catch (error) {
       abortFailed = true;
       abortError = error;
@@ -16174,7 +16196,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       try {
         reconcileDirectAbortBoundary(sessionId, directAbortBoundary, 'direct-abort');
       } finally {
-        cleanupPendingInteractionsForSession(sessionId, 'session_aborted');
+        if (!nativeOwner || (nativeOwnerDb === getCurrentDbClientSnapshot()
+          && getStableSessionForTurnBoundary(sessionId) === nativeOwner.session
+          && nativeOwner.session.getTurnGeneration() === nativeGeneration)) {
+          cleanupPendingInteractionsForSession(sessionId, 'session_aborted');
+        }
       }
     }
     const settledGoalPause = await goalPauseResult;
@@ -16191,6 +16217,15 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       throw abortError;
     }
     if (!settledGoalPause.ok) throw settledGoalPause.error;
+  }
+  nativeStopBindingDepsHolder = {
+    stop: (session, request, assertCurrent) => abortSessionFromProduct(session.id, {
+      session, turnId: request.nativeTurnId, signal: request.signal, assertCurrent,
+    }),
+  };
+  ipcMain.handle(MAKER_INVOKE.ABORT_SESSION, async (_e, sessionId: unknown) => {
+    if (typeof sessionId !== 'string') throwIpcError('INVALID_PARAMS', 'sessionId required');
+    await abortSessionFromProduct(sessionId);
   });
 
   ipcMain.handle(MAKER_INVOKE.CLOSE_SESSION, async (_e, sessionId: unknown, opts?: unknown) => {

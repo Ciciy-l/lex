@@ -165,7 +165,7 @@ describe('maker:event hot path ordering', () => {
     const reconcileStart = source.indexOf('const sealLostTerminalPersistState =');
     const reconcileEnd = source.indexOf('\n\n  const readDirectAbortTurnId =', reconcileStart);
     const reconcileSource = source.slice(reconcileStart, reconcileEnd);
-    const directAbortStart = source.indexOf('ipcMain.handle(MAKER_INVOKE.ABORT_SESSION');
+    const directAbortStart = source.indexOf('async function abortSessionFromProduct(');
     const directAbortEnd = source.indexOf(
       '\n  ipcMain.handle(MAKER_INVOKE.CLOSE_SESSION',
       directAbortStart,
@@ -503,7 +503,7 @@ describe('maker:event hot path ordering', () => {
     const coordinatorAbortStart = source.indexOf('abortSession: async (sessionId) => {');
     const coordinatorAbortEnd = source.indexOf('\n    isTurnRunning:', coordinatorAbortStart);
     const coordinatorAbortSource = source.slice(coordinatorAbortStart, coordinatorAbortEnd);
-    const directAbortStart = source.indexOf('ipcMain.handle(MAKER_INVOKE.ABORT_SESSION');
+    const directAbortStart = source.indexOf('async function abortSessionFromProduct(');
     const directAbortEnd = source.indexOf(
       '\n  ipcMain.handle(MAKER_INVOKE.CLOSE_SESSION',
       directAbortStart,
@@ -595,7 +595,7 @@ describe('maker:event hot path ordering', () => {
       inputStopStart,
     );
     const inputStopSource = source.slice(inputStopStart, inputStopEnd);
-    const directAbortStart = source.indexOf('ipcMain.handle(MAKER_INVOKE.ABORT_SESSION');
+    const directAbortStart = source.indexOf('async function abortSessionFromProduct(');
     const directAbortEnd = source.indexOf(
       '\n  ipcMain.handle(MAKER_INVOKE.CLOSE_SESSION',
       directAbortStart,

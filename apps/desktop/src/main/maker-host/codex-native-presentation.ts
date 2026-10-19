@@ -122,7 +122,9 @@ export function createTaskCodexNativePresentation(launch: CodexNativePresentatio
   const routing = createCodexNativeTaskRouting({ handle: launch.handle, cwd: launch.cwd,
     isCurrent: launch.isCurrent, ...launch.routingContext, catalog,
     control: (call, scope) => call.request.method === 'thread/settings/update' && scope === 'task'
-      ? launch.handle.applyNativeRuntimeSettings(call.request.params, call.signal) : options.control(call, scope),
+      ? launch.handle.applyNativeRuntimeSettings(call.request.params, call.signal)
+      : call.request.method === 'turn/interrupt' && scope === 'task'
+        ? launch.handle.interruptNativeTurn(call.request.params, call.signal) : options.control(call, scope),
   });
   return createCodexNativePresentation({ ...options, handle: launch.handle, endpoint: launch.service.endpoint,
     cwd: launch.cwd, signal: launch.signal, isCurrent: launch.isCurrent,

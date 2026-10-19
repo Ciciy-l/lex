@@ -1,4 +1,5 @@
 import { AgentNativeRuntimeBinding, type AgentNativeRuntimeResolver } from './agents/native-runtime.js';
+import { AgentNativeStopBinding, type AgentNativeStopResolver } from './agents/native-stop.js';
 /**
  * Session — 单次 agent 会话的上层包装。
  *
@@ -575,6 +576,8 @@ export class Session {
   private turnControlState: TurnControlState | null = null;
   private readonly asyncUserQuestions: AsyncUserQuestions;
   private readonly nativeInputs = new WeakSet<SessionNativeInput>();
+  private readonly nativeStopBinding = new AgentNativeStopBinding(() => this.sdkSessionId,
+    () => !this.terminationStarted && this.status !== 'closed' && this.status !== 'error', () => this.getCurrentTurnId());
   private readonly nativeRuntimeBinding = new AgentNativeRuntimeBinding(() => this.sdkSessionId,
     () => !this.terminationStarted && this.status === 'active');
   private nativeInputBinding: { listener: AgentNativeInputResolver; importMedia?: AgentNativeMediaResolver; controller: AbortController } | null = null;
@@ -629,9 +632,14 @@ export class Session {
     }));
     this.handle.setNativeInputResolver?.(input => this.resolveNativeInput(input), input => this.resolveNativeMedia(input));
     this.handle.setNativeRuntimeResolver?.(request => this.nativeRuntimeBinding.resolve(request));
+    this.handle.setNativeStopResolver?.(request => this.nativeStopBinding.resolve(request));
   }
 
   // ── 公开 API ─────────────────────────────────────────────────────────────
+
+  onNativeStop(resolve: AgentNativeStopResolver): () => void {
+    this.ensureActive(); return this.nativeStopBinding.bind(resolve);
+  }
 
   /** Bind settings to the same product task, independently of attached views. */
   onNativeRuntimeSelection(resolve: AgentNativeRuntimeResolver): () => void {
@@ -1307,7 +1315,9 @@ export class Session {
     await this.handle.steer(msg, { ...opts, [AUTO_REVIEW_SOURCE_CONTENT]: autoReviewSourceContent });
   }
 
-  async abort(): Promise<void> {
+  async abort(options?: { expectedTurnId: string; signal: AbortSignal }): Promise<void> {
+    if (options && (options.signal.aborted || !options.expectedTurnId
+      || this.getCurrentTurnId() !== options.expectedTurnId)) throw new Error('Native stop turn changed');
     if (this.status === 'closed') return;
     if (this.status === 'error') return;
     this.asyncUserQuestions.expire('session_aborted');
@@ -1327,7 +1337,7 @@ export class Session {
     this.scheduleAbortRecoveryCheck(MANUAL_ABORT_RECOVERY_GRACE_MS, 'manual-abort');
     this.setStatus('aborting');
     try {
-      const aborting = this.handle.abort();
+      const aborting = options ? this.handle.abort(options) : this.handle.abort();
       // Stop revokes Host continuation immediately. The RPC may never settle;
       // do not let its acknowledgement own an already-settled turn's retirement.
       this.settleHostTurnContinuation(abortGeneration);
@@ -1543,6 +1553,7 @@ export class Session {
     this.terminationStarted = true;
     this.retireNativeInputBinding();
     this.nativeRuntimeBinding.retire();
+    this.nativeStopBinding.retire();
     this.asyncUserQuestions.expire('session_closed');
     // 拆除开始即作废进行中的工具循环复核,迟到结论不得再中断。
     this.turnControlState?.toolLoopMonitor?.dispose();
@@ -1696,6 +1707,7 @@ export class Session {
     this.terminationStarted = true;
     this.retireNativeInputBinding();
     this.nativeRuntimeBinding.retire();
+    this.nativeStopBinding.retire();
     this.asyncUserQuestions.expire('session_closed');
     // 拆除开始即作废进行中的工具循环复核,迟到结论不得再中断。
     this.turnControlState?.toolLoopMonitor?.dispose();
@@ -3455,6 +3467,7 @@ export class Session {
     this.terminationStarted = true;
     this.retireNativeInputBinding();
     this.nativeRuntimeBinding.retire();
+    this.nativeStopBinding.retire();
     this.closePromise = Promise.resolve();
     this.settleUnfinishedTurn('Session event loop stopped unexpectedly without a terminal event');
     this.clearTurnStallWatchdog();

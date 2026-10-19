@@ -1,4 +1,5 @@
 import type { AgentNativeRuntimeResolver } from './native-runtime.js';
+import type { AgentNativeStopResolver } from './native-stop.js';
 import type { CodexNativeFileApprovalCopy } from './codex/native-file-approval.js';
 import type { CodexNativePermissionCopy } from './codex/native-permissions.js';
 import type { StdioTransportOptions } from './codex/app-server/stdioTransport.js';
@@ -2281,6 +2282,7 @@ export interface AgentSessionHandle {
   setNativeInputResolver?(resolver: AgentNativeInputResolver, importMedia?: AgentNativeMediaResolver): void;
   /** Native menus share the product runtime-selection transaction. */
   setNativeRuntimeResolver?(resolver: AgentNativeRuntimeResolver): void;
+  setNativeStopResolver?(resolver: AgentNativeStopResolver): void;
   /** Native UI of this running task; attaching a view must never start another agent. */
   readonly presentation?: AgentSessionPresentation;
   /** Canonical physical Skill identities frozen at native runtime startup. */
@@ -2360,7 +2362,7 @@ export interface AgentSessionHandle {
   steer(message: UserMessage, opts?: SendOptions): Promise<void>;
 
   /** 中断当前 turn */
-  abort(): Promise<void>;
+  abort(options?: { expectedTurnId: string; signal: AbortSignal }): Promise<void>;
 
   /**
    * 请求当前 turn 在 provider 的安全边界停止。
