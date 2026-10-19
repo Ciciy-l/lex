@@ -9374,6 +9374,11 @@
       "attachmentSourceMissing": "원본 파일이 더 이상 존재하지 않아 첨부 파일을 저장할 수 없습니다",
       "attachmentSaveFailed": "첨부 파일을 저장할 수 없습니다. 대상 폴더 권한을 확인한 후 다시 시도하세요",
       "automationSent": "자동화 작업에서 보냄",
+      "nativeInput": {
+        "pending": "엔진 처리 대기 중",
+        "unconsumed": "엔진이 처리하지 않은 메시지",
+        "unknown": "메시지 처리 상태 미확인"
+      },
       "nativePluginSource": "플러그인: {{name}}",
       "automationSentNamed": "자동화 작업 \"{{name}}\"에서 보냄",
       "automationViewTask": "자동화 작업 보기",

@@ -1,3 +1,4 @@
+import { nativeMessageConsumptionStatus, type NativeMessageConsumption } from '@cindy/maker-shared/message-presentation';
 import { collectPluginInvocations, type PluginInvocation } from './pluginInvocations';
 import { nativeMessagePluginSource } from '@cindy/maker-shared/message-presentation';
 
@@ -123,6 +124,7 @@ export interface NormalizedRemoteMessage {
   /** user 专用:scheduler 注入的消息来源(agentMeta.origin);驱动更紧的收起阈值与来源标签。 */
   automationOrigin?: NormalizedAutomationOrigin;
   nativePluginSource?: string;
+  nativeInputStatus?: NativeMessageConsumption['status'];
   /** 共享 Cindy relay 派发的来源；用于移动端还原 Slack / Telegram 任务卡。 */
   hookSource?: NormalizedHookSource;
   /**
@@ -456,7 +458,8 @@ export function normalizeRemoteMessages(
       ...turnCost,
       ...readModelMismatch(message),
       ...(message.role === 'user' ? readAutomationOrigin(message) : {}),
-      ...(message.role === 'user' ? { nativePluginSource: nativeMessagePluginSource(message.agentMeta?.nativeSource) } : {}),
+      ...(message.role === 'user' ? { nativePluginSource: nativeMessagePluginSource(message.agentMeta?.nativeSource),
+        nativeInputStatus: nativeMessageConsumptionStatus(message.agentMeta) } : {}),
       ...(hookSource ? { hookSource } : {}),
     });
   }

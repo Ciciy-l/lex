@@ -54,6 +54,7 @@ export interface MessageAutomationOrigin {
 export interface CcMeta {
   /** Host-authored native input provenance, retained across history and remote delivery. */
   nativeSource?: import('@cindy/maker-shared/message-presentation').NativeMessageSource;
+  nativeConsumption?: import('@cindy/maker-shared/message-presentation').NativeMessageConsumption;
   /** Host captured authority receipt, never accepted from renderer writes. */
   autoReviewUserText?: string | { kind: 'scheduled-continuation' | 'delegated-continuation' };
   uuid?: string;

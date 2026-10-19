@@ -9374,6 +9374,11 @@
       "attachmentSourceMissing": "无法保存附件：源文件已不存在",
       "attachmentSaveFailed": "无法保存附件，请检查目标目录权限后重试",
       "automationSent": "由自动化发送",
+      "nativeInput": {
+        "pending": "等待引擎处理",
+        "unconsumed": "引擎未处理此消息",
+        "unknown": "消息处理状态待确认"
+      },
       "nativePluginSource": "插件：{{name}}",
       "automationSentNamed": "由自动化「{{name}}」发送",
       "automationViewTask": "查看自动化",

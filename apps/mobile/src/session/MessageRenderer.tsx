@@ -1,3 +1,4 @@
+import { nativeMessageConsumptionLabel } from '@cindy/maker-shared/message-presentation';
 import { sharedTaskAuthorName } from '@cindy/maker-shared';
 import { downloadRemoteMediaShareTemp } from './remoteMediaDiskCacheExpo';
 import { useAuth } from '@/auth/AuthContext';
@@ -3136,13 +3137,16 @@ function MessageBubble({
   const turnTokens = !turnCost && showCompletedActionBar && item.message.kind === 'assistant'
     ? formatMessageTurnTokens(item.message.turnTotalTokens)
     : '';
+  const consumptionLabel = nativeMessageConsumptionLabel(item.message.nativeInputStatus, actions.isSessionStreaming === true);
   const canFork = !!(
+    !consumptionLabel &&
     showCompletedActionBar
     && clientId
     && actions.onForkMessage
     && (item.message.kind === 'assistant' || (item.message.kind === 'user' && !isFirstUserMessage))
   );
   const canRewind = !!(
+    !consumptionLabel &&
     showCompletedActionBar
     && clientId
     && actions.onPreviewRewind
@@ -3565,6 +3569,17 @@ function MessageBubble({
         </View>
       ) : null}
       {attachmentStripNode}
+      {consumptionLabel ? (
+        <View style={styles.automationOriginRow} testID="message.nativeInputStatus">
+          <Text style={styles.automationOriginText}>
+            {consumptionLabel === 'pending'
+              ? t('message.renderer.nativeInput.pending')
+              : consumptionLabel === 'unconsumed'
+                ? t('message.renderer.nativeInput.unconsumed')
+                : t('message.renderer.nativeInput.unknown')}
+          </Text>
+        </View>
+      ) : null}
       {item.message.nativePluginSource ? (
         <View style={styles.automationOriginRow} testID="message.nativePluginSource">
           <Text numberOfLines={1} style={styles.automationOriginText}>

@@ -1,3 +1,4 @@
+import { nativeMessageConsumptionStatus, type NativeMessageConsumption } from '@cindy/maker-shared/message-presentation';
 import { readResponseSpeedSnapshot, stopResponseSpeed, retryResponseSpeed, resumeResponseSpeed, mergeResponseSpeedStatus, type ResponseSpeedSnapshot } from '@cindy/maker-shared/usage-format';
 import type { ImMessageSource } from '../../shared/imMessageSource';
 import { nativeMessagePluginSource } from '@cindy/maker-shared/message-presentation';
@@ -471,6 +472,7 @@ export interface ChatMessage {
   hookSource?: ImMessageSource;
   /** Display source of an external native plugin; built-in association is projected by identity. */
   nativePluginSource?: string;
+  nativeInputStatus?: NativeMessageConsumption['status'];
   /** /goal 目标设定/更新标记:该 user 消息是目标文案,renderer 在气泡上方渲「目标 / 目标已更新」徽标。 */
   goalBadge?: { updated: boolean };
   /** F7.2: ask_user message fields */
@@ -17676,6 +17678,7 @@ function mapServerMessages(serverMsgs: Message[]): ChatMessage[] {
         ...(goalObjective ? { goalBadge: goalObjective } : {}),
         ...(hookSource ? { hookSource } : {}),
         ...(nativePluginSource ? { nativePluginSource } : {}),
+        nativeInputStatus: nativeMessageConsumptionStatus(m.agentMeta),
         // 子代理内部的 user 行(SDK parent_tool_use_id):投影给计划归属判定,
         // 否则 maker-shared 会把它当成"用户开新话题"切断主线程计划 session。
         // 只提升 SDK tool-parent 形态:legacy Claude 导入把 transcript 链边

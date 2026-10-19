@@ -894,3 +894,16 @@ describe('isLocalSentUserMessage (#2194)', () => {
     expect(makerChatStore.isLocalSentUserMessage(sid, 'continue-real')).toBe(true);
   });
 });
+
+it('keeps native consumption separate from accepted delivery after history reload', () => {
+  const rows = ['pending', 'consumed', 'unconsumed', 'unknown'].map((status, index) => ({
+    id: 'row-' + index, clientId: 'row-' + index, sessionId: 'task', role: 'user' as const,
+    content: 'identical input', toolUseId: null, createdAt: '2026-10-19T00:00:00Z',
+    agentMeta: { uuid: 'row-' + index, sdkSessionId: 'thread', delivery: 'steer',
+      nativeConsumption: { version: 1, engine: 'codex', sessionId: 'thread', turnId: 'turn',
+        messageId: 'row-' + index, status, itemId: 'item-' + index } },
+  }));
+  const mapped = makerChatStore.__mapServerMessagesForTest(JSON.parse(JSON.stringify(rows)));
+  expect(mapped.map(row => row.nativeInputStatus)).toEqual(['pending', 'consumed', 'unconsumed', 'unknown']);
+  expect(mapped).toHaveLength(4);
+});

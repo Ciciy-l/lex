@@ -6155,6 +6155,7 @@ const MessageItem = memo(function MessageItem({
           automationOrigin={message.automationOrigin}
           hookSource={message.hookSource}
           nativePluginSource={message.nativePluginSource}
+          nativeInputStatus={message.nativeInputStatus}
           delivery={message.delivery}
           goalBadge={message.goalBadge}
           blockedByGhost={message.blockedByGhost}

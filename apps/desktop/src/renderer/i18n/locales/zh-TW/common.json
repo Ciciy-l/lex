@@ -9373,6 +9373,11 @@
       "attachmentSourceMissing": "無法儲存附件：原始檔已不存在",
       "attachmentSaveFailed": "無法儲存附件，請檢查目標目錄權限後重試",
       "automationSent": "由自動化傳送",
+      "nativeInput": {
+        "pending": "等待引擎處理",
+        "unconsumed": "引擎尚未處理此訊息",
+        "unknown": "訊息處理狀態待確認"
+      },
       "nativePluginSource": "插件：{{name}}",
       "automationSentNamed": "由自動化「{{name}}」傳送",
       "automationViewTask": "檢視自動化",

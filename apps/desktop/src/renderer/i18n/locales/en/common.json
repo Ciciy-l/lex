@@ -9380,6 +9380,11 @@
       "attachmentSourceMissing": "Cannot save attachment because the source file no longer exists",
       "attachmentSaveFailed": "Cannot save attachment. Check the destination folder permissions and retry",
       "automationSent": "Sent by automation",
+      "nativeInput": {
+        "pending": "Waiting for the engine",
+        "unconsumed": "Not processed by the engine",
+        "unknown": "Message processing status unknown"
+      },
       "nativePluginSource": "Plugin: {{name}}",
       "automationSentNamed": "Sent by automation \"{{name}}\"",
       "automationViewTask": "View automation task",
