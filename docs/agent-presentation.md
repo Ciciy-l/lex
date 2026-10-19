@@ -1044,12 +1044,97 @@ and account fixtures: original model menu, three GUI/TUI/GUI turns, one native
 thread/service, approvals and confirmed cleanup. Windows node-pty's shutdown
 helper reported `AttachConsole failed` despite the owned processes exiting; that
 stderr is retained. This is not production account/database/UI acceptance.
-The fixed-reasoning observation `codex-no-reasoning-native1.json` records the
-upstream's two settings requests followed by a default-config write. The
-`effort: "none"` request and default write are currently rejected, so that probe
-only proves the request sequence, not successful model selection. Native default
-persistence and fixed-reasoning semantics remain open. Normal startup stays on
-the existing adapter until these and the other parity requirements are met.
+The earlier fixed-reasoning observation `codex-no-reasoning-native1.json` records
+the upstream's two settings requests followed by a default-config write. That
+implementation rejected both the `effort: "none"` request and default write; its
+report only proves the request sequence, not successful model selection.
+
+### Fixed reasoning and native Stop through the product Session
+
+Native fixed-reasoning choices now clear the reasoning axis in place. The same
+Session and native thread persist; later turns retain the actual native `none`
+value while GUI projects no adjustable effort. Failed settings writes restore
+the previous value, and an inherited cancellation scope remains authoritative.
+Existing adapters without in-place clearing retain their established behavior.
+
+Original Codex Escape requests now bind to the exact task and native turn, then
+enter the same explicit Stop handler used by GUI. Goal pausing, automatic-recovery
+revocation, Agent Island status and pending interactions keep their existing
+product lifecycle. Stop does not queue behind the send it must interrupt. A
+native request requires a confirmed interrupt; stale requests cannot stop a new
+turn, and late cleanup cannot clear another account, Session or turn's cards.
+
+Managed Windows Codex 0.162.1 `codex-native-stop-native2.json` verifies original
+model selection, GUI/TUI input, native Escape, then GUI continuation on one
+service/thread, with four product turns and confirmed process/profile cleanup.
+The first probe had a missing routing-scope variable in its fixture callback;
+its failure is retained. The successful probe uses actual Agent, Core Session,
+Main catalog and Stop binding, with fixture account/catalog and persistence
+callbacks. Native default writes were forwarded only to its isolated temporary
+home. This does not implement product default synchronization or establish real
+database/window, phone, SSH or non-Windows acceptance. The node-pty shutdown
+helper's `AttachConsole failed` stderr is retained despite confirmed owned-process
+exit. Native default persistence and the remaining parity requirements still
+prevent ordinary startup from selecting this adapter.
+
+### Original Codex same-turn input
+
+Original TUI `turn/steer` requests now carry their actual message ID and expected
+native turn through the same product coordinator, input screening, review-intent
+restoration and Core Session vision preparation as GUI steering. Main forwards
+one owned continuation; it does not enqueue a second prompt. Native imported
+images preserve their managed history identity and original wire metadata.
+Cancellation, task replacement and a new native turn fence dispatch. Uncertain
+receipts retain the ordinary paused-queue behavior rather than automatic replay.
+Confirmed native acceptance remains irreversible if later persistence fails,
+for both new turns and same-turn steering. A new-turn response must contain an
+actual turn identity before it can be treated as confirmed acceptance.
+
+Focused tests exercise the actual Main steering body, coordinator and Core
+Session, including both dispatch branches' authority and wire-only mobile note.
+Native probes are separate from that product coverage. The early-stop probe
+previously expected four turns after Escape with an unconsumed steer. Fixed
+upstream source at Codex rust-v0.162.1 confirms that Escape explicitly interrupts
+to submit pending steers as a new turn; GUI Stop and Ctrl+C instead restore them
+to the native draft. The failed expectation is retained, not treated as a product
+replay defect or a reason to suppress native behavior.
+
+The isolated native proofs codex-native-stop-gui1.json,
+codex-native-stop-ctrlc1.json and codex-native-stop-escape2.json each pass 37
+positive checks with the actual product Stop body and Core Session. GUI Stop and
+Ctrl+C restore the draft without another turn; Escape submits a new native UUID.
+All retain one thread/service and confirm process/profile cleanup. Escape's
+first fixture omitted the steer text from its fake-provider classifier; its
+failure is retained. These proofs still substitute peripheral Main dependencies:
+coordinator/database handling of accepted-but-unconsumed input, actual windows,
+phone, SSH and non-Windows acceptance remain to be verified.
+
+Managed Codex 0.162.1 `codex-native-steer-consumed2.json` confirms five inputs
+across four turns on the same service/thread: GUI, native TUI, GUI plus native
+steer, native Stop after consumption, then GUI continuation. Shared approval,
+original file action, live events, detach and process/profile cleanup pass. The
+first consumed-input fixture accidentally waited for the third approval before
+answering the second; it is retained, and only the fixture trigger was corrected.
+This proof uses the actual Agent/Core Session with fixture Main persistence and
+does not establish product window, phone or SSH acceptance.
+
+### Pi and OMP queued input identity
+
+Isolated Pi 1.2.0 and OMP 18.10.4 original PTYs confirmed that async-local
+context alone cannot identify queued messages: the queued user row inherits the
+prior running input's context. Pi exposes the second input event with its own
+context, whereas the observed OMP extension send does not expose that equivalent
+input event. `pi-native-identity2.json` and `omp-native-identity1.json` retain
+these event sequences and confirmed native-process cleanup. No text-based
+deduplication or guessed identity was added to either product adapter.
+
+Temporary object-identity experiments identify queued GUI input correctly at
+native message_start in both engines, without claiming native TUI input as GUI.
+OMP creates a different message object by message_end, so a WeakMap alone is
+insufficient for complete lifecycle correlation. These experiments wrap upstream
+Agent methods only inside isolated probes; no prototype wrapping has been added
+to the product. Extension coexistence, reload, transformed/blocked inputs and
+queue cancellation still need a supported, task-owned correlation design.
 
 ## Upstream reference
 
