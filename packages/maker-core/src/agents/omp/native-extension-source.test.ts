@@ -8,7 +8,7 @@ afterEach(async () => { for (const stop of shutdowns.splice(0)) await stop(); })
 async function fixture(accepted = true) {
   const handlers = new Map<string, Array<(event: unknown, ctx: unknown) => unknown>>();
   const rows: Entry[] = [], requests: Record<string, any>[] = [], faults: Record<string, any>[] = [];
-  const ctx = { mode: 'tui', abort: vi.fn(), shutdown: vi.fn(), isIdle: () => true, hasPendingMessages: () => false,
+  const ctx = { mode: 'tui', abort: vi.fn(), shutdown: vi.fn(), isIdle: () => false, hasPendingMessages: () => false,
     model: { id: 'model', contextWindow: 1234 }, ui: { notify: vi.fn(), setEditorText: vi.fn() },
     sessionManager: { getSessionFile: () => '/managed/original.jsonl', getSessionId: () => 'original-native-session',
       getEntries: () => [...rows], getBranch: () => [...rows], getLeafId: () => rows.at(-1)?.id ?? null },
@@ -36,6 +36,45 @@ async function fixture(accepted = true) {
   return { emit, ctx, rows, row, requests, fetch, faults };
 }
 describe('OMP official extension native input gate', () => {
+  it('leaves an idle native side request out of product admission and keeps the next real input gated', async () => {
+    const f = await fixture();
+    const idle = vi.spyOn(f.ctx, 'isIdle').mockReturnValue(true);
+    // Pinned OMP runEphemeralTurn converts a detached snapshot through the
+    // same hooks, without starting the agent loop or writing a journal row.
+    const auxiliary = { ...f.row('not-a-journal-row', 'synthetic native side request').message, attribution: 'agent' };
+    const event = { messages: [auxiliary] };
+    const payload = { model: 'model', messages: ['original-native-side-payload'] };
+    expect(await f.emit('context', event)).toBeUndefined();
+    expect(await f.emit('before_provider_request', { payload })).toBeUndefined();
+    expect(event.messages).toEqual([auxiliary]);
+    expect(payload.messages).toEqual(['original-native-side-payload']);
+    expect(f.requests).toHaveLength(0);
+    expect(f.faults).toHaveLength(0);
+    expect(f.ctx.abort).not.toHaveBeenCalled();
+    idle.mockReturnValue(false);
+    const row = f.row('real-user-after-side-request');
+    await f.emit('context', { messages: [row.message] });
+    f.rows.push(row); await f.emit('before_provider_request');
+    expect(f.requests.map(entry => entry.request.kind)).toEqual(['prepare-input', 'input-receipt']);
+    expect(f.requests[1].request.input.row.id).toBe('real-user-after-side-request');
+    expect(f.ctx.abort).not.toHaveBeenCalled();
+  });
+  it('still refuses an active main provider call without a prepared input', async () => {
+    const f = await fixture();
+    await f.emit('before_provider_request');
+    expect(f.requests).toHaveLength(0);
+    expect(f.ctx.abort).toHaveBeenCalled();
+    expect(f.faults[0].request.input.phase).toBe('provider-without-input');
+  });
+  it('does not exempt an idle side request from the original session identity', async () => {
+    const f = await fixture();
+    vi.spyOn(f.ctx, 'isIdle').mockReturnValue(true);
+    vi.spyOn(f.ctx.sessionManager, 'getSessionFile').mockReturnValue('/foreign/session.jsonl');
+    await f.emit('context', { messages: [f.row('foreign-side-input').message] });
+    await f.emit('before_provider_request');
+    expect(f.requests).toHaveLength(0);
+    expect(f.ctx.abort).toHaveBeenCalled();
+  });
   it('prepares before input events, then binds the real journal row before the original provider request', async () => {
     const f = await fixture(), row = f.row('real-journal-row');
     const event = { messages: [structuredClone(row.message)] };

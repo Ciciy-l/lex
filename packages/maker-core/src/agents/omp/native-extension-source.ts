@@ -127,6 +127,11 @@ export default function (pi) {
   });
   pi.on('context', async (event, ctx) => {
     if (stopped || ctx.sessionManager.getSessionFile() !== nativeId) { ctx.abort(); return; }
+    // OMP's idle recap / side turns reuse context and provider hooks without
+    // starting an agent loop or appending a user row. They are native auxiliary
+    // requests, not product submissions. The pinned runtime holds isIdle=false
+    // throughout ordinary prompt preprocessing and the owning agent loop.
+    if (ctx.isIdle()) return;
     // OMP 18.10.4 prepares provider context BEFORE emitting the input events
     // that allocate its journal row. Admit a distinct bridge submission now;
     // bind the real row only at the subsequent before_provider_request hook.
@@ -158,6 +163,9 @@ export default function (pi) {
   });
   pi.on('before_provider_request', async (_event, ctx) => {
     if (stopped || ctx.sessionManager.getSessionFile() !== nativeId) { ctx.abort(); return; }
+    // Keep the idle side-channel lifecycle with OMP; abort() only cancels its
+    // main loop and cannot turn a detached side request into a journalled turn.
+    if (ctx.isIdle()) return;
     const input = pendingInput;
     if (!input) { if (!activeRow) { ctx.abort(); fail('provider-without-input'); } return; }
     const admission = new AbortController();

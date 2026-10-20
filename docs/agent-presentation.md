@@ -752,6 +752,16 @@ History resume requires the existing absolute session file; missing history or
 an unconfirmed command never falls back to another task or automatically replays.
 Launch files and leases remain until the exact native process has exited.
 
+OMP 18.10.4 also runs idle recap requests through these extension hooks using
+`runEphemeralTurn`; those detached snapshots do not append user journal rows.
+The bridge leaves hooks reached while the native `ctx.isIdle()` is true to the
+original engine, without reserving a product input, rewriting the snapshot or
+projecting side output as a task turn. The pinned runtime reports non-idle
+throughout ordinary prompt preprocessing and its agent loop, where the same
+owner admission, real journal receipt and eight-second shared budget still
+apply. The isolated regression covers idle side hooks followed by a real input;
+it does not prove arbitrary concurrent side-request races.
+
 This connects an adapter to the ordinary product entry, not just the earlier
 probe. Focused tests cover Session admission, continuation, unknown outcomes,
 same-file resume, host-tool ownership and Main cleanup. The Windows isolated
