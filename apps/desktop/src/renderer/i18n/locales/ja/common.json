@@ -9598,7 +9598,9 @@
     "presentation": {
       "startupUnavailable": {
         "label": "TUI は利用できません",
-        "startup": "TUI をこのタスクに接続できませんでした。GUI を引き続き利用できます。"
+        "startup": "TUI をこのタスクに接続できませんでした。GUI を引き続き利用できます。",
+        "busy": "現在の応答が完了してから、TUI をもう一度選択してください。入力は保持されます。",
+        "unsupported": "このエンジンまたはタスク環境は、同じタスクへの TUI 接続にまだ対応していません。GUI を引き続き利用できます。"
       },
       "nativeFileApproval": {
         "header": "ファイルの変更",

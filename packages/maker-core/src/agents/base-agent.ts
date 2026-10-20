@@ -717,6 +717,8 @@ export interface AgentDeps {
   useLocalCodexNativePresentation?: (options: Pick<StartSessionOptions, 'sessionId' | 'nativePresentation' | 'reviewMode' | 'remoteHostId'>) => boolean;
   /** Host-only native adapter injection. Absent until native/remote acceptance; never a vendor option. */
   createLocalClaudeNativeSession?: (options: ClaudeLocalNativeSessionOptions) => Promise<ClaudeNativeSessionHandle>;
+  /** Keep SDK-only/utility sessions until an explicit native view is selected. */
+  useLocalClaudeNativePresentation?: (options: Pick<StartSessionOptions, 'sessionId' | 'nativePresentation' | 'reviewMode' | 'remoteHostId'>) => boolean;
   /** Cindy-only local Skill overrides. Freeze at native runtime startup; never apply to SSH. */
   getDisabledSkillPaths?: () => readonly string[];
   /** Host-isolated discovery; native runtime loading stays unchanged. */

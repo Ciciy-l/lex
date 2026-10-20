@@ -93,6 +93,19 @@ it('keeps GUI available when explicit task startup fails', async () => {
   expect(ui.result.current.mode).toBe('gui'); expect(prepare).toHaveBeenCalledOnce();
 });
 
+it('keeps a busy legacy task in GUI and permits one explicit retry after its response ends', async () => {
+  invoke.mockResolvedValue({ supported: false });
+  const prepare = vi.fn().mockRejectedValueOnce(new Error('[SESSION_RUNNING] input still active'))
+    .mockImplementationOnce(async () => { invoke.mockResolvedValue(available('resumed-original-task')); });
+  const ui = renderHook(useAgentPresentation, { initialProps: { ...args, prepare } });
+  act(() => ui.result.current.change('tui'));
+  await waitFor(() => expect(ui.result.current.unavailableReason).toBe('task-busy'));
+  expect(ui.result.current.mode).toBe('gui'); expect(prepare).toHaveBeenCalledOnce();
+  act(() => ui.result.current.change('tui'));
+  await waitFor(() => expect(ui.result.current.mode).toBe('tui'));
+  expect(ui.result.current.generation).toBe('resumed-original-task'); expect(prepare).toHaveBeenCalledTimes(2);
+});
+
 it('consumes a routed TUI selection once after task hydration, without a message or a second startup', async () => {
   invoke.mockResolvedValue({ supported: false });
   const prepare = vi.fn(async () => { invoke.mockResolvedValue(available('routed-task')); });

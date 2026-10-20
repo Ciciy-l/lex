@@ -5,6 +5,7 @@ import { ScriptTarget, transpileModule } from 'typescript';
 import { Session, type AgentEvent, type AgentSessionHandle } from '@cindy/maker-core';
 import { createSessionBindingLifecycle } from '../sessionBindingLifecycle.js';
 import { persistAndHydrateSessionProvider } from '../sessionProviderBootstrap.js';
+import { hasLocalNativePresentation } from '../../../shared/agentPresentation.js';
 import {
   clearAllSessionProviders, freezeSessionProviderAtStart, getSessionProvider, hydrateSessionProvider,
 } from '../../maker-host/session-provider-store.js';
@@ -129,6 +130,7 @@ function fixture() {
       hydrateProviderIdBeforeSessionStart: async () => {}, ensureManagedOllamaReadyForSession: async () => {},
       app: { getPath: () => '/isolated/test' }, assertModelRouteUsable: async () => undefined,
       shouldApplyExclusiveProviderRerouteLive: () => false, markProjectContextIfNeeded: async () => {},
+      hasLocalNativePresentation,
       wireSessionToIpc: wire, markOrcaMcpHydratedIfNeeded: noop,
       getDbClient: () => ({ drizzle: db }),
       sessions: { id: 'id', providerId: 'providerId', effort: 'effort', fastMode: 'fastMode' }, eq: () => true,

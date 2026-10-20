@@ -115,6 +115,7 @@ import { registerUsagePricing, clearUsagePricing } from './model-usage-pricing.j
 import { getSessionFastMode } from './session-effort-store.js';
 import { createSshDaemonTransport } from './codex-remote-transport.js';
 import { createCodexNativeHostService } from './codex-native-host.js';
+import { createClaudeNativeHostSession } from './claude-native-host.js';
 import { createTaskCodexNativePresentation, prepareTaskCodexNativePresentation } from './codex-native-presentation.js';
 import {
   getRemoteSshPool,
@@ -1153,6 +1154,8 @@ export function getMaker(): Maker {
       log: desktopMakerLogger.child('command-gate'),
     });
     const claudeAgent = new ClaudeCodeAgent({
+      useLocalClaudeNativePresentation: options => options.nativePresentation === true,
+      createLocalClaudeNativeSession: createClaudeNativeHostSession,
       getDisabledSkillPaths: readDisabledSkillPaths,
       getManagedSkills: listCindyManagedSkills,
       scanLocalCustomizations,

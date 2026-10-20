@@ -9598,7 +9598,9 @@
     "presentation": {
       "startupUnavailable": {
         "label": "TUI 사용 불가",
-        "startup": "TUI를 이 작업에 연결하지 못했습니다. GUI를 계속 사용할 수 있습니다."
+        "startup": "TUI를 이 작업에 연결하지 못했습니다. GUI를 계속 사용할 수 있습니다.",
+        "busy": "현재 응답이 끝난 후 TUI를 다시 선택하세요. 입력은 유지됩니다.",
+        "unsupported": "이 엔진 또는 작업 환경은 아직 같은 작업의 TUI 연결을 지원하지 않습니다. GUI를 계속 사용할 수 있습니다."
       },
       "nativeFileApproval": {
         "header": "파일 변경",

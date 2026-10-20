@@ -49,6 +49,18 @@ async function fixture() {
 }
 
 describe('Claude production agent native factory selection', () => {
+  it('keeps ordinary SDK creation until the host explicitly selects a native presentation', async () => {
+    const f = await fixture();
+    f.deps.useLocalClaudeNativePresentation = options => options.nativePresentation === true;
+    mocks.query.mockImplementationOnce(() => { throw new Error('SDK selected'); });
+    await expect(f.start()).rejects.toThrow('SDK selected');
+    expect(f.factory).not.toHaveBeenCalled();
+    const id = '76de74f7-694a-45bd-8337-8a5f837c9e13';
+    const handle = await f.start({ nativePresentation: true, resumeSessionId: id });
+    expect(handle.presentation).toBe(f.runtime.presentation);
+    expect(handle.id).toBe(id); expect(f.factory).toHaveBeenCalledOnce();
+    expect(mocks.query).toHaveBeenCalledOnce();
+  });
   it('shares the route-resolved usage tracker with the native runtime before the first provider reply', async () => {
     const f = await fixture(); f.deps.resolveModelContextLimit = () => 64000;
     const handle = await f.start();

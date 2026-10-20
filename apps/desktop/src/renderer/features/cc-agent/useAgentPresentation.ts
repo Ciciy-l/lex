@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AGENT_PRESENTATION_CHANNEL, type AgentPresentationRequest, type AgentPresentationStatus } from '../../../shared/agentPresentation';
+import { extractIpcError } from '../../utils/ipcError';
 
 const PREF_KEY = 'lex.agentPresentation.v1';
 type Mode = 'gui' | 'tui';
@@ -61,7 +62,8 @@ export function useAgentPresentation({ sessionId, deviceId, ownerId, enabled, ru
         }
         setAvailability({ scope, generation: status.state.generation });
         setChosen({ scope, mode }); persist(scope, mode);
-      }).catch(() => { if (liveScope.current === scope) setAvailability({ scope, reason: 'startup-failed' }); })
+      }).catch(error => { if (liveScope.current === scope) setAvailability({ scope,
+        reason: extractIpcError(error)?.code === 'SESSION_RUNNING' ? 'task-busy' : 'startup-failed' }); })
         .finally(() => { opening.current = undefined; });
       return;
     }

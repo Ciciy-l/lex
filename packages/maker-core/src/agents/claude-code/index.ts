@@ -5658,7 +5658,8 @@ export class ClaudeCodeAgent extends BaseAgent {
     }
 
     // ── 首次起 q + 启动 forward loop ─────────────────────────────────────────
-    if (this.deps.createLocalClaudeNativeSession && !opts.remoteHostId) {
+    if (this.deps.createLocalClaudeNativeSession && !opts.remoteHostId
+      && (this.deps.useLocalClaudeNativePresentation?.(opts) ?? true)) {
       const execution = await buildExecution(undefined, true);
       if (execution.kind !== 'native') throw new Error('Native Claude startup did not produce a native handle');
       return execution.handle;

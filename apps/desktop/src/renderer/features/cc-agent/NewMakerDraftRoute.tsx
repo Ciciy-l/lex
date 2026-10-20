@@ -65,6 +65,7 @@ import { useSelectableDevices } from '@/hooks/useControllableDevices';
 import { useProviderOnboarding } from '@/hooks/useProviderOnboarding';
 import { HomeZeroModelAction } from './HomeZeroModelAction';
 import { AgentPresentationSwitch } from './AgentPresentationSwitch';
+import { hasLocalNativePresentation } from '../../../shared/agentPresentation';
 import { resolveDeviceLinkSubmission } from './deviceLinkCreateArgs';
 import { commitRemoteSessionHandoff } from './remoteSessionHandoff';
 import { remoteProjectsStore } from '@/features/device-link/remoteProjectsStore';
@@ -3025,11 +3026,11 @@ export function NewMakerDraftRoute() {
     nativeDraftMounted.current = true;
     return () => { nativeDraftMounted.current = false; };
   }, []);
-  // Only the local, single-task Codex path has a native startup contract yet.
   // Never silently discard a selected worktree, remote target or collaboration.
-  const canOpenDraftNative = persistedAgentKind === 'codex' && !isDeviceLinkDraft &&
+  const canShowDraftNative = !isDeviceLinkDraft &&
     !isRemoteProjectDraft && !effectiveRemoteHostId && !effectiveCollab.enabled &&
     !wtEnabled && !!draftInitialModel && !showProviderOnboardingCard;
+  const canOpenDraftNative = canShowDraftNative && hasLocalNativePresentation(persistedAgentKind);
   const handleDraftPresentation = async (mode: 'gui' | 'tui') => {
     if (mode !== 'tui' || !canOpenDraftNative || sendInFlightRef.current) return;
     const owner = getDataOwnerGeneration();
@@ -5791,9 +5792,10 @@ export function NewMakerDraftRoute() {
                     }
                   />
                 </div>
-                {canOpenDraftNative && (
+                {canShowDraftNative && (
                   <div className="mt-3 flex w-full items-center justify-start">
-                    <AgentPresentationSwitch mode="gui" onChange={(mode) => { void handleDraftPresentation(mode); }} />
+                    <AgentPresentationSwitch mode="gui" onChange={(mode) => { void handleDraftPresentation(mode); }}
+                      tuiUnavailable={!canOpenDraftNative ? t('ccAgent.presentation.startupUnavailable.unsupported') : undefined} />
                   </div>
                 )}
                 {/* device-link:为远程设备项目新建对话时的明显标识。让用户清楚这条对话会建在

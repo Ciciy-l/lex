@@ -9598,7 +9598,9 @@
     "presentation": {
       "startupUnavailable": {
         "label": "TUI 暫時無法使用",
-        "startup": "TUI 未能連線至此任務，可繼續使用 GUI"
+        "startup": "TUI 未能連線至此任務，可繼續使用 GUI",
+        "busy": "請等待目前回覆結束，再選擇 TUI。已輸入的內容會保留。",
+        "unsupported": "此引擎或任務環境尚未接通同一任務的 TUI，可繼續使用 GUI。"
       },
       "nativeFileApproval": {
         "header": "檔案修改",

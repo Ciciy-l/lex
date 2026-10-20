@@ -4,6 +4,7 @@ import { bindNativeSessionRuntime, type NativeRuntimeBindingDeps } from './nativ
 import { bindNativeSessionStop, type NativeStopBindingDeps } from './nativeStopBinding.js';
 import { assertNotRetiredCompanionSession } from '../localDb/retiredCompanions.js';
 import { createAgentPresentationHandler, AGENT_PRESENTATION_CHANNEL } from './agentPresentationHandlers.js';
+import { hasLocalNativePresentation } from '../../shared/agentPresentation.js';
 import { resolveSafe as resolveCindyMediaUrl } from '../cindy-media/blobStore.js';
 import { getSessionFsSnapshot } from '../localDb/ipc/sessions.js';
 import { isModelSelectableForNewRoute } from '@cindy/model-providers';
@@ -6974,9 +6975,13 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (snapshot.status !== 'ready') sshCodexHostConnectionChanged = true;
     }) ?? (() => undefined);
     const sessionBeforeCreate = o.id ? maker.getSession(o.id) : undefined;
-    // All ordinary local GUI-first/TUI-first starts reserve the same capable
-    // host before cache lookup. Utility, Review, Orca and SSH keep legacy hosts.
-    o.nativePresentation = o.agentKind === 'codex' && !o.remoteHostId && !o.reviewMode && !o.orcaRole;
+    // Codex GUI/TUI shares its host from creation. Other interactive adapters
+    // enter only on explicit selection; their ordinary GUI/utility SDK stays intact.
+    const localNative = hasLocalNativePresentation(o.agentKind) && !o.remoteHostId && !o.reviewMode && !o.orcaRole;
+    if (o.requireNativePresentation === true && !localNative) {
+      throwIpcError('UNSUPPORTED_CAPABILITY', 'This task has no native presentation transport');
+    }
+    o.nativePresentation = localNative && (o.agentKind === 'codex' || o.requireNativePresentation === true);
     let session: Awaited<ReturnType<typeof maker.createSession>> | undefined;
     try {
       assertSshCodexOwnerCurrent();
