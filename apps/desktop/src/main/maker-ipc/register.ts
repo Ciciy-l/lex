@@ -1,5 +1,6 @@
 import type { AgentNativeInputRequest } from '@cindy/maker-core';
 import { createCodexNativeMediaImporter } from '../maker-host/codexNativeMedia.js';
+import { createPiNativeMediaImporter } from '../maker-host/piNativeMedia.js';
 import { bindNativeSessionRuntime, type NativeRuntimeBindingDeps } from './nativeRuntimeBinding.js';
 import { bindNativeSessionStop, type NativeStopBindingDeps } from './nativeStopBinding.js';
 import { assertNotRetiredCompanionSession } from '../localDb/retiredCompanions.js';
@@ -4769,10 +4770,10 @@ export function wireSessionToIpc(
         isCurrent: () => isCurrent(current) && current.sdkSessionId === input.nativeSessionId,
       }),
       importMedia: async input => {
-        if (!isCurrent(session) || !['claude-code', 'codex'].includes(session.agentKind) || input.sessionId !== session.sdkSessionId) {
+        if (!isCurrent(session) || !['claude-code', 'codex', 'pi'].includes(session.agentKind) || input.sessionId !== session.sdkSessionId) {
           throwIpcError('PRECONDITION_FAILED', 'Native attachment no longer belongs to this task');
         }
-        importMedia ??= (session.agentKind === 'codex' ? createCodexNativeMediaImporter : createClaudeNativeMediaImporter)({ sessionId: session.id, nativeSessionId: input.sessionId,
+        importMedia ??= (session.agentKind === 'codex' ? createCodexNativeMediaImporter : session.agentKind === 'pi' ? createPiNativeMediaImporter : createClaudeNativeMediaImporter)({ sessionId: session.id, nativeSessionId: input.sessionId,
           isCurrent: () => isCurrent(session) && session.sdkSessionId === input.sessionId });
         return importMedia(input);
       },

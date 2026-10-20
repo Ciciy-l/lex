@@ -29,6 +29,7 @@ import {
   CINDY_PI_BASH_DEFAULT_TIMEOUT_SECONDS,
   CINDY_PI_BASH_MAX_TIMEOUT_SECONDS,
 } from '../cindy-bridge-source.js';
+import { PI_NATIVE_HOST_UI_SOURCE } from '../native-extension-source.js';
 
 const canLinkFile = (() => {
   const root = mkdtempSync(path.join(tmpdir(), 'cindy-bridge-file-link-probe-'));
@@ -363,7 +364,7 @@ function loadPackageTool(): { execute: (...args: any[]) => Promise<any> } {
   const projectionEnd = source.indexOf('// Pi 的模型鉴权', projectionStart);
   const start = source.indexOf('// Cindy owns a separate Pi extension store.');
   const end = source.indexOf('// ── 原生会话树桥', start);
-  const compiled = ts.transpileModule(source.slice(projectionStart, projectionEnd) + source.slice(start, end), {
+  const compiled = ts.transpileModule(PI_NATIVE_HOST_UI_SOURCE + source.slice(projectionStart, projectionEnd) + source.slice(start, end), {
     compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 },
   }).outputText;
   let tool: any;
@@ -1332,7 +1333,7 @@ describe('cindy-bridge extension source', () => {
 
   it('preserves the permission denial source across the private Pi UI envelope', () => {
     const source = CINDY_BRIDGE_EXTENSION_SOURCE;
-    expect(source).toContain('await ctx.ui.input(');
+    expect(source).toContain('await cindyHostUi(ctx).input(');
     expect(source).toContain("const PERMISSION_USER_DENY = 'user-deny'");
     expect(source).toContain("const PERMISSION_AUTO_REVIEW_DENY = 'auto-review-deny'");
     expect(source).toContain('User denied this tool call via Cindy');

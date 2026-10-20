@@ -38,7 +38,7 @@ afterEach(async () => {
   clearAllSessionRuntimeAxes();
 });
 
-function fixture() {
+function fixture(engine: 'codex' | 'pi' = 'codex') {
   const providerRead = deferred<void>(), axesRead = deferred<void>(), providerEntered = deferred<void>(), axesEntered = deferred<void>();
   const ended = deferred<void>();
   let generation = 1, accountDb = {}, currentSession: Session | undefined, running = false;
@@ -60,7 +60,7 @@ function fixture() {
     return { status: 'ready' };
   });
   const handle: AgentSessionHandle = {
-    id: nativeThreadId, agentKind: 'codex', model: 'gpt-5.4',
+    id: nativeThreadId, agentKind: engine, model: 'gpt-5.4',
     send: vi.fn(async () => { running = true; }),
     steer: vi.fn(async () => {}),
     abort: vi.fn(async () => { running = false; }),
@@ -71,7 +71,7 @@ function fixture() {
     getUsageSnapshot: () => ({ tokenUsage: 0, contextTokens: 0, contextWindow: 0, costUsd: 0 }),
     activatePresentation: activate,
   };
-  const session = new Session({ id: 'native-startup-task', agentKind: 'codex', workDir: '/selected/work', handle,
+  const session = new Session({ id: 'native-startup-task', agentKind: engine, workDir: '/selected/work', handle,
     capabilities: {} as never, logger, permissionMode: 'ask', turnStallMs: 0 });
   sessionsToClose.push(session);
   currentSession = session;
@@ -140,8 +140,8 @@ function fixture() {
     },
   );
   return { session, handle, activate, nativeInputs, providerRead, axesRead, providerEntered, axesEntered, create, logger,
-    start: (resume = false) => bootstrap({ id: session.id, agentKind: 'codex', workingDir: session.workDir, model: session.model,
-      providerId: 'selected-provider', permissionMode: 'ask', ...(resume ? { resumeSessionId: nativeThreadId } : {}) }),
+    start: (resume = false, native = engine === 'pi') => bootstrap({ id: session.id, agentKind: engine, workingDir: session.workDir, model: session.model,
+      providerId: 'selected-provider', permissionMode: 'ask', ...(native ? { requireNativePresentation: true } : {}), ...(resume ? { resumeSessionId: nativeThreadId } : {}) }),
     changeAccount: () => { generation++; accountDb = {}; },
     replaceSession: () => { currentSession = undefined; },
     wireDirect: () => wire(session),
@@ -149,6 +149,19 @@ function fixture() {
 }
 
 describe('native activation at the actual Main startup boundary', () => {
+  it.each([false, true])('selects Pi native preparation for new and legacy ordinary tasks (resume=%s)', async resume => {
+    const f = fixture('pi'); f.providerRead.resolve(); f.axesRead.resolve();
+    expect((await f.start(resume)).session).toBe(f.session);
+    expect(await f.session.presentationInitialization).toEqual({ status: 'ready' });
+    expect(f.create).toHaveBeenCalledWith(expect.objectContaining({ agentKind: 'pi', nativePresentation: true,
+      ...(resume ? { resumeSessionId: nativeThreadId } : {}) }), undefined);
+    expect(f.nativeInputs).toHaveLength(1); expect(f.nativeInputs[0]!.threadId).toBe(nativeThreadId);
+    expect(f.handle.send).not.toHaveBeenCalled();
+  });
+  it('keeps ordinary Pi GUI startup on its existing adapter until native presentation is explicitly requested', async () => {
+    const f = fixture('pi'); f.providerRead.resolve(); f.axesRead.resolve(); await f.start(false, false);
+    expect(f.create).toHaveBeenCalledWith(expect.objectContaining({ agentKind: 'pi', nativePresentation: false }), undefined);
+  });
   it.each([false, true])('holds first native input through provider and effort/fast hydration (resume=%s)', async resume => {
     const f = fixture();
     const startup = f.start(resume);

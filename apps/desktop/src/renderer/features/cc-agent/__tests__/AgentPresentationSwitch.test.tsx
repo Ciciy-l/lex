@@ -29,13 +29,13 @@ it.each([['en', en], ['ja', ja], ['ko', ko], ['zh-CN', zhCN], ['zh-TW', zhTW]] a
   },
 );
 
-it('offers Claude and Codex native hosts while keeping an unsupported transport visible with its explanation', async () => {
+it('offers all four local native hosts while keeping an unsupported transport visible with its explanation', async () => {
   expect(hasLocalNativePresentation('claude-code')).toBe(true);
   expect(hasLocalNativePresentation('cc')).toBe(true);
   expect(hasLocalNativePresentation(undefined)).toBe(false);
   expect(hasLocalNativePresentation('unknown-engine')).toBe(false);
   expect(hasLocalNativePresentation('codex')).toBe(true);
-  expect(hasLocalNativePresentation('pi')).toBe(false); expect(hasLocalNativePresentation('omp')).toBe(true);
+  expect(hasLocalNativePresentation('pi')).toBe(true); expect(hasLocalNativePresentation('omp')).toBe(true);
   const i18n = createInstance();
   await i18n.init({ lng: 'en', resources: { en: { translation: en } } });
   const change = vi.fn();

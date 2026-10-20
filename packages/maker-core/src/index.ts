@@ -139,3 +139,5 @@ export { projectCodexNativeConfig, projectCodexNativeModels, type CodexNativeCat
 export { createOmpNativeSession } from './agents/omp/native-session.js';
 export type { OmpLocalNativeSessionOptions } from './agents/omp/native-session.js';
 export { OMP_NATIVE_EXTENSION_SOURCE } from './agents/omp/native-extension-source.js';
+export { PiNativeSessionControl, type PiLocalNativeSessionOptions } from './agents/pi/native-session.js';
+export { PI_NATIVE_EXTENSION_SOURCE } from './agents/pi/native-extension-source.js';

@@ -599,7 +599,31 @@ protocol compatibility must therefore remain explicit product gates.
 
 ## Pi and OMP native gates: Windows, 2026-10-18
 
-### OMP ordinary product adapter, 2026-10-20 (implementation; window acceptance pending)
+### Pi ordinary product adapter, 2026-10-20 (implementation; window acceptance pending)
+
+Explicit local Pi presentation now selects Main's original interactive Pi after
+the existing model/provider, auth, package/Skill, project-resource and permission
+preparation. The existing RPC GUI path stays available until that selection.
+The task-owned official extension sends GUI input with `sendUserMessage`, and
+binds each user input to its actual already-persisted Pi journal row before
+provider context is released through Core admission. Structured native events
+reuse the production Pi translator; only `agent_settled` ends the turn. Stop
+uses `ctx.abort`, never a synthetic continuation. Missing history and unknown
+command outcomes cannot create a replacement task or replay input.
+
+Cindy's private extension UI requests use the same task's Host permission
+policy; native and user-package dialogs retain Pi's original UI. Runtime files
+remain until confirmed process exit. Host model/source changes use the existing
+same-history controlled rebuild; in-turn GUI steering and GUI extension commands
+without a consumed user row remain unimplemented. Interactive input during an
+active product turn remains in its editor for a later explicit submission.
+Native model-menu changes are not yet synchronized with the product route;
+select the model in GUI before sending. A changed native route is fenced before
+the provider request. Original Pi APIs/tools are not reimplemented.
+Focused regressions and types are required before
+ordinary-window acceptance; no Pi product-window success is claimed here.
+
+### OMP ordinary product adapter, 2026-10-20 (Windows loopback window accepted)
 
 Explicit local OMP presentation now selects the ordinary Main PTY factory after
 the same managed model/provider, prompt, permission, Skill and host-tool startup
@@ -632,7 +656,7 @@ platforms are not covered. Native journal usage was present, but persisted
 product total usage remained zero and is a separate observed gap. Model/source
 changes use the existing managed-route rebuild;
 the native permission mode remains fixed for this process. Pi's production
-interactive extension adapter is still separate work; this does not complete
+interactive extension adapter is separate work above; this does not complete
 all four engines or establish SSH, Device Link or non-Windows acceptance.
 
 Run `node scripts/agent-presentation/extension-native-probe.mjs --engine=pi` or
