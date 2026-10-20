@@ -46,6 +46,7 @@ export class PiNativeSessionControl implements PiSessionControl {
   private admitting = false;
   private inputVersion = 0;
   private closed = false;
+  private cleanIdleExit = false;
   private faulted = false;
   private closing?: Promise<void>;
   private presentationClosed = false;
@@ -109,6 +110,8 @@ export class PiNativeSessionControl implements PiSessionControl {
       await this.bridge.start();
       this.terminal = await this.options.launch(this.bridge.environment());
       this.terminal.onExit(exit => {
+        this.cleanIdleExit = Boolean(this.nativeId) && !this.faulted && exit.code === 0 && !exit.signal
+          && !this.gui && !this.active && !this.admitting && !this.earlyStart;
         this.closed = true; this.lifetime.abort(); this.readyReject(new Error('Pi native process exited before ready'));
         void this.bridge.close();
         this.options.onExit({ code: exit.code, signal: null });
@@ -147,6 +150,8 @@ export class PiNativeSessionControl implements PiSessionControl {
 
   get pid(): number | undefined { return this.terminal?.pid; }
   get isClosed(): boolean { return this.closed || this.faulted; }
+  /** Captured before teardown; a pre-agent_start admission still owns work. */
+  get exitedCleanlyWhileIdle(): boolean { return this.cleanIdleExit; }
   private requireLive(): void { if (this.isClosed || this.lifetime.signal.aborted) throw new TurnDispatchRejectedError('Pi native session is not active'); }
   private currentInput(): ActiveInput | undefined { return this.active; }
   private publish(frame: Record<string, unknown>): void {

@@ -5589,6 +5589,11 @@ export class PiAgent extends BaseAgent {
         },
         onExit: ({ code, signal }) => {
           const hostAbortRequested = isCurrentTurnHostAbortRequested(ctx, true);
+          // Ctrl+D / /exit is normal only for a settled interactive frontend.
+          // Capture both admission and translator state before disposal resets
+          // the latter; code=0 alone cannot settle an in-flight input.
+          const nativeIdleExit = nativeControl?.exitedCleanlyWhileIdle === true
+            && !ctx.isStreaming && ctx.pendingHostTurnStartToken === null;
           piProcessExited = true;
           clearPiSubagentRefreshTimer();
           void deferProxyDisposalForDetachedRuns();
@@ -5602,7 +5607,7 @@ export class PiAgent extends BaseAgent {
           runtimeCapabilityListeners.clear();
           if (!closed) {
             // 非用户 close 的进程死亡:terminal error + 收尾,避免 UI 永久 running。
-            if (!rpcDisconnected) queue.push(hostAbortRequested ? {
+            if (!rpcDisconnected && !nativeIdleExit) queue.push(hostAbortRequested ? {
               type: 'done',
               data: { status: 'cancelled' },
               source: 'pi',

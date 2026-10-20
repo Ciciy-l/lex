@@ -4,6 +4,8 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentDeps } from '../base-agent.js';
 import type { NativeSessionBridgeOptions } from '../shared/native-session-bridge.js';
+import type { AgentTerminalDriver } from '../presentation.js';
+import type { AgentEvent } from '../../types/events.js';
 
 const mock = vi.hoisted(() => ({ bridges: [] as NativeSessionBridgeOptions[], history: '', model: 'fixture-model', rpc: vi.fn() }));
 vi.mock('../shared/native-session-bridge.js', () => ({ NativeSessionBridge: class {
@@ -23,14 +25,25 @@ afterEach(async () => { for (const run of cleanup.splice(0).reverse()) await run
 const logger = { trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {}, child() { return logger; } };
 
 describe('ordinary Pi production frontend selection', () => {
-  it.each([false, true])('uses the prepared native factory for new and original-history tasks (resume=%s)', async resume => {
+  it.each([
+    { resume: false, state: 'idle', code: 0 },
+    { resume: true, state: 'settled', code: 0 },
+    { resume: true, state: 'active', code: 0 },
+    { resume: true, state: 'starting', code: 0 },
+    { resume: true, state: 'idle', code: 23 },
+    { resume: true, state: 'idle', code: 0, signal: 'SIGTERM' },
+  ])('uses the prepared native factory and preserves exit semantics: %j', async ({ resume, state, code, signal }) => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pi-native-selection-'));
     cleanup.push(() => fs.rm(root, { recursive: true, force: true }));
     mock.history = path.join(root, 'original.jsonl'); await fs.writeFile(mock.history, '{}\n');
+    const exits = new Set<Parameters<AgentTerminalDriver['onExit']>[0]>();
+    const write = vi.fn();
     const launch = vi.fn(async () => {
       const bridge = mock.bridges.at(-1)!;
       queueMicrotask(() => bridge.onEvent({ sequence: 1, kind: 'ready', value: { sessionFile: mock.history, model: mock.model, provider: 'cindy' } }));
-      return { pid: 54321, write: vi.fn(), resize: vi.fn(), onData: () => vi.fn(), onExit: () => vi.fn(), close: vi.fn(async () => {}) };
+      return { pid: 54321, write, resize: vi.fn(), onData: () => vi.fn(),
+        onExit: (listener: Parameters<AgentTerminalDriver['onExit']>[0]) => { exits.add(listener); return () => { exits.delete(listener); }; },
+        close: vi.fn(async () => {}) };
     });
     const native = vi.fn<NonNullable<AgentDeps['createLocalPiNativeSession']>>(async options => new PiNativeSessionControl({ ...options, launch }));
     const deps: AgentDeps = { binaryPath: process.execPath, logger, auth: {
@@ -58,6 +71,24 @@ describe('ordinary Pi production frontend selection', () => {
     expect(options.extensionPath).toContain('lex-native-presentation.ts');
     expect(await handle.previewModelSwitch!(mock.model)).toMatchObject({ action: 'hot', windowVerified: true });
     expect(handle.requiresModelSwitchRebuild!('another-model')).toBe(true);
+    const events: AgentEvent[] = [];
+    const drained = (async () => { for await (const event of handle.events()) events.push(event); })();
+    const bridge = mock.bridges.at(-1)!;
+    const event = (type: string) => bridge.onEvent({ sequence: 2, kind: 'agent-event', value: { sessionFile: mock.history, event: { type } } });
+    if (state === 'starting' || state === 'settled') event('agent_start');
+    if (state === 'active' || state === 'settled') {
+      handle.setNativeInputResolver!(async input => { await input.accept(input.message, {}); });
+      expect(await bridge.onRequest({ requestId: 'user-row', kind: 'native-input', input: { sessionFile: mock.history,
+        row: { id: 'user-row', type: 'message', message: { role: 'user', timestamp: 1000, content: 'explicit native input' } } } },
+        new AbortController().signal)).toMatchObject({ accepted: true });
+    }
+    if (state === 'settled') event('agent_settled');
+    for (const exit of exits) exit({ code, signal });
+    await drained;
+    const errors = events.filter(event => event.type === 'error');
+    if (code === 0 && !signal && (state === 'idle' || state === 'settled')) expect(errors).toEqual([]);
+    else expect(errors).toMatchObject([{ data: { isTerminal: true, message: expect.stringContaining('pi process exited unexpectedly') } }]);
+    expect(write).not.toHaveBeenCalled();
   });
   it.each([{ remoteHostId: 'remote' }, { reviewMode: true as const }, { vendorOptions: { orcaRole: 'worker' } }])(
     'keeps nonordinary environments on their existing transport: %j', async mode => {
