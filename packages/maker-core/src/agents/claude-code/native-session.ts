@@ -13,6 +13,8 @@ import type { ClaudeNativeSubmission } from './native-messages.js';
 /** Existing Claude policy is supplied by the adapter, never rebuilt by the terminal. */
 export interface ClaudeNativeSessionPolicy {
   setInteractionResolver(resolver: InteractionResolver): void;
+  setExtraDirs?(dirs: string[]): Promise<void>;
+  setWritableDirs?(dirs: string[]): Promise<void>;
   validateSendOptions?(options: SendOptions): void;
   beforeInput(message: UserMessage, options: SendOptions): void | Promise<void>;
   onEvent?(event: AgentEvent): void;
@@ -211,6 +213,18 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
     presentation: native.presentation,
     setNativeInputResolver(next, media) { requireLive(); resolver = next; importMedia = media; },
     setInteractionResolver(next) { requireLive(); options.policy.setInteractionResolver(next); },
+    async setExtraDirs(dirs) {
+      requireLive();
+      if (!options.policy.setExtraDirs) throw new NotSupportedError(
+        'extraDirs', { supported: false, reason: 'not-implemented' });
+      await options.policy.setExtraDirs(dirs);
+    },
+    async setWritableDirs(dirs) {
+      requireLive();
+      if (!options.policy.setWritableDirs) throw new NotSupportedError(
+        'writableDirs', { supported: false, reason: 'not-implemented' });
+      await options.policy.setWritableDirs(dirs);
+    },
     validateSendOptions(sendOptions) { requireLive(); options.policy.validateSendOptions?.(sendOptions); },
     async send(message, sendOptions = {}) {
       requireLive(); options.policy.validateSendOptions?.(sendOptions);

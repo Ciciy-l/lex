@@ -88,6 +88,7 @@ import type {
   EffortDescriptor,
   PermissionModeDescriptor,
 } from '../../types/capabilities.js';
+import { NotSupportedError } from '../../types/capabilities.js';
 import type {
   AgentEvent,
   InteractionResolver,
@@ -3984,6 +3985,19 @@ export class ClaudeCodeAgent extends BaseAgent {
           // entry rather than quietly dropping a requested plan or subscription.
           if (mutablePlanMode) throw new Error('Native Claude plan controls are not integrated');
           launch.releaseNativeResources = releaseNativeResources;
+          // Both launch argv and canUseTool share these exact roots. The
+          // interactive CLI cannot hot-reload them: a redundant Library sync
+          // may confirm the snapshot, but a real change must not claim success
+          // or mutate the host policy ahead of the native process.
+          const nativeExtraDirs = [...mutableExtraDirs];
+          const nativeWritableDirs = [...mutableWritableDirs];
+          const confirmDirectoryGrants = (axis: 'extraDirs' | 'writableDirs', dirs: string[]) => {
+            const applied = axis === 'extraDirs' ? nativeExtraDirs : nativeWritableDirs;
+            if (applied.length !== dirs.length || applied.some((dir, index) => dir !== dirs[index])) {
+              throw new NotSupportedError(axis, { supported: false, reason: 'not-implemented',
+                upstreamRef: 'Interactive Claude directory changes require an explicit same-task restart' });
+            }
+          };
           handedToHost = true;
           const handle = await factory({
             launch, model: mutableModel, logger: log, events: eventQueue, usageTracker, disabledSkillPaths: disabledSkillSnapshot,
@@ -3991,6 +4005,8 @@ export class ClaudeCodeAgent extends BaseAgent {
             onFault: () => log.warn('native Claude semantic connection interrupted'),
             policy: {
               setInteractionResolver(resolver) { interactionResolver = resolver; },
+              async setExtraDirs(dirs) { confirmDirectoryGrants('extraDirs', dirs); },
+              async setWritableDirs(dirs) { confirmDirectoryGrants('writableDirs', dirs); },
               validateSendOptions(sendOpts) {
                 validateTurnSendOptions(sendOpts);
                 if (sendOpts.planMode) throw new Error('Native Claude plan controls are not integrated');
