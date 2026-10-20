@@ -1,7 +1,32 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  buildUserProviderChannels,
+  type CustomProviderConfig,
+  type CustomProviderRuntimeConfig,
+  type OAuthAuthorizationCodeDescriptor,
+} from '@cindy/model-providers';
 
-const state = vi.hoisted(() => ({ loggedIn: false, proxyReady: true, sharedSkillRefreshes: 0 }));
+function oauthConfig(authorizeUrl = 'https://example.invalid/auth'): OAuthAuthorizationCodeDescriptor {
+  return { authorizeUrl, tokenUrl: 'https://example.invalid/token', clientId: 'fixture-public-client', scopes: 'models:read' };
+}
+
+const state = vi.hoisted(() => ({
+  loggedIn: false, proxyReady: true, sharedSkillRefreshes: 0,
+  owner: 'local:owner-a', pending: false, changeOwnerDuringRead: false, changeOwnerDuringKeyRead: false,
+  configs: [] as CustomProviderConfig[], channelKey: 'fixture-channel-key' as string | null,
+  onConfigRead: null as (() => void) | null,
+}));
+const readKey = vi.hoisted(() => vi.fn((providerId: string, _agent: string, protocol?: string): string | null => {
+  if (state.changeOwnerDuringKeyRead) state.owner = 'local:owner-b';
+  return providerId === 'xai' ? 'legacy-custom-key' :
+    providerId === 'loopback-channel' && protocol === 'anthropic-messages' ? state.channelKey : null;
+}));
 const ensureLocalReady = vi.hoisted(() => vi.fn());
+vi.mock('../../appSessionState.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../../appSessionState.js')>(),
+  activeOwnerScopeKey: () => state.owner,
+  isAppSessionBoundaryPending: () => state.pending,
+}));
 vi.mock('../../local-model-runtime/preflight.js', () => ({
   ensureManagedOllamaReadyForSession: ensureLocalReady,
 }));
@@ -23,7 +48,11 @@ vi.mock('../auth-adapters.js', () => ({
   desktopCodexAuthAdapter: { getState: async () => ({ authenticated: false }) },
 }));
 vi.mock('../custom-provider-header-secrets.js', () => ({
-  listCustomProvidersWithSecureHeaders: async () => [
+  listCustomProvidersWithSecureHeaders: async (): Promise<CustomProviderConfig[]> => {
+    if (state.changeOwnerDuringRead) state.owner = 'local:owner-b';
+    state.onConfigRead?.();
+    return [
+    ...state.configs,
     {
       id: 'local-keyless',
       name: 'Local keyless',
@@ -32,19 +61,19 @@ vi.mock('../custom-provider-header-secrets.js', () => ({
         pi: {
           baseUrl: 'http://127.0.0.1:11434/v1',
           wireProtocol: 'openai-chat',
-          models: [{ id: 'local-model' }],
+          models: [{ id: 'local-model', name: 'Local model' }],
         },
       },
     },
     {
       id: 'openrouter-oauth',
       name: 'OpenRouter OAuth',
-      auth: { method: 'oauth', oauth: { authorizeUrl: 'https://openrouter.ai/auth' } },
+      auth: { method: 'oauth', oauth: oauthConfig('https://openrouter.ai/auth') },
       runtimes: {
         pi: {
           baseUrl: 'https://openrouter.ai/api/v1',
           wireProtocol: 'openai-chat',
-          models: [{ id: 'google/gemini-test', api: 'openai-completions' }],
+          models: [{ id: 'google/gemini-test', name: 'Gemini test', api: 'openai-completions' }],
         },
       },
     },
@@ -56,15 +85,14 @@ vi.mock('../custom-provider-header-secrets.js', () => ({
         pi: {
           baseUrl: 'https://private-xai.example/v1',
           wireProtocol: 'openai-chat',
-          models: [{ id: 'private-grok' }, { id: 'grok-4.6' }],
+          models: [{ id: 'private-grok', name: 'Private Grok' }, { id: 'grok-4.6', name: 'Grok 4.6' }],
         },
       },
     },
-  ],
+  ]; },
 }));
 vi.mock('../../secrets/providerSecretStore.js', () => ({
-  readCustomProviderKey: (providerId: string) =>
-    providerId === 'xai' ? 'legacy-custom-key' : null,
+  readCustomProviderKey: readKey,
 }));
 vi.mock('../grok-oauth-login.js', () => ({
   hasGrokOAuthLogin: () => state.loggedIn,
@@ -78,13 +106,133 @@ vi.mock('../anthropic-compat-proxy-host.js', () => ({
 }));
 
 import { desktopPiAuthAdapter, resolvePiNativeProviders } from '../pi-host.js';
+import { setCustomProviders } from '../active-catalog.js';
+import { beginProviderRouteMutation, setCustomProviderHeaderReader, setCustomProviderKeyReader, setOAuthTokenReader } from '../provider-route.js';
 
 describe('Pi pure BYOM auth without a Cindy account', () => {
   beforeEach(() => {
     state.loggedIn = false;
     state.proxyReady = true;
     state.sharedSkillRefreshes = 0;
+    state.owner = 'local:owner-a'; state.pending = false; state.changeOwnerDuringRead = false;
+    state.changeOwnerDuringKeyRead = false; state.onConfigRead = null;
+    state.configs = []; state.channelKey = 'fixture-channel-key';
+    setCustomProviders([]);
+    setCustomProviderKeyReader(readKey);
+    setOAuthTokenReader(() => null);
+    setCustomProviderHeaderReader((id, _agent, protocol) => protocol
+      ? state.configs.flatMap(config => config.channels?.channels ?? [])
+        .find(channel => channel.id === id)?.protocols[protocol]?.headers ?? null
+      : null);
+    readKey.mockClear();
     ensureLocalReady.mockReset();
+  });
+
+  const channelConnection = (): CustomProviderRuntimeConfig => ({ baseUrl: 'http://127.0.0.1:5489',
+    wireProtocol: 'anthropic-messages', models: [{ id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' }] });
+  const channelConfig = (): CustomProviderConfig => ({
+    id: 'loopback-supplier', name: 'Loopback supplier', auth: { method: 'apiKey' }, runtimes: {},
+    channels: { version: 1, channels: [{ id: 'loopback-channel', name: 'Saved channel',
+      protocols: { 'anthropic-messages': channelConnection() } }], legacyBindings: { pi: 'loopback-channel' } },
+  });
+  const installChannel = (config = channelConfig()) => {
+    state.configs = [config];
+    setCustomProviders(state.configs.flatMap(config => buildUserProviderChannels(config)));
+  };
+
+  it.each(['loopback-channel', 'loopback-channel--anthropic-messages', 'loopback-supplier'])(
+    'authenticates the selected saved channel %s without a Cindy key and keeps keys in the host', async providerId => {
+      const config = channelConfig();
+      // Migrated aliases retain their original runtime/protocol; new channels need none.
+      if (providerId === 'loopback-supplier') config.runtimes.pi = channelConnection();
+      installChannel(config);
+      expect(await desktopPiAuthAdapter.getState({ providerId })).toMatchObject({ authenticated: true, identity: 'Loopback supplier' });
+      expect(readKey).toHaveBeenCalledWith('loopback-channel', 'pi', 'anthropic-messages');
+      expect(await desktopPiAuthAdapter.getAuthEnv({ providerId })).toEqual({ CINDY_PI_API_KEY: 'cindy-pi-provider-auth-placeholder' });
+    },
+  );
+
+  it('refuses a saved channel with a missing key or unknown encrypted headers and never consults another channel', async () => {
+    const config = channelConfig(); installChannel(config); state.channelKey = null;
+    expect(await desktopPiAuthAdapter.getState({ providerId: 'loopback-channel' })).toMatchObject({ authenticated: false });
+    state.channelKey = 'fixture-channel-key';
+    const unknown: CustomProviderConfig = { ...config, channels: { version: 1, channels: [{
+      id: 'loopback-channel', name: 'Saved channel', protocols: {
+        'anthropic-messages': { ...channelConnection(), headersState: 'unknown' },
+      },
+    }] } };
+    installChannel(unknown);
+    expect(await desktopPiAuthAdapter.getState({ providerId: 'loopback-channel' })).toMatchObject({ authenticated: false });
+    expect(readKey.mock.calls.every(([id, agent, protocol]) => id === 'loopback-channel' && agent === 'pi' && protocol === 'anthropic-messages')).toBe(true);
+  });
+
+  it.each(['proxy', 'owner', 'pending'] as const)('refuses channel authentication across the %s boundary', async boundary => {
+    installChannel();
+    if (boundary === 'proxy') state.proxyReady = false;
+    else if (boundary === 'owner') state.changeOwnerDuringRead = true;
+    else state.pending = true;
+    expect(await desktopPiAuthAdapter.getState({ providerId: 'loopback-channel' })).toMatchObject({ authenticated: false });
+    expect(readKey).not.toHaveBeenCalled();
+  });
+
+  it('refuses an owner switch during the host credential read', async () => {
+    installChannel(); state.changeOwnerDuringKeyRead = true;
+    expect(await desktopPiAuthAdapter.getState({ providerId: 'loopback-channel' }))
+      .toMatchObject({ authenticated: false, errorReason: 'pi_native_auth_changed' });
+  });
+
+  it('refuses a supplier mutation before reading a channel credential', async () => {
+    installChannel();
+    const release = beginProviderRouteMutation('loopback-supplier');
+    try {
+      expect(await desktopPiAuthAdapter.getState({ providerId: 'loopback-channel' }))
+        .toMatchObject({ authenticated: false, errorReason: 'pi_native_auth_changed' });
+      expect(readKey).not.toHaveBeenCalled();
+    } finally { release(); }
+  });
+
+  it('refuses a completed credential mutation while the saved configuration is being read', async () => {
+    installChannel();
+    state.onConfigRead = () => {
+      const release = beginProviderRouteMutation('loopback-supplier');
+      release.commit(); release();
+    };
+    expect(await desktopPiAuthAdapter.getState({ providerId: 'loopback-channel' }))
+      .toMatchObject({ authenticated: false, errorReason: 'pi_native_auth_changed' });
+    expect(readKey).not.toHaveBeenCalled();
+  });
+
+  it('rejects a disabled remote keyless route and a legacy alias whose original protocol is gone', async () => {
+    const config = channelConfig();
+    installChannel({ ...config, auth: { method: 'none' }, channels: { version: 1, channels: [{
+      id: 'loopback-channel', name: 'Saved channel', protocols: {
+        'anthropic-messages': { ...channelConnection(), baseUrl: 'https://example.invalid' },
+      },
+    }] } });
+    expect(await desktopPiAuthAdapter.getState({ providerId: 'loopback-channel' })).toMatchObject({ authenticated: false });
+    config.runtimes.pi = { ...channelConnection(), wireProtocol: 'openai-chat' };
+    installChannel(config);
+    expect(await desktopPiAuthAdapter.getState({ providerId: 'loopback-supplier' })).toMatchObject({ authenticated: false });
+  });
+
+  it('keeps channel OAuth credentials on the host and refuses a missing token', async () => {
+    installChannel({ ...channelConfig(), auth: { method: 'oauth', oauth: oauthConfig() } });
+    expect(await desktopPiAuthAdapter.getState({ providerId: 'loopback-channel' })).toMatchObject({ authenticated: false });
+    setOAuthTokenReader(() => 'fake-host-oauth-token');
+    const result = await desktopPiAuthAdapter.getState({ providerId: 'loopback-channel' });
+    expect(result).toMatchObject({ authenticated: true, authSource: 'oauth' });
+    expect(JSON.stringify(result)).not.toContain('fake-host-oauth-token');
+    expect(await desktopPiAuthAdapter.getAuthEnv({ providerId: 'loopback-channel' }))
+      .toEqual({ CINDY_PI_API_KEY: 'cindy-pi-provider-auth-placeholder' });
+  });
+
+  it('allows a keyless channel and secure header credentials through their exact host route', async () => {
+    state.channelKey = null; installChannel({ ...channelConfig(), auth: { method: 'none' } });
+    expect(await desktopPiAuthAdapter.getState({ providerId: 'loopback-channel' })).toMatchObject({ authenticated: true });
+    const config = channelConfig();
+    installChannel({ ...config, channels: { version: 1, channels: [{ id: 'loopback-channel', name: 'Saved channel',
+      protocols: { 'anthropic-messages': { ...channelConnection(), headers: { 'x-api-key': 'fake-host-header' } } } }] } });
+    expect(await desktopPiAuthAdapter.getState({ providerId: 'loopback-channel' })).toMatchObject({ authenticated: true });
   });
 
   it.each(['cindy-local-llamacpp', 'cindy-local-ollama'])('starts %s on demand during local Pi provider resolution only', async providerId => {
