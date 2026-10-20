@@ -1,6 +1,7 @@
 /** Runs inside the pinned original interactive OMP, never in a renderer. */
 export const OMP_NATIVE_EXTENSION_SOURCE = String.raw`
 import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 export default function (pi) {
   const url = process.env.LEX_OMP_BRIDGE_URL;
   const token = process.env.LEX_OMP_BRIDGE_TOKEN;
@@ -9,7 +10,7 @@ export default function (pi) {
   if (!url || !token || !generation || !sessionId) throw new Error('OMP task transport is missing');
   const headers = { authorization: 'Bearer ' + token, 'content-type': 'application/json' };
   const lifetime = new AbortController();
-  let context, stopped = false, sequence = 0, requestId = 0, pendingGui, activeRow, polling = false;
+  let context, stopped = false, sequence = 0, requestId = 0, pendingGui, pendingInput, activeRow, polling = false;
   let expectedFile, nativeId;
   const events = [], commands = new Set(), seenRows = new Set(), seenUsers = new Set();
   const preparedUsers = new Map(), permissionRequests = new Set();
@@ -21,11 +22,13 @@ export default function (pi) {
   const fail = (reason = 'transport') => {
     context?.abort();
     if (stopped) return;
-    // Fixed phases/counts only: no prompt, credentials or request payload.
-    console.error('[lex-omp-native] ' + (typeof reason === 'string' ? reason : 'transport'));
     stopped = true; lifetime.abort();
     context?.ui.notify('Lex task connection interrupted. Reopen this task before sending again.', 'error');
-    context?.shutdown();
+    // PTY console output is not a reliable diagnostic channel. Report only a
+    // fixed phase through the authenticated host before bounded shutdown.
+    void post('/request', { request: { requestId: String(++requestId), kind: 'native-fault',
+      input: { sessionFile: nativeId, phase: typeof reason === 'string' ? reason : 'transport' } } }, AbortSignal.timeout(500))
+      .catch(() => {}).finally(() => context?.shutdown());
   };
   const post = async (route, body, signal = lifetime.signal) => {
     const response = await fetch(url + route, { method: 'POST', headers,
@@ -64,7 +67,7 @@ export default function (pi) {
         if (payload.effort) pi.setThinkingLevel(payload.effort);
         result(command, true, { sessionFile: context.sessionManager.getSessionFile() });
       } else if (command.kind === 'prompt') {
-        if (pendingGui || activeRow || !context.isIdle() || context.hasPendingMessages()) {
+        if (pendingGui || pendingInput || activeRow || !context.isIdle() || context.hasPendingMessages()) {
           result(command, true, { refusedBeforeSubmission: true }); return;
         }
         pendingGui = { command, leaf: context.sessionManager.getLeafId(), submittedAt: Date.now() };
@@ -124,57 +127,64 @@ export default function (pi) {
   });
   pi.on('context', async (event, ctx) => {
     if (stopped || ctx.sessionManager.getSessionFile() !== nativeId) { ctx.abort(); return; }
-    // OMP's independent message_end persistence can still be queued when
-    // context runs. Wait for the actual row, within the same admission budget,
-    // rather than assuming that one microtask has committed the journal.
-    const deadline = Date.now() + 8_000;
-    const unseenUsers = new Set(event.messages.filter(message => message.role === 'user' && !seenUsers.has(fingerprint(message))).map(fingerprint));
-    const needsRow = unseenUsers.size > 0;
-    let branch = ctx.sessionManager.getBranch();
-    let fresh = branch.filter(row => row.type === 'message' && row.message.role === 'user' && !seenRows.has(row.id));
-    while (needsRow && fresh.length === 0 && !branch.some(row => row.type === 'message' && row.message.role === 'user' && unseenUsers.has(fingerprint(row.message)))
-      && !stopped && Date.now() < deadline) {
-      await new Promise(resolve => setTimeout(resolve, 5));
-      if (ctx.sessionManager.getSessionFile() !== nativeId) { ctx.abort(); fail('journal-session-changed'); return; }
-      branch = ctx.sessionManager.getBranch();
-      fresh = branch.filter(row => row.type === 'message' && row.message.role === 'user' && !seenRows.has(row.id));
+    // OMP 18.10.4 prepares provider context BEFORE emitting the input events
+    // that allocate its journal row. Admit a distinct bridge submission now;
+    // bind the real row only at the subsequent before_provider_request hook.
+    const fresh = event.messages.filter(message => message.role === 'user' && !seenUsers.has(fingerprint(message)));
+    if (fresh.length) {
+      if (fresh.length !== 1 || pendingInput || activeRow) { ctx.abort(); fail('input-association'); return; }
+      const message = fresh[0], gui = pendingGui;
+      if (gui && (message.timestamp < gui.submittedAt || textContent(message.content) !== gui.command.payload.text)) {
+        ctx.abort(); fail('gui-input-association'); return;
+      }
+      const input = { submissionId: randomUUID(), fingerprint: fingerprint(message), message, gui,
+        leaf: ctx.sessionManager.getLeafId(), deadline: Date.now() + 8_000 };
+      pendingInput = input; seenUsers.add(input.fingerprint);
+      const admission = new AbortController();
+      const guard = setTimeout(() => { ctx.abort(); admission.abort(); }, Math.max(1, input.deadline - Date.now()));
+      try {
+        const answer = await request('prepare-input', { sessionFile: nativeId, submissionId: input.submissionId, message,
+          ...(gui ? { commandId: gui.command.id } : {}) }, admission.signal);
+        if (answer.accepted !== true || typeof answer.text !== 'string' || pendingInput !== input || stopped)
+          throw new Error('OMP input was not admitted');
+        preparedUsers.set(input.fingerprint, [{ type: 'text', text: answer.text }]);
+      } catch { ctx.abort(); fail('input-admission-refused'); return; }
+      finally { clearTimeout(guard); }
     }
-    if (stopped) { ctx.abort(); return; }
-    if (fresh.length === 0) {
-      if (needsRow) { ctx.abort(); fail('journal-commit-unavailable'); return; }
-      // Preserve host-prepared bytes on subsequent model requests in this same turn.
-      if (!preparedUsers.size) return;
-      return { messages: event.messages.map(message => {
-        const prepared = preparedUsers.get(fingerprint(message));
-        return prepared ? { ...message, content: prepared } : message;
-      }) };
-    }
-    // Native row IDs come only from the official session journal. A batch or
-    // ambiguous clone is refused rather than guessed from repeated prompt text.
-    const row = fresh[0];
-    const matches = event.messages.filter(message => fingerprint(message) === fingerprint(row.message));
-    const gui = pendingGui;
-    const oldLeaf = gui?.leaf === null ? -1 : branch.findIndex(entry => entry.id === gui?.leaf);
-    if (fresh.length !== 1 || matches.length !== 1 || (gui &&
-      ((gui.leaf !== null && oldLeaf < 0) || branch.indexOf(row) <= oldLeaf || row.message.timestamp < gui.submittedAt ||
-       textContent(row.message.content) !== gui.command.payload.text))) { ctx.abort(); fail('journal-association-' + fresh.length + '-' + matches.length); return; }
-    if (Date.now() >= deadline) { ctx.abort(); fail('journal-admission-budget'); return; }
-    for (const entry of branch) seenRows.add(entry.id);
+    if (preparedUsers.size) return { messages: event.messages.map(message => {
+      const prepared = preparedUsers.get(fingerprint(message));
+      return prepared ? { ...message, content: prepared } : message;
+    }) };
+  });
+  pi.on('before_provider_request', async (_event, ctx) => {
+    if (stopped || ctx.sessionManager.getSessionFile() !== nativeId) { ctx.abort(); return; }
+    const input = pendingInput;
+    if (!input) { if (!activeRow) { ctx.abort(); fail('provider-without-input'); } return; }
     const admission = new AbortController();
-    const guard = setTimeout(() => { ctx.abort(); admission.abort(); }, Math.max(1, deadline - Date.now()));
+    const guard = setTimeout(() => { ctx.abort(); admission.abort(); }, Math.max(1, input.deadline - Date.now()));
     try {
-      const answer = await request('admit-input', { sessionFile: nativeId, row,
-        ...(gui ? { commandId: gui.command.id } : {}) }, admission.signal);
-      if (answer.accepted !== true || typeof answer.text !== 'string') throw new Error('OMP input was not admitted');
-      seenUsers.add(fingerprint(row.message));
-      preparedUsers.set(fingerprint(row.message), [{ type: 'text', text: answer.text }]); activeRow = row.id;
-      if (gui) { pendingGui = undefined; result(gui.command, true, { messageId: row.id }); }
-      return { messages: event.messages.map(message => {
-        const prepared = preparedUsers.get(fingerprint(message));
-        return prepared ? { ...message, content: prepared } : message;
-      }) };
-    } catch { ctx.abort(); if (gui) { pendingGui = undefined; result(gui.command, false, {}); } }
+      let branch, fresh;
+      // Input events have now been emitted. Their independent persistence tail
+      // may still be settling; this wait no longer blocks the event producer.
+      do {
+        if (stopped || pendingInput !== input || admission.signal.aborted || Date.now() >= input.deadline
+          || ctx.sessionManager.getSessionFile() !== nativeId) throw new Error('OMP receipt is no longer current');
+        branch = ctx.sessionManager.getBranch();
+        fresh = branch.filter(row => row.type === 'message' && row.message.role === 'user' && !seenRows.has(row.id));
+        if (!fresh.length) await new Promise(resolve => setTimeout(resolve, 5));
+      } while (!fresh.length);
+      const row = fresh[0], oldLeaf = input.leaf === null ? -1 : branch.findIndex(entry => entry.id === input.leaf);
+      if (fresh.length !== 1 || fingerprint(row.message) !== input.fingerprint
+        || (input.leaf !== null && oldLeaf < 0) || branch.indexOf(row) <= oldLeaf) throw new Error('OMP receipt is ambiguous');
+      const answer = await request('input-receipt', { sessionFile: nativeId, submissionId: input.submissionId, row }, admission.signal);
+      if (answer.accepted !== true || stopped || pendingInput !== input) throw new Error('OMP receipt was refused');
+      for (const entry of branch) seenRows.add(entry.id);
+      activeRow = row.id; pendingInput = undefined;
+      if (input.gui) { pendingGui = undefined; result(input.gui.command, true, { messageId: row.id }); }
+    } catch { ctx.abort(); fail('journal-receipt-unavailable'); }
     finally { clearTimeout(guard); }
+    // Do not replace the payload: the original engine already converted the
+    // host-prepared messages using its own provider/cache/metadata semantics.
   });
   pi.on('tool_call', async (event, ctx) => {
     // Match the existing OMP approval budget, and retire the exact host request
@@ -194,7 +204,9 @@ export default function (pi) {
     'auto_retry_start', 'auto_retry_end', 'agent_end']) {
     pi.on(name, async event => {
       emit('agent-event', { event, sessionFile: nativeId });
-      if (event.type === 'agent_end' && event.willContinue !== true) { activeRow = undefined; cancelPermissions(); }
+      if (event.type === 'agent_end' && event.willContinue !== true) {
+        activeRow = undefined; pendingInput = undefined; cancelPermissions();
+      }
     });
   }
   pi.on('session_shutdown', () => { stopped = true; lifetime.abort(); });

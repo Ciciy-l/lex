@@ -39,9 +39,18 @@ async function fixture(resume = file, consumeEvents = true) {
   if (consumeEvents) void (async () => { for await (const event of handle.events()) output.push(event); })();
   const event = (type: string, extra: Record<string, unknown> = {}) => mock.options!.onEvent({ sequence: 2, kind: 'agent-event',
     value: { sessionFile: file, event: { type, ...extra } } });
-  const input = (id: string, text = 'native input', commandId?: number) => mock.options!.onRequest({ requestId: id, kind: 'admit-input', input: { sessionFile: file,
-    row: { id, type: 'message', message: { role: 'user', content: [{ type: 'text', text }] } }, ...(commandId === undefined ? {} : { commandId }) } }, new AbortController().signal);
-  return { handle, output, event, input, execute, driver };
+  const message = (text: string) => ({ role: 'user', timestamp: 1000, content: [{ type: 'text', text }] });
+  const prepare = (id: string, text = 'native input', commandId?: number, signal = new AbortController().signal) => mock.options!.onRequest({ requestId: id, kind: 'prepare-input',
+    input: { sessionFile: file, submissionId: 'submission:' + id, message: message(text),
+      ...(commandId === undefined ? {} : { commandId }) } }, signal);
+  const receipt = (id: string, text = 'native input', rowId = id) => mock.options!.onRequest({ requestId: 'receipt:' + id, kind: 'input-receipt',
+    input: { sessionFile: file, submissionId: 'submission:' + id, row: { id: rowId, type: 'message', message: message(text) } } }, new AbortController().signal);
+  const input = async (id: string, text = 'native input', commandId?: number) => {
+    const answer = await prepare(id, text, commandId);
+    if (answer && typeof answer === 'object' && 'accepted' in answer && answer.accepted === true) await receipt(id, text);
+    return answer;
+  };
+  return { handle, output, event, input, prepare, receipt, execute, driver };
 }
 describe('OMP original interactive task adapter', () => {
   it('uses the actual session file and refuses a changed resume identity', async () => {
@@ -50,17 +59,18 @@ describe('OMP original interactive task adapter', () => {
     expect(mock.options!.environmentPrefix).toBe('LEX_OMP_BRIDGE');
     await expect(fixture(path.join(os.tmpdir(), 'different.jsonl'))).rejects.toThrow('interrupted');
   });
-  it('holds pre-admission agent status, admits one real row through the current owner and refuses replay', async () => {
+  it('holds pre-admission status, prepares one submission through the owner and binds only its later real row', async () => {
     const f = await fixture();
     f.event('agent_start');
     expect(f.output.some(event => event.type === 'status')).toBe(false);
     const resolve = vi.fn<import('../native-input.js').AgentNativeInputResolver>(async input => { await input.accept({ type: 'user', content: 'host prepared' }, {}); });
     f.handle.setNativeInputResolver!(resolve);
     expect(await f.input('journal-user')).toEqual({ accepted: true, text: 'host prepared' });
-    expect(resolve).toHaveBeenCalledOnce(); expect(resolve.mock.calls[0]![0].nativeMessageId).toBe('journal-user');
+    expect(resolve).toHaveBeenCalledOnce(); expect(resolve.mock.calls[0]![0].submissionId).toBe('submission:journal-user');
+    expect(resolve.mock.calls[0]![0].nativeMessageId).toBeUndefined();
     f.event('agent_end', { isTerminal: true });
     await vi.waitFor(() => expect(f.output.some(event => event.type === 'done')).toBe(true));
-    await expect(f.input('journal-user')).rejects.toThrow('new native journal row');
+    await expect(f.input('journal-user')).rejects.toThrow('new submission identity');
     expect(f.driver.write).not.toHaveBeenCalled();
   });
   it('refuses missing/changed product ownership before provider execution', async () => {
@@ -100,6 +110,55 @@ describe('OMP original interactive task adapter', () => {
     await vi.waitFor(() => expect(receipt).toHaveBeenCalledOnce());
     expect(receipt.mock.calls[0]![0]).toMatchObject({ engine: 'omp', messageId: 'native-row', sessionId: file, bridge: { submissionId: 'gui-product-id' } });
     expect(f.driver.write).not.toHaveBeenCalled();
+  });
+  it('keeps a bridge submission out of native provenance until the exact journal receipt arrives', async () => {
+    const f = await fixture(), linked = vi.fn();
+    f.handle.setNativeInputResolver!(async input => { await input.accept(input.message, { onNativeUserMessage: linked }); });
+    expect(await f.prepare('early-submission')).toMatchObject({ accepted: true });
+    expect(linked).not.toHaveBeenCalled();
+    await expect(f.receipt('early-submission', 'different input')).rejects.toThrow('does not match');
+    expect(linked).not.toHaveBeenCalled();
+    expect(await f.receipt('early-submission', 'native input', 'original-omp-row')).toEqual({ accepted: true });
+    expect(linked).toHaveBeenCalledExactlyOnceWith({ version: 1, engine: 'omp', sessionId: file,
+      messageId: 'original-omp-row', origin: { kind: 'native' } });
+    await expect(f.receipt('early-submission')).rejects.toThrow('does not match');
+    expect(linked).toHaveBeenCalledOnce();
+  });
+  it.each(['owner', 'stop'] as const)('rejects a delayed journal receipt after %s changes', async boundary => {
+    const f = await fixture(), linked = vi.fn();
+    f.handle.setNativeInputResolver!(async input => { await input.accept(input.message, { onNativeUserMessage: linked }); });
+    await f.prepare('delayed-receipt');
+    if (boundary === 'owner') f.handle.setNativeInputResolver!(async () => {});
+    else await f.handle.abort();
+    await expect(f.receipt('delayed-receipt')).rejects.toThrow('does not match');
+    expect(linked).not.toHaveBeenCalled();
+    expect(f.driver.write).not.toHaveBeenCalled();
+  });
+  it('does not confuse retirement of the preparation HTTP request with cancellation of the admitted turn', async () => {
+    const f = await fixture(), request = new AbortController(), linked = vi.fn();
+    f.handle.setNativeInputResolver!(async input => { await input.accept(input.message, { signal: input.signal, onNativeUserMessage: linked }); });
+    await f.prepare('prepared-request', 'native input', undefined, request.signal);
+    request.abort();
+    expect(await f.receipt('prepared-request')).toEqual({ accepted: true });
+    expect(linked).toHaveBeenCalledOnce();
+  });
+  it('fences a disposed product binding even when the same Session resolver remains installed', async () => {
+    const f = await fixture(file, false);
+    const session = new Session({ id: 'task', agentKind: 'omp', workDir: os.tmpdir(), handle: f.handle,
+      capabilities: {} as never, logger, permissionMode: 'ask', turnStallMs: 0 });
+    const stop = session.onNativeInput(async input => { await session.acceptNativeInput(input); });
+    try {
+      await f.prepare('binding-owned-submission'); stop();
+      await expect(f.receipt('binding-owned-submission')).rejects.toThrow('does not match');
+    } finally { await session.close(); }
+  });
+  it('records only an allowlisted failure phase over the authenticated task transport', async () => {
+    const f = await fixture(), warn = vi.spyOn(logger, 'warn');
+    try {
+      await mock.options!.onRequest({ requestId: '99', kind: 'native-fault', input: { sessionFile: file,
+        phase: 'untrusted prompt-like diagnostic must not be logged' } }, new AbortController().signal);
+      expect(warn).toHaveBeenCalledWith('OMP native bridge interrupted', { phase: 'transport' });
+    } finally { warn.mockRestore(); }
   });
   it('preserves unknown dispatch instead of resending, and abort does not close the CLI', async () => {
     const f = await fixture();

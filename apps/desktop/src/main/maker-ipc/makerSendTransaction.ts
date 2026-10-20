@@ -423,6 +423,7 @@ export interface MakerSendTransactionDeps {
   captureNativeUserMessageLink?(target: {
     session: MakerSendTransactionSession; clientId: string; expectedUuid: string;
     expectedClearBoundaryMs?: number | null;
+    origin?: 'native';
   }): (source: NativeMessageSource) => Promise<boolean>;
   beforeDispatchDirectUserTurn?: (sessionId: string) => void | Promise<void>;
   /** Synchronous final fence immediately before Session.send enters vendor code. */
@@ -1397,10 +1398,12 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
           ? Math.max(0, Date.now() - 1)
           : null;
         assertNativeCurrent();
-        const nativeMessageLink = !native && sess.agentKind === 'claude-code' && persistUserMessage
+        const deferredNativeReceipt = native && !native.source && sess.agentKind === 'omp';
+        const nativeMessageLink = ((!native && ['claude-code', 'omp'].includes(sess.agentKind ?? '')) || deferredNativeReceipt) && persistUserMessage
           && typeof so.messageUuid === 'string' && so.messageUuid
           ? deps.captureNativeUserMessageLink?.({ session: sess, clientId: persistUserMessage.clientId,
-              expectedUuid: so.messageUuid, expectedClearBoundaryMs: persistUserMessage.expectedClearBoundaryMs })
+              expectedUuid: so.messageUuid, expectedClearBoundaryMs: persistUserMessage.expectedClearBoundaryMs,
+              ...(deferredNativeReceipt ? { origin: 'native' as const } : {}) })
           : undefined;
         const dispatch = native
           ? (prepared: UserMessage | string, options: SessionSendOptions) => sess.acceptNativeInput!({
@@ -1508,7 +1511,8 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
                       role: 'user',
                       content: persistUserMessage.content,
                       agentMeta: {
-                        uuid: native?.source?.messageId ?? so.messageUuid,
+                        ...(deferredNativeReceipt ? { nativeSubmissionId: so.messageUuid }
+                          : { uuid: native?.source?.messageId ?? so.messageUuid }),
                         ...(native?.source ? { nativeSource: native.source } : {}),
                         ...(so.origin?.kind === 'scheduler'
                           ? { autoReviewUserText: { kind: 'scheduled-continuation' } }

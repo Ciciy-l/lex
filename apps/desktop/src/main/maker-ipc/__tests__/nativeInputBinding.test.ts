@@ -23,10 +23,22 @@ function fixture() {
     }) },
   };
   const dispose = bindNativeSessionInput(session, deps);
-  return { session, input, deps, controller, stop, dispose, media, receive: (request = input) => listener(request) };
+  return { session, input, deps, controller, stop, dispose, media,
+    receive: (request: AgentNativeInputRequest = input) => listener(request) };
 }
 
 describe('Desktop native input binding', () => {
+  it('uses a bridge submission only as product client identity, leaving native provenance unclaimed', async () => {
+    const f = fixture();
+    const request: AgentNativeInputRequest = { nativeSessionId: 'native', submissionId: 'omp-submission',
+      message: f.input.message, signal: f.input.signal, accept: f.input.accept };
+    await f.receive(request);
+    expect(f.deps.coordinator.acceptNativeInput).toHaveBeenCalledWith('task', expect.objectContaining({ clientId: 'omp-submission' }),
+      expect.objectContaining({ messageId: 'omp-submission' }));
+    expect(f.deps.accept).toHaveBeenCalledWith(f.session, expect.objectContaining({ submissionId: 'omp-submission' }),
+      expect.objectContaining({ messageUuid: 'omp-submission' }), undefined);
+    expect(request.nativeMessageId).toBeUndefined(); expect(request.source).toBeUndefined();
+  });
   it('installs the host attachment importer on the same Session binding', () => {
     const f = fixture(); expect(f.media).toBe(f.deps.importMedia);
   });

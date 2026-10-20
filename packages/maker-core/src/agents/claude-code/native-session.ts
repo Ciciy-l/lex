@@ -124,14 +124,16 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
       },
       onNativeInput: async input => {
         requireLive();
+        const messageId = input.nativeMessageId;
+        if (!messageId) throw new TurnDispatchRejectedError('Claude input has no native message identity');
         const owner = resolver;
         if (!owner) throw new TurnDispatchRejectedError('Native input has no product owner');
         await owner({ ...input, accept: async (message, sendOptions) => {
           requireLive();
-          if (owner !== resolver || nativeInputs.has(input.nativeMessageId)) throw new TurnDispatchRejectedError('Native input owner changed');
+          if (owner !== resolver || nativeInputs.has(messageId)) throw new TurnDispatchRejectedError('Native input owner changed');
           options.policy.validateSendOptions?.(sendOptions);
-          const entry = makeEntry(input.nativeMessageId, sendOptions.signal);
-          entry.nativeId = input.nativeMessageId; nativeInputs.set(entry.nativeId, entry);
+          const entry = makeEntry(messageId, sendOptions.signal);
+          entry.nativeId = messageId; nativeInputs.set(entry.nativeId, entry);
           try {
             await options.policy.beforeInput(message, sendOptions);
             requireLive();

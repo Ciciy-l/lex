@@ -44,7 +44,7 @@ export function preparedNativeMessage(message: UserMessage, text: string): UserM
 
 /** Native images must already carry an imported identity for durable/remote history. */
 export function nativeInputQueueItem(input: AgentNativeInputRequest, createOpts: AgentInputCreateOpts): AgentInputQueuedMessage {
-  const text = nativeText(input.message), clientId = input.nativeMessageId;
+  const text = nativeText(input.message), clientId = input.nativeMessageId ?? input.submissionId;
   const images: Array<{ url: string; mimeType: string; originalName: string }> = [];
   const files: Array<{ name: string; path: string }> = [];
   if (Array.isArray(input.message.content)) for (const block of input.message.content) {
@@ -81,6 +81,7 @@ export function bindNativeSessionInput(session: Session, deps: NativeInputBindin
     assertCurrent();
     const item = nativeInputQueueItem(input, createOpts);
     if (input.nativeTurnId) {
+      if (!input.nativeMessageId) throwIpcError('PRECONDITION_FAILED', 'Native steering has no recorded message identity');
       const generation = session.getTurnGeneration();
       const checkTurn = () => {
         assertCurrent();
@@ -103,7 +104,7 @@ export function bindNativeSessionInput(session: Session, deps: NativeInputBindin
       return;
     }
     await deps.coordinator.acceptNativeInput(session.id, item, {
-      session, messageId: input.nativeMessageId, signal: input.signal,
+      session, messageId: item.clientId, signal: input.signal,
       buildMessage: head => preparedNativeMessage(input.message, head.text),
       dispatch: async (_id, message, _create, options) => deps.withIdleSendLock(session.id, async () => {
         assertCurrent();

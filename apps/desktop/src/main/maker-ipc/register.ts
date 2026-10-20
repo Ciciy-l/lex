@@ -4764,7 +4764,7 @@ export function wireSessionToIpc(
       ...nativeDeps,
       isCurrent,
       captureConsumption: (current, input) => captureNativeInputConsumption({
-        sessionId: current.id, clientId: input.nativeMessageId,
+        sessionId: current.id, clientId: input.nativeMessageId ?? input.submissionId,
         nativeSessionId: input.nativeSessionId, nativeTurnId: input.nativeTurnId!,
         isCurrent: () => isCurrent(current) && current.sdkSessionId === input.nativeSessionId,
       }),
@@ -12733,13 +12733,13 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       enqueueDurableWrite(`pi-entry-link:${sessionId}:${clientId}`, () =>
         patchMessageAgentMeta(sessionId, clientId, { piEntryId }),
       ),
-    captureNativeUserMessageLink: ({ session, clientId, expectedUuid, expectedClearBoundaryMs }) => {
+    captureNativeUserMessageLink: ({ session, clientId, expectedUuid, expectedClearBoundaryMs, origin }) => {
       const coordinator = agentInputCoordinatorHolder;
       const generation = coordinator?.getGeneration(session.id);
       const nativeSessionId = session.sdkSessionId;
       if (!nativeSessionId || nativeSessionId === '<pending>') return async () => false;
       const link = captureNativeUserMessageLink({ sessionId: session.id, clientId, expectedUuid, nativeSessionId,
-        expectedClearBoundaryMs, isCurrent: () => maker.getSession(session.id) === session
+        expectedClearBoundaryMs, origin, isCurrent: () => maker.getSession(session.id) === session
           && session.sdkSessionId === nativeSessionId && session.getStatus?.() === 'active'
           && agentInputCoordinatorHolder === coordinator
           && (!coordinator || (generation !== undefined && coordinator.isGenerationCurrent(session.id, generation))),

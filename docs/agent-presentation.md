@@ -604,9 +604,14 @@ protocol compatibility must therefore remain explicit product gates.
 Explicit local OMP presentation now selects the ordinary Main PTY factory after
 the same managed model/provider, prompt, permission, Skill and host-tool startup
 preparation as RPC. The original interactive OMP loads a task-scoped official
-extension. GUI sends use `sendUserMessage`; native input is held at the context
-hook until its actual journal row is admitted through Core Session. GUI receipts
-bind that native row to the existing product message. Stop uses `ctx.abort`,
+extension. GUI sends use `sendUserMessage`. In OMP 18.10.4, provider context is
+prepared before the input events allocate a journal row. The context hook first
+admits a distinct bridge submission through Core Session and installs the
+host-prepared bytes. The official `before_provider_request` hook then requires
+the unique matching real journal row before permitting the original request;
+it does not rewrite provider payloads. Native and GUI receipts bind that real
+row to the existing product message, without presenting a submission ID as a
+native ID or native input as plugin input. Stop uses `ctx.abort`,
 and extension `agent_end.willContinue` determines the final product boundary.
 History resume requires the existing absolute session file; missing history or
 an unconfirmed command never falls back to another task or automatically replays.

@@ -748,23 +748,31 @@ export class Session {
       }
     };
     assertCurrent();
-    if (!input.nativeMessageId || (input.source && (input.source.sessionId !== nativeSessionId
-      || input.source.messageId !== input.nativeMessageId))) {
+    const pendingReceipt = input.submissionId !== undefined;
+    if (pendingReceipt ? (this.agentKind !== 'omp' || !input.submissionId || input.submissionId.length > 256
+      || input.nativeMessageId !== undefined || input.source !== undefined || input.nativeTurnId !== undefined
+      || input.consumption !== undefined) : (!input.nativeMessageId || (input.source &&
+        (input.source.sessionId !== nativeSessionId || input.source.messageId !== input.nativeMessageId)))) {
       throw new TurnDispatchRejectedError('Native input message identity changed');
     }
     const accept = input.accept.bind(input);
     let attempted = false, accepted = false;
     await binding.listener({
-      nativeSessionId, nativeMessageId: input.nativeMessageId,
+      nativeSessionId, ...(input.submissionId !== undefined ? { submissionId: input.submissionId }
+        : { nativeMessageId: input.nativeMessageId, ...(input.source ? { source: structuredClone(input.source) } : {}) }),
       ...(input.nativeTurnId ? { nativeTurnId: input.nativeTurnId } : {}),
       ...(input.consumption ? { consumption: input.consumption } : {}),
       message: structuredClone(input.message),
-      ...(input.source ? { source: structuredClone(input.source) } : {}), signal,
+      signal,
       accept: async (message, options) => {
         assertCurrent();
         if (attempted) throw new TurnDispatchRejectedError('Native input was already admitted');
         attempted = true;
-        await accept(message, { ...options, signal: options.signal ? AbortSignal.any([signal, options.signal]) : signal });
+        await accept(message, { ...options, signal: options.signal ? AbortSignal.any([signal, options.signal]) : signal }, {
+          signal: binding.controller.signal,
+          isCurrent: () => !binding.controller.signal.aborted && !this.terminationStarted && this.status === 'active'
+            && this.nativeInputBinding === binding && nativeSessionId === this.sdkSessionId,
+        });
         assertCurrent();
         accepted = true;
       },
