@@ -96,14 +96,47 @@ original session file, then exactly one new native input and GUI result. The
 provider count stayed 21 through recovery and became 22 only after that input;
 the actual row `a9da6f9e` appears in both native and product history, with usage
 120. The earlier failed reconnect and a premature focus assertion during
-startup remain recorded. A clean idle CLI exit still projects an inaccurate
-unexpected-exit error; correcting that lifecycle notice remains separate work.
+startup remain recorded. A clean idle CLI exit projected an inaccurate
+unexpected-exit error. The adapter now distinguishes a confirmed idle, clean
+native exit from a pending admission, active turn, signal or nonzero exit.
+That correction is covered by focused lifecycle tests; the running window has
+not loaded the new Main/Core code yet.
+
+A separate ordinary GUI-first Pi task was created through the product page,
+with a real RPC input and no native presentation metadata. Switching that idle
+task to TUI retired the original RPC process and resumed its exact JSONL file
+in the interactive process. The provider stayed at request 23 through the
+switch; one explicit native continuation produced request 24 and native row
+`563da637`. Both earlier GUI history and the unsent GUI draft remained when
+switching back. `rc1-pi-window2/pi-sdk-ui32-ordinary-gui-rpc-first.json`,
+`pi-sdk-ui33-upgrade-original-rpc-history.json`,
+`pi-sdk-ui34-same-history-native-continuation.json` and
+`pi-sdk-after-native-upgrade.json` retain the actual process, file and result.
+This verifies the SDK-only production upgrade path on current code; an actual
+pre-release user profile was not available in the isolated environment.
+
+The zero-GUI Claude entry exposed a different startup defect: automatic Library
+directory synchronization called an absent native handle setter, and failure
+of both apply and rollback terminated the new CLI before any prompt. Native
+directory controls now confirm only the exact frozen launch/policy snapshot.
+Actual changes reject without altering either side; a rollback to the original
+snapshot remains valid. Hot directory changes still require explicit same-task
+reopening, and this startup correction has not yet passed a new window check.
+The failed empty task and zero model requests remain recorded.
+
+OMP previously projected live context but never persisted native turn token
+totals in the Desktop usage pipeline. The terminal event now carries actual
+per-turn token/cache facts; Main records them once, without inferring a bill.
+Context remains the latest request and any reported cost remains cumulative.
+Focused translator/pipeline checks cover the correction; the current window
+still runs the earlier Main/Core code, so a live usage-total fix is not claimed.
 
 These results use a Windows isolated profile and loopback model. They do not
 establish real-provider, packaged or other-platform acceptance, native advanced
 command parity, or restoration of unsent GUI drafts across Desktop restarts.
-Migration of an older SDK-only Pi runtime also needs its own ordinary-window
-check; reopening this original native session file does not prove that path.
+GUI drafts are currently held only in Renderer memory, with no durable
+composer store. Cross-Desktop-restart draft recovery still needs a Main-owned,
+owner-scoped storage path and its own restart acceptance.
 
 ## Incremental delivery and acceptance
 
