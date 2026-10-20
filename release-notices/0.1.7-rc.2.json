@@ -1,0 +1,61 @@
+{
+  "version": "0.1.7-rc.2",
+  "date": "2026-10-21",
+  "contentByLocale": {
+    "zh-CN": {
+      "intro": "Lex 0.1.7-rc.2 预发布版改善桌面四种 Agent 引擎的主要 GUI/TUI 交互，并支持重启后恢复已保存的草稿。",
+      "topics": [
+        { "id": "same-task-switching", "title": "同一任务，切换继续", "text": "Claude Code、Codex、Pi 与 OMP 的本地新任务可直接从原生 TUI 发送首条消息；GUI/TUI 来回切换沿用原任务与对话记录。停止生成后可明确发送新消息，状态不明的输入不会自动重发。" },
+        { "id": "durable-drafts", "title": "草稿跨重启恢复", "text": "原任务与新任务分别保存草稿；已保存的文本、附件和图片批注可在桌面端重启后恢复，发送或丢弃后清理。尚未保存的最后编辑不保证在硬中断后恢复。" },
+        { "id": "engine-state-and-usage", "title": "引擎状态与用量", "text": "修正 Pi 正常空闲退出被误报为异常的问题，改善 OMP 真实消息用量的累计显示，重新打开任务不重复累加。" },
+        { "id": "omp-recap-mitigation", "title": "OMP 自动 recap 的有限规避", "text": "OMP 原生任务暂时关闭自动 recap，规避已观察到的空闲断连；显式 TUI 设置仍可能重新开启。/btw、/omfg 与其它辅助并发未验，不代表所有原生辅助功能已对齐。" },
+        { "id": "verification-scope", "title": "验证范围", "text": "本次交互实测使用 Windows 专有模拟模型，真实供应商、macOS/Linux 与高级工具未逐项实测。GUI/TUI 可用功能仍有差异。" },
+        { "id": "upgrade", "title": "升级至预发布版", "text": "0.1.7-rc.2 仅进入 beta 更新通道，正式更新通道仍为 0.1.6，官网默认下载继续选择稳定版。下载入口：https://github.com/Ciciy-l/lex/releases 。Android 保持包名 io.github.ciciyl.lex 与永久签名，可直接覆盖安装，请勿先卸载。暂不提供 iOS 安装包。" }
+      ]
+    },
+    "zh-TW": {
+      "intro": "Lex 0.1.7-rc.2 預發佈版改善桌面四種 Agent 引擎的主要 GUI/TUI 互動，並支援重新啟動後還原已儲存的草稿。",
+      "topics": [
+        { "id": "same-task-switching", "title": "同一任務，切換繼續", "text": "Claude Code、Codex、Pi 與 OMP 的本機新任務可直接從原生 TUI 傳送第一則訊息；GUI/TUI 來回切換沿用原任務與對話記錄。停止生成後可明確傳送新訊息，狀態不明的輸入不會自動重送。" },
+        { "id": "durable-drafts", "title": "重新啟動後還原草稿", "text": "原任務與新任務分別儲存草稿；已儲存的文字、附件與圖片註記可在桌面端重新啟動後還原，傳送或捨棄後清除。尚未儲存的最後編輯不保證在強制中斷後還原。" },
+        { "id": "engine-state-and-usage", "title": "引擎狀態與用量", "text": "修正 Pi 正常閒置結束被誤報為異常的問題，改善 OMP 實際訊息用量的累計顯示，重新開啟任務不會重複累加。" },
+        { "id": "omp-recap-mitigation", "title": "OMP 自動 recap 的有限規避", "text": "OMP 原生任務暫時關閉自動 recap，規避已觀察到的閒置斷線；明確修改 TUI 設定仍可能重新開啟。/btw、/omfg 與其他輔助並行尚未驗證，不代表所有原生輔助功能已對齊。" },
+        { "id": "verification-scope", "title": "驗證範圍", "text": "本次互動實測使用 Windows 專用模擬模型，實際供應商、macOS/Linux 與進階工具尚未逐項實測。GUI/TUI 可用功能仍有差異。" },
+        { "id": "upgrade", "title": "升級至預發佈版", "text": "0.1.7-rc.2 僅進入 beta 更新渠道，正式更新渠道仍為 0.1.6，官網預設下載繼續選擇穩定版。下載入口：https://github.com/Ciciy-l/lex/releases 。Android 保持套件名稱 io.github.ciciyl.lex 與永久簽章，可直接覆蓋安裝，請勿先解除安裝。暫不提供 iOS 安裝包。" }
+      ]
+    },
+    "en": {
+      "intro": "Lex 0.1.7-rc.2 improves everyday GUI/TUI interaction across four desktop Agent engines and restores saved drafts after desktop restarts.",
+      "topics": [
+        { "id": "same-task-switching", "title": "Switch Views and Continue the Same Task", "text": "New local Claude Code, Codex, Pi and OMP tasks can send their first message directly in the native TUI. Switch between GUI and TUI with the same task and conversation history. After stopping generation, explicitly send a new message; input with an unknown delivery status is never resent automatically." },
+        { "id": "durable-drafts", "title": "Restore Drafts After Restart", "text": "Task and new-task drafts are saved separately. Saved text, attachments and image annotations restore after a desktop restart; sending or discarding clears the draft. The last edits not yet saved are not guaranteed to survive a hard interruption." },
+        { "id": "engine-state-and-usage", "title": "Engine State and Usage", "text": "Fixes Pi's normal idle exit being reported as an error and improves cumulative usage from actual OMP messages. Reopening a task does not count that usage again." },
+        { "id": "omp-recap-mitigation", "title": "Limited Mitigation for OMP Automatic Recap", "text": "OMP native tasks temporarily disable automatic recap to avoid the observed idle disconnect. Explicit TUI settings can re-enable it. /btw, /omfg and other auxiliary concurrency remain unverified; full native feature parity is not claimed." },
+        { "id": "verification-scope", "title": "Verification Scope", "text": "Interactive checks used a dedicated simulated model on Windows. Live providers, macOS/Linux and advanced tools have not been individually verified. Available GUI/TUI features still differ." },
+        { "id": "upgrade", "title": "Upgrade to the Prerelease", "text": "0.1.7-rc.2 enters only the beta update channel. Stable remains on 0.1.6, and the website's default downloads continue to select stable. Downloads: https://github.com/Ciciy-l/lex/releases . Android keeps package io.github.ciciyl.lex and its permanent signing certificate. Install over the existing app without uninstalling first. No iOS package is available." }
+      ]
+    },
+    "ja": {
+      "intro": "Lex 0.1.7-rc.2 は、デスクトップの4種類の Agent エンジンで日常的な GUI/TUI 操作を改善し、デスクトップの再起動後に保存済みの下書きを復元するプレリリースです。",
+      "topics": [
+        { "id": "same-task-switching", "title": "画面を切り替えて同じタスクを継続", "text": "Claude Code、Codex、Pi、OMP の新しいローカルタスクでは、ネイティブ TUI から最初のメッセージを直接送れます。GUI/TUI を切り替えても同じタスクと会話履歴を引き継ぎます。生成を停止した後は新しいメッセージを明示的に送れます。配信状態が不明な入力は自動で再送しません。" },
+        { "id": "durable-drafts", "title": "再起動後に下書きを復元", "text": "既存タスクと新規タスクの下書きを別々に保存します。保存済みのテキスト、添付ファイル、画像への注釈はデスクトップの再起動後に復元され、送信または破棄すると消去されます。未保存の最後の編集内容は、強制終了後の復元を保証しません。" },
+        { "id": "engine-state-and-usage", "title": "エンジンの状態と使用量", "text": "Pi がアイドル状態で正常終了した際にエラーとして報告される問題を修正し、OMP の実際のメッセージに基づく累積使用量の表示を改善しました。タスクを開き直しても使用量を重複加算しません。" },
+        { "id": "omp-recap-mitigation", "title": "OMP 自動 recap の限定的な回避策", "text": "確認されたアイドル時の切断を避けるため、OMP のネイティブタスクでは自動 recap を一時的に無効にしています。TUI の設定を明示的に変更すると再び有効になる場合があります。/btw、/omfg などの補助的な並行処理は未検証であり、ネイティブ機能の完全な同等性は保証しません。" },
+        { "id": "verification-scope", "title": "検証範囲", "text": "操作の実測には Windows 上の専用模擬モデルを使用しました。実際のプロバイダー、macOS/Linux、高度なツールは個別に検証していません。GUI/TUI で利用できる機能には引き続き違いがあります。" },
+        { "id": "upgrade", "title": "プレリリースへの更新", "text": "0.1.7-rc.2 は beta 更新チャネルのみで配信します。正式チャネルは 0.1.6 のままで、公式サイトの既定のダウンロードも安定版を選択します。ダウンロード：https://github.com/Ciciy-l/lex/releases 。Android はパッケージ名 io.github.ciciyl.lex と永続署名を維持します。先にアンインストールせず、上書きインストールしてください。iOS パッケージは提供していません。" }
+      ]
+    },
+    "ko": {
+      "intro": "Lex 0.1.7-rc.2는 데스크톱의 네 가지 Agent 엔진에서 일상적인 GUI/TUI 사용을 개선하고 데스크톱 재시작 후 저장된 초안을 복원하는 사전 릴리스입니다.",
+      "topics": [
+        { "id": "same-task-switching", "title": "화면을 전환하며 같은 작업 계속", "text": "새 로컬 Claude Code, Codex, Pi, OMP 작업은 네이티브 TUI에서 첫 메시지를 바로 보낼 수 있습니다. GUI/TUI를 전환해도 같은 작업과 대화 기록을 이어갑니다. 생성을 중지한 뒤 새 메시지를 직접 보낼 수 있으며 전송 상태를 알 수 없는 입력은 자동으로 다시 보내지 않습니다." },
+        { "id": "durable-drafts", "title": "재시작 후 초안 복원", "text": "기존 작업과 새 작업의 초안을 따로 저장합니다. 저장된 텍스트, 첨부 파일, 이미지 주석은 데스크톱 재시작 후 복원되며 보내거나 버리면 지워집니다. 아직 저장되지 않은 마지막 편집 내용은 강제 종료 후 복원을 보장하지 않습니다." },
+        { "id": "engine-state-and-usage", "title": "엔진 상태와 사용량", "text": "Pi가 유휴 상태에서 정상 종료했을 때 오류로 표시되는 문제를 수정하고 실제 OMP 메시지에 기반한 누적 사용량 표시를 개선했습니다. 작업을 다시 열어도 사용량을 중복 합산하지 않습니다." },
+        { "id": "omp-recap-mitigation", "title": "OMP 자동 recap의 제한적 우회", "text": "확인된 유휴 상태 연결 끊김을 피하기 위해 OMP 네이티브 작업의 자동 recap을 일시적으로 끕니다. TUI 설정을 직접 변경하면 다시 켜질 수 있습니다. /btw, /omfg 및 기타 보조 동시 실행은 검증하지 않았으며 모든 네이티브 기능의 동등성을 보장하지 않습니다." },
+        { "id": "verification-scope", "title": "검증 범위", "text": "대화형 실측에는 Windows의 전용 모의 모델을 사용했습니다. 실제 제공자, macOS/Linux 및 고급 도구는 개별 검증하지 않았습니다. GUI/TUI에서 사용할 수 있는 기능에는 여전히 차이가 있습니다." },
+        { "id": "upgrade", "title": "사전 릴리스로 업데이트", "text": "0.1.7-rc.2는 beta 업데이트 채널에만 배포합니다. 정식 채널은 0.1.6을 유지하며 웹사이트의 기본 다운로드도 안정 버전을 선택합니다. 다운로드: https://github.com/Ciciy-l/lex/releases . Android는 패키지 이름 io.github.ciciyl.lex와 영구 서명을 유지합니다. 먼저 삭제하지 말고 기존 앱 위에 설치하세요. iOS 패키지는 제공하지 않습니다." }
+      ]
+    }
+  }
+}

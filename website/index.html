@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Lex is a community desktop distribution based on Cindy — a workspace for Claude Code, Codex, Pi, OMP, files, Git and collaboration.">
+  <meta name="description" content="Lex is an open-source AI workspace for Claude Code, Codex, Pi and OMP, with GUI/TUI task views, files, Git and Workers in one window.">
   <meta name="theme-color" content="#090b13">
   <meta name="color-scheme" content="dark light">
   <meta property="og:title" content="Lex — A real workspace for every agent">
-  <meta property="og:description" content="A community desktop distribution based on Cindy, built around one workspace for Claude Code, Codex, Pi, OMP, files, Git, and collaboration.">
+  <meta property="og:description" content="Plan in conversation, continue tasks in GUI or TUI, and keep files, Git and Workers close in Lex.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://ciciy-l.github.io/lex/">
   <meta property="og:image" content="https://raw.githubusercontent.com/Ciciy-l/lex/main/apps/desktop/src/renderer/assets/branding/lex-assistant-hero.png">
@@ -73,11 +73,11 @@
         <span class="brand-symbol" aria-hidden="true"></span>
         <svg class="wordmark wordmark-dark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 423 145" role="img" aria-label="Lex"><path fill="#fbfbfb" d="M18 14h34v98h72v29H18V14Zm128 0h116v29h-82v20h72v28h-72v21h82v29H146V14Zm137 0h41l24 34 25-34h41l-46 62 49 65h-42l-27-38-28 38h-42l50-65-47-62Z"/><path fill="#8f78ff" d="m119 14 18 15-18 15Z"/></svg>
         <svg class="wordmark wordmark-light" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 423 145" role="img" aria-label="Lex"><path fill="#101318" d="M18 14h34v98h72v29H18V14Zm128 0h116v29h-82v20h72v28h-72v21h82v29H146V14Zm137 0h41l24 34 25-34h41l-46 62 49 65h-42l-27-38-28 38h-42l50-65-47-62Z"/><path fill="#7c5cff" d="m119 14 18 15-18 15Z"/></svg>
-        <span id="brand-version" class="brand-version">RC channel</span>
+        <span id="brand-version" class="brand-version">Lex</span>
       </a>
       <nav class="nav-links" aria-label="Primary navigation">
         <a href="#workspace"><span data-lang="en">Workspace</span><span data-lang="zh">工作区</span></a>
-        <a href="#relationship"><span data-lang="en">Lex + Cindy</span><span data-lang="zh">Lex 与 Cindy</span></a>
+        <a href="#workflow"><span data-lang="en">Workflow</span><span data-lang="zh">工作流程</span></a>
         <a href="#download-section"><span data-lang="en">Download</span><span data-lang="zh">下载</span></a>
         <a href="https://github.com/Ciciy-l/lex">GitHub</a>
       </nav>
@@ -96,13 +96,13 @@
       <div class="hero-copy">
         <p class="kicker"><span class="signal"></span><span data-lang="en">Community desktop / agent ready</span><span data-lang="zh">社区桌面版 / Agent 就绪</span></p>
         <h1><span data-lang="en">Give every agent<br><span class="hero-accent">a real workspace.</span></span><span data-lang="zh"><span class="headline-phrase">给每一个 Agent</span><br><span class="hero-accent">一个真正的<span class="headline-phrase">工作台。</span></span></span></h1>
-        <p class="lede" data-lang="en">Lex is a community desktop distribution based on Cindy. Keep the conversation that understands your work, and give Claude Code, Codex, Pi, OMP, files, Git and Workers one local workspace that stays visible and under control.</p>
-        <p class="lede" data-lang="zh">Lex 是基于 Cindy 的社区桌面与移动端发行版。保留理解工作的主对话，再加入一个本地工作台，让 Claude Code、Codex、Pi、OMP、文件、Git 与 Worker 始终可见、可控。</p>
+        <p class="lede" data-lang="en">Plan in conversation, work with Claude Code, Codex, Pi or OMP, and inspect the result in the same window. Lex brings your tasks, terminals, files, Git and Workers into one local workspace.</p>
+        <p class="lede" data-lang="zh">通过对话梳理工作，用 Claude Code、Codex、Pi 或 OMP 推进任务，在同一窗口查看结果。Lex 把任务、终端、文件、Git 与 Worker 放进同一个本地工作台。</p>
         <div class="hero-actions">
           <a id="download" class="button primary" href="https://github.com/Ciciy-l/lex/releases"><span id="download-label-en" data-lang="en">Download for your platform</span><span id="download-label-zh" data-lang="zh">下载当前平台版本</span><span class="button-arrow" aria-hidden="true">↓</span></a>
           <a class="button" href="https://github.com/Ciciy-l/lex"><span data-lang="en">Explore the source</span><span data-lang="zh">查看开源代码</span><span class="button-arrow" aria-hidden="true">↗</span></a>
         </div>
-        <div class="release-line" aria-live="polite"><span id="release"><span data-lang="en">Checking the latest release…</span><span data-lang="zh">正在读取最新版本…</span></span><span class="release-chip"><span data-lang="en">preview channel</span><span data-lang="zh">预发布通道</span></span></div>
+        <div class="release-line" aria-live="polite"><span id="release"><span data-lang="en">Checking the latest release…</span><span data-lang="zh">正在读取最新版本…</span></span><span class="release-chip"><span data-lang="en">stable downloads</span><span data-lang="zh">稳定版下载</span></span></div>
       </div>
       <div class="hero-stage" aria-label="Lex assistant and local workspace">
         <div class="stage-code"><b>LEX // 01</b>LOCAL WORKSPACE<br>STATUS: READY</div>
@@ -126,12 +126,12 @@
     <section id="workspace" class="wrap section">
       <div class="section-heading">
         <div><span class="section-index">01 / Workspace</span><h2 data-lang="en">One work surface. Every useful context stays close.</h2><h2 data-lang="zh">一块工作面，所有关键上下文都在手边。</h2></div>
-        <p class="section-lede" data-lang="en">Lex uses Cindy's original content tabs instead of building a second workspace. The tool rail navigates; the main area is where work opens and continues.</p><p class="section-lede" data-lang="zh">Lex 复用 Cindy 原有内容页签，不再制造第二个内容区。工具区负责导航，主内容区负责打开并延续工作。</p>
+        <p class="section-lede" data-lang="en">Keep the conversation beside your tools. Open terminals, files and browser tabs, follow Workers, and inspect Git changes without losing the task in progress.</p><p class="section-lede" data-lang="zh">让对话和工具相邻：打开终端、文件与浏览器页签，跟进 Worker，检查 Git 变更，随时回到正在推进的任务。</p>
       </div>
       <div class="bento">
         <article class="feature-card wide">
           <span class="card-number">01.1 / SAME CONTENT AREA</span><h3 data-lang="en">Conversation beside a capable workbench</h3><h3 data-lang="zh">主对话旁，是一套完整工作台</h3>
-          <p data-lang="en">Terminal, files, browser, Worker conversations and Review open as normal content tabs. Files, background tasks, collaboration and Git remain available from the fixed tool rail.</p><p data-lang="zh">终端、文件、浏览器、Worker 对话和审查都在原内容区打开；文件、后台任务、协同和 Git 则留在固定工具区随时导航。</p>
+          <p data-lang="en">Terminal, files, browser, Worker conversations and Review open as content tabs. Files, background tasks, collaboration and Git remain available from the fixed tool rail.</p><p data-lang="zh">终端、文件、浏览器、Worker 对话和审查都在内容区打开；文件、后台任务、协同和 Git 则留在固定工具区随时导航。</p>
           <div class="flow-map" aria-hidden="true"><div class="flow-column"><div class="flow-title">Lead</div><div class="flow-item active"><i></i>Main conversation</div><div class="flow-item"><i></i>Current workspace</div></div><div class="flow-column main"><div class="flow-title">Content tabs</div><div class="flow-item active"><i></i>Terminal · Files · Browser</div><div class="flow-item"><i></i>Worker UI · Review</div><div class="flow-item"><i></i>Split panes stay together</div></div><div class="flow-column"><div class="flow-title">Tool rail</div><div class="flow-item"><i></i>Files · Tasks</div><div class="flow-item"><i></i>Collaboration · Git</div></div></div>
         </article>
         <article class="feature-card">
@@ -147,18 +147,20 @@
       </div>
     </section>
 
-    <section id="relationship" class="wrap section">
+    <section id="workflow" class="wrap section">
       <div class="section-heading">
-        <div><span class="section-index">02 / Open lineage</span><h2 data-lang="en">Built on Cindy.<br>Shaped as Lex.</h2><h2 data-lang="zh">基于 Cindy，<br>形成 Lex 自己的方向。</h2></div>
-        <p class="section-lede" data-lang="en">The boundary is part of the product, not fine print. Lex owns the community desktop and mobile experience; Cindy continues to provide the online services users choose at sign-in.</p><p class="section-lede" data-lang="zh">这不是藏在角落里的小字，而是产品边界本身：Lex 负责社区桌面与移动端体验；登录时选择的在线服务继续由 Cindy 提供。</p>
+        <div><span class="section-index">02 / Workflow</span><h2 data-lang="en">Switch views.<br>Continue the task.</h2><h2 data-lang="zh">切换视图，<br>继续同一任务。</h2></div>
+        <p class="section-lede" data-lang="en">The 0.1.7-rc.2 preview focuses on everyday GUI/TUI sending, task recovery and saved drafts. Preview packages appear in GitHub Releases when published; the default download remains stable.</p><p class="section-lede" data-lang="zh">0.1.7-rc.2 预览聚焦日常 GUI/TUI 收发、任务恢复与草稿保存。预发布安装包发布后可在 GitHub Releases 获取，默认下载仍为稳定版。</p>
       </div>
       <div class="relationship">
-        <article class="boundary-card lex"><span class="boundary-tag"><i></i>Lex</span><h3 data-lang="en">Community desktop and mobile distribution</h3><h3 data-lang="zh">社区桌面与移动端发行版</h3><p data-lang="en">An independent roadmap focused on developer workflows, with selected upstream fixes adopted when needed.</p><p data-lang="zh">沿 Lex 自己的路线发展，专注开发者工作流；按需吸收上游修复，不再频繁同步新特性。</p><ul class="boundary-list"><li><strong data-lang="en">Desktop workspace</strong><strong data-lang="zh">桌面工作台</strong><span>Lex</span></li><li><strong data-lang="en">Installer & updates</strong><strong data-lang="zh">安装包与更新</strong><span>Lex</span></li><li><strong data-lang="en">Website & support</strong><strong data-lang="zh">官网与支持</strong><span>Lex</span></li></ul></article>
+        <article class="boundary-card lex"><span class="boundary-tag"><i></i>GUI / TUI</span><h3 data-lang="en">One task, two ways to work</h3><h3 data-lang="zh">一个任务，两种工作方式</h3><p data-lang="en">Start a local task directly in the native TUI, continue it in GUI, and keep the same history. After stopping generation, explicitly send a new message when ready.</p><p data-lang="zh">本地新任务可直接从原生 TUI 首发，切到 GUI 后沿用同一份对话记录。停止生成后，准备好再明确发送新消息。</p><ul class="boundary-list"><li><strong>Claude Code · Codex</strong><span>GUI / TUI</span></li><li><strong>Pi · OMP</strong><span>GUI / TUI</span></li></ul></article>
         <div class="connector" aria-hidden="true"></div>
-        <article class="boundary-card"><span class="boundary-tag"><i></i>Cindy</span><h3 data-lang="en">Official online services</h3><h3 data-lang="zh">官方在线服务</h3><p data-lang="en">The service foundation remains connected instead of being stripped away.</p><p data-lang="zh">在线服务基础继续连接，而不是被强行剥离。</p><ul class="boundary-list"><li><strong data-lang="en">Account & subscription</strong><strong data-lang="zh">账号与订阅</strong><span>Cindy</span></li><li><strong data-lang="en">Hosted models</strong><strong data-lang="zh">托管模型</strong><span>Cindy</span></li><li><strong data-lang="en">Device Link & remote</strong><strong data-lang="zh">设备互联与远程</strong><span>Cindy</span></li></ul></article>
+        <article class="boundary-card"><span class="boundary-tag"><i></i>Drafts</span><h3 data-lang="en">Return to what you saved</h3><h3 data-lang="zh">回来时，继续已保存的草稿</h3><p data-lang="en">Task and new-task drafts stay separate. Saved text, attachments and image annotations restore after a desktop restart; sending or discarding clears the draft.</p><p data-lang="zh">原任务与新任务分别保留草稿。已保存的文本、附件和图片批注可在桌面端重启后恢复，发送或丢弃后清理。</p><ul class="boundary-list"><li><strong data-lang="en">Text & attachments</strong><strong data-lang="zh">文本与附件</strong><span>Lex</span></li><li><strong data-lang="en">Image annotations</strong><strong data-lang="zh">图片批注</strong><span>Lex</span></li></ul></article>
       </div>
-      <p class="service-note" data-lang="en">Lex is independently maintained and is not affiliated with or endorsed by XD Inc. or Cindy. Cindy services follow Cindy's own terms, availability and support. Each platform has one Lex edition; the signed-in account determines its service region.</p>
-      <p class="service-note" data-lang="zh">Lex 由社区独立维护，与 XD Inc. 或 Cindy 不存在隶属、授权或官方背书关系。Cindy 服务遵循其官方条款、可用性与支持政策。每个平台只提供一个 Lex 版本，由登录账号决定所用服务区。</p>
+      <p class="service-note" data-lang="en">OMP native sessions temporarily disable automatic recap to avoid the observed idle disconnect. Explicit TUI settings can re-enable it; other auxiliary concurrency is unverified. Interactive checks used a simulated model on Windows. <a href="https://github.com/Ciciy-l/lex/blob/main/release-notices/0.1.7-rc.2.md">Read the preview notes</a>.</p>
+      <p class="service-note" data-lang="zh">OMP 原生任务暂时关闭自动 recap，规避已观察到的空闲断连；显式 TUI 设置仍可重新开启，其它辅助并发未验。本次交互验证使用 Windows 模拟模型。<a href="https://github.com/Ciciy-l/lex/blob/main/release-notices/0.1.7-rc.2.md">查看预览说明</a>。</p>
+      <p class="service-note" data-lang="en">Lex's self-hosted relay service is in development. Stay tuned.</p>
+      <p class="service-note" data-lang="zh">Lex 自建中转服务正在开发，敬请期待。</p>
     </section>
 
     <section id="download-section" class="wrap section">
@@ -186,7 +188,7 @@
     </section>
   </main>
 
-  <footer class="footer"><div class="wrap footer-row"><div class="footer-brand"><strong>Lex · Based on Cindy</strong><span data-lang="en">Apache-2.0 community desktop and mobile distribution</span><span data-lang="zh">Apache-2.0 社区桌面与移动端发行版</span></div><div class="footer-links"><a href="https://github.com/Ciciy-l/lex"><span data-lang="en">Source</span><span data-lang="zh">源码</span></a><a href="https://github.com/Ciciy-l/lex/issues"><span data-lang="en">Support</span><span data-lang="zh">支持</span></a><a href="https://github.com/Ciciy-l/lex/blob/main/SECURITY.en.md"><span data-lang="en">Security</span><span data-lang="zh">安全</span></a><a href="https://github.com/makecindy/cindy"><span data-lang="en">Cindy upstream</span><span data-lang="zh">Cindy 上游</span></a></div></div></footer>
+  <footer class="footer"><div class="wrap footer-row"><div class="footer-brand"><strong>Lex · Based on Cindy</strong><span data-lang="en">Apache-2.0 community desktop and mobile distribution</span><span data-lang="zh">Apache-2.0 社区桌面与移动端发行版</span></div><div class="footer-links"><a href="https://github.com/Ciciy-l/lex"><span data-lang="en">Source</span><span data-lang="zh">源码</span></a><a href="https://github.com/Ciciy-l/lex/issues"><span data-lang="en">Support</span><span data-lang="zh">支持</span></a><a href="https://github.com/Ciciy-l/lex/blob/main/SECURITY.en.md"><span data-lang="en">Security</span><span data-lang="zh">安全</span></a><a href="https://github.com/makecindy/cindy"><span data-lang="en">Cindy upstream</span><span data-lang="zh">Cindy 上游</span></a></div></div><div class="wrap"><p class="service-note" data-lang="en">Lex is independently maintained and is not affiliated with or endorsed by XD Inc. or Cindy. Cindy accounts, subscriptions and online services follow Cindy's terms, regional availability and support. Each platform has one Lex edition; the signed-in account determines its service region.</p><p class="service-note" data-lang="zh">Lex 由社区独立维护，与 XD Inc. 或 Cindy 不存在隶属、授权或官方背书关系。Cindy 账号、订阅与在线服务遵循其官方条款、区域可用性与支持政策。每个平台只提供一个 Lex 版本，由登录账号决定所用服务区。</p></div></footer>
 
   <script>
     const root=document.documentElement;
