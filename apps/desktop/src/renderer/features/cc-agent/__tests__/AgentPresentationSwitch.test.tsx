@@ -35,7 +35,7 @@ it('offers Claude and Codex native hosts while keeping an unsupported transport 
   expect(hasLocalNativePresentation(undefined)).toBe(false);
   expect(hasLocalNativePresentation('unknown-engine')).toBe(false);
   expect(hasLocalNativePresentation('codex')).toBe(true);
-  expect(hasLocalNativePresentation('pi')).toBe(false); expect(hasLocalNativePresentation('omp')).toBe(false);
+  expect(hasLocalNativePresentation('pi')).toBe(false); expect(hasLocalNativePresentation('omp')).toBe(true);
   const i18n = createInstance();
   await i18n.init({ lng: 'en', resources: { en: { translation: en } } });
   const change = vi.fn();

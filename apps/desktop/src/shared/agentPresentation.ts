@@ -7,7 +7,7 @@ export const AGENT_PRESENTATION_CHANNEL = 'maker:presentation:v1';
 /** These engines have a task-owned interactive host, rather than a second CLI. */
 export function hasLocalNativePresentation(agentKind: string | undefined): boolean {
   const kind = agentKind === 'cc' ? dbToMakerAgentKind(agentKind) : agentKind;
-  return kind === 'codex' || kind === 'claude-code';
+  return kind === 'codex' || kind === 'claude-code' || kind === 'omp';
 }
 export type AgentPresentationRequest = { sessionId: string } & (
   | { action: 'status' }

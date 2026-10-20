@@ -333,7 +333,7 @@ export class OmpAgent extends BaseAgent {
       readonly permissionMode: PermissionMode;
       readonly resumeSessionFile?: string;
       readonly permitInitialRecovery: boolean;
-    }): Promise<OmpSessionRuntime> => {
+    }): Promise<OmpSessionRuntime | AgentSessionHandle> => {
       const runtimeInstanceId = runtimeNumber === 0 ? firstRuntimeInstanceId : randomUUID();
       runtimeNumber += 1;
       const appendSystemPromptKey = appendSystemPrompt === undefined
@@ -347,6 +347,7 @@ export class OmpAgent extends BaseAgent {
       let cleanupIsolatedRuntimeHome: () => Promise<void> = async () => undefined;
       let host: OmpProcessHost | undefined;
       let hostTools: OmpHostToolBridge | undefined;
+      let nativeResourcesTransferred = false;
       let unregisterCommandCatalog: () => void = () => undefined;
       let callbacks: OmpSessionRuntimeCallbacks | undefined;
       let activated = false;
@@ -448,6 +449,24 @@ export class OmpAgent extends BaseAgent {
           isolatedProbe,
           harnessSettings?.subagentModel,
         );
+        if (opts.nativePresentation === true && input.permitInitialRecovery) {
+          const createNative = this.deps.createLocalOmpNativeSession;
+          if (!createNative || remoteRuntime || opts.reviewMode || isolatedProbe || opts.vendorOptions?.orcaRole)
+            throw new Error('OMP native presentation requires the ordinary local interactive host');
+          if (!opts.sessionId) throw new Error('OMP native presentation requires an existing product task identity');
+          nativeResourcesTransferred = true;
+          return await createNative({
+            sessionId: opts.sessionId, model: opts.model, providerId: sourceProviderId,
+            permissionMode: input.permissionMode, effort: opts.effort,
+            resumeSessionId: input.resumeSessionFile, executable: this.resolveLocalBinaryPath(),
+            plan, hostTools: hostToolDefinitions, disabledSkillPaths: disabledSkillLaunch.identities, logger: this.deps.logger,
+            releaseResources: async () => {
+              await releaseMemory?.();
+              await cleanupRuntimeFiles?.();
+              await cleanupIsolatedRuntimeHome();
+            },
+          });
+        }
         host = await this.spawnHost(plan, forwardFrame, forwardExit, remoteRuntime);
         const activeHost = host;
         const translator = new OmpTranslator({ logger: this.deps.logger });
@@ -529,6 +548,8 @@ export class OmpAgent extends BaseAgent {
         };
         return Object.freeze(runtime);
       } catch (error) {
+        // The native host retains files/leases until its exact PTY exit is confirmed.
+        if (nativeResourcesTransferred) throw error;
         hostTools?.close();
         unregisterCommandCatalog();
         const stopped = host ? await host.stopAndWait().catch(() => false) : true;
@@ -545,12 +566,16 @@ export class OmpAgent extends BaseAgent {
       ...(opts.resumeSessionId === undefined ? {} : { resumeSessionFile: opts.resumeSessionId }),
       permitInitialRecovery: true,
     });
-    const restartRuntime: OmpPermissionRuntimeFactory = ({ permissionMode, sessionFile }) =>
-      createRuntime({
+    if ('send' in initialRuntime) return initialRuntime;
+    const restartRuntime: OmpPermissionRuntimeFactory = async ({ permissionMode, sessionFile }) => {
+      const runtime = await createRuntime({
         permissionMode,
         resumeSessionFile: sessionFile,
         permitInitialRecovery: false,
       });
+      if ('send' in runtime) throw new Error('OMP permission restart selected an incompatible transport');
+      return runtime;
+    };
     return new OmpSessionHandle({
       sessionId: initialRuntime.sessionFile,
       model: opts.model,

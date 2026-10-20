@@ -599,6 +599,28 @@ protocol compatibility must therefore remain explicit product gates.
 
 ## Pi and OMP native gates: Windows, 2026-10-18
 
+### OMP ordinary product adapter, 2026-10-20 (implementation; window acceptance pending)
+
+Explicit local OMP presentation now selects the ordinary Main PTY factory after
+the same managed model/provider, prompt, permission, Skill and host-tool startup
+preparation as RPC. The original interactive OMP loads a task-scoped official
+extension. GUI sends use `sendUserMessage`; native input is held at the context
+hook until its actual journal row is admitted through Core Session. GUI receipts
+bind that native row to the existing product message. Stop uses `ctx.abort`,
+and extension `agent_end.willContinue` determines the final product boundary.
+History resume requires the existing absolute session file; missing history or
+an unconfirmed command never falls back to another task or automatically replays.
+Launch files and leases remain until the exact native process has exited.
+
+This connects an adapter to the ordinary product entry, not just the earlier
+probe. Focused tests cover Session admission, continuation, unknown outcomes,
+same-file resume, host-tool ownership and Main cleanup. Actual new/legacy-task
+GUI/TUI switching, native approval UI and cancellation still need isolated
+window acceptance. Model/source changes use the existing managed-route rebuild;
+the native permission mode remains fixed for this process. Pi's production
+interactive extension adapter is still separate work; this does not complete
+all four engines or establish SSH, Device Link or non-Windows acceptance.
+
 Run `node scripts/agent-presentation/extension-native-probe.mjs --engine=pi` or
 `--engine=omp` explicitly. Tested managed Pi `1.2.0` and OMP `18.10.4` inside
 their original interactive terminal with a fixture-only native extension. The

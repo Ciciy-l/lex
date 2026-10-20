@@ -1949,9 +1949,11 @@ export function captureNativeUserMessageLink(target: {
   const current = () => Boolean(owner && owner === getCurrentDbClientSnapshot()
     && !isAppSessionBoundaryPending() && isOwnerBroadcastScopeCurrent(scope) && isCurrent());
   return async source => {
-    if (!current() || !owner || source.version !== 1 || source.engine !== 'claude-code'
+    const bridgeName = source.engine === 'claude-code' ? 'lex-native-bridge'
+      : source.engine === 'omp' ? 'lex-omp-native-bridge' : source.engine === 'pi' ? 'lex-pi-native-bridge' : undefined;
+    if (!current() || !owner || source.version !== 1 || !bridgeName
       || source.sessionId !== nativeSessionId || !source.messageId || source.messageId.length > 256
-      || source.origin.kind !== 'plugin' || source.origin.name !== 'lex-native-bridge'
+      || source.origin.kind !== 'plugin' || source.origin.name !== bridgeName
       || source.bridge?.sessionId !== nativeSessionId || source.bridge.messageId !== source.messageId
       || source.bridge.pluginName !== source.origin.name || !source.bridge.submissionId
       || (expectedUuid !== undefined && source.bridge.submissionId !== expectedUuid)) return false;

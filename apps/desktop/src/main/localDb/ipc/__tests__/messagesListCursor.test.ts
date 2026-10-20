@@ -1523,6 +1523,19 @@ describe('native GUI user message receipts', () => {
     } finally { f.sqlite.close(); }
   });
 
+  it('links an authenticated OMP extension receipt without treating a Claude bridge name as OMP authority', async () => {
+    const f = fixture();
+    try {
+      f.source.engine = 'omp';
+      expect(await f.link(f.source)).toBe(false);
+      f.source.origin.name = 'lex-omp-native-bridge'; f.source.bridge!.pluginName = 'lex-omp-native-bridge';
+      expect(await f.link(f.source)).toBe(true);
+      expect(JSON.parse(f.read().agent_meta)).toMatchObject({ uuid: 'native-uuid', sdkSessionId: 'native-session', nativeSource: { engine: 'omp' } });
+      f.retire(); expect(await f.link(f.source)).toBe(false);
+      expect(f.sqlite.prepare('SELECT count(*) AS n FROM messages').get()).toEqual({ n: 1 });
+    } finally { f.sqlite.close(); }
+  });
+
   it.each(['clear', 'rewind', 'delete', 'role', 'uuid', 'runtime', 'account', 'source', 'submission'])
     ('ignores a late receipt after %s changes', async change => {
       const f = fixture();
