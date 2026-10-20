@@ -752,15 +752,20 @@ History resume requires the existing absolute session file; missing history or
 an unconfirmed command never falls back to another task or automatically replays.
 Launch files and leases remain until the exact native process has exited.
 
-OMP 18.10.4 also runs idle recap requests through these extension hooks using
-`runEphemeralTurn`; those detached snapshots do not append user journal rows.
-The bridge leaves hooks reached while the native `ctx.isIdle()` is true to the
-original engine, without reserving a product input, rewriting the snapshot or
-projecting side output as a task turn. The pinned runtime reports non-idle
-throughout ordinary prompt preprocessing and its agent loop, where the same
-owner admission, real journal receipt and eight-second shared budget still
-apply. The isolated regression covers idle side hooks followed by a real input;
-it does not prove arbitrary concurrent side-request races.
+OMP 18.10.4 automatic recap reuses these hooks through `runEphemeralTurn`
+without a user journal row and caused an observed task disconnect. New and
+resumed native processes now append a private `--config` overlay containing
+only `recap.enabled: false`, after the original managed settings file. RPC
+configuration and real global/project settings are unchanged; auto compaction,
+Advisor and cache warming are not disabled. An explicit native runtime setting
+can override this overlay, so turning recap back on reintroduces the known risk.
+The rejected ambient `isIdle()` hook bypass is withdrawn: main inputs still
+require owner admission, the real journal receipt and the shared eight-second
+budget. The failing side/main preflight interleaving remains archived as
+evidence against that bypass, not a fixed concurrency regression. This limited
+workaround prevents the observed automatic recap trigger; `/btw`, `/omfg` and
+other auxiliary concurrency remain unverified. It does not establish all-side
+safety. Ordinary-window verification after loading this candidate is pending.
 
 This connects an adapter to the ordinary product entry, not just the earlier
 probe. Focused tests cover Session admission, continuation, unknown outcomes,

@@ -12,11 +12,12 @@ export async function createOmpNativeHostSession(
 ) {
   const extension = path.join(options.plan.roots.temporary, 'lex-native-extension.ts');
   const definitions = path.join(options.plan.roots.temporary, 'lex-native-tools.json');
+  const nativeSettings = path.join(options.plan.roots.temporary, 'lex-native-settings.yaml');
   let terminal: OwnedTerminal | undefined, unregister: (() => void) | undefined;
   let disposal: Promise<void> | undefined;
   const release = () => disposal ??= (async () => {
     unregister?.();
-    try { await Promise.all([fs.rm(extension, { force: true }), fs.rm(definitions, { force: true })]); }
+    try { await Promise.all([extension, definitions, nativeSettings].map(file => fs.rm(file, { force: true }))); }
     finally { await options.releaseResources(); }
   })();
   try {
@@ -26,13 +27,17 @@ export async function createOmpNativeHostSession(
     }
     await fs.mkdir(options.plan.roots.temporary, { recursive: true });
     await fs.writeFile(extension, OMP_NATIVE_EXTENSION_SOURCE, { encoding: 'utf8', mode: 0o600 });
+    // Pinned OMP's automatic recap reuses provider hooks without a journalled
+    // input. Opt out only in this native process; keep the shared RPC plan and
+    // user settings unchanged. Later explicit native runtime overrides still win.
+    await fs.writeFile(nativeSettings, 'recap:\n  enabled: false\n', { encoding: 'utf8', mode: 0o600 });
     return await createOmpNativeSession({ ...options, async launch(environment, tools) {
       const args = [...options.plan.arguments];
       if (args[0] !== '--mode' || args[1] !== 'rpc') throw new Error('OMP managed launch plan changed');
       // Keep config/model/provider/prompt/approval flags, selecting the original
       // interactive frontend. Explicit history selection never opens a picker.
       args.splice(0, 2);
-      args.push('--session-dir', options.plan.roots.sessions, '--extension', extension);
+      args.push('--config', nativeSettings, '--session-dir', options.plan.roots.sessions, '--extension', extension);
       if (options.resumeSessionId) args.push('--resume', options.resumeSessionId);
       await fs.writeFile(definitions, JSON.stringify(tools), { encoding: 'utf8', mode: 0o600 });
       const driver = createTerminal({ executable: options.executable, args, cwd: options.plan.roots.workingDir,
