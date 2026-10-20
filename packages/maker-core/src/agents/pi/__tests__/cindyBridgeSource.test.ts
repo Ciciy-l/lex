@@ -625,7 +625,8 @@ describe('cindy-bridge extension source', () => {
         "if (credentialRead && permission.mode === 'bypassPermissions')",
       );
       expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain("if (permission.mode === 'bypassPermissions' && !controlPlaneWrite) return;");
-      expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain('await ctx.ui.input(');
+      expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain('decision = await cindyHostUi(ctx).input(');
+      expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain('if (decision !== PERMISSION_ALLOW)');
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }

@@ -1,8 +1,9 @@
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { CINDY_BRIDGE_EXTENSION_SOURCE } from '../cindy-bridge-source.js';
 import { PI_NATIVE_PROVIDER_ADAPTER_SOURCE } from '../native-provider-adapter-source.js';
+import { PI_NATIVE_HOST_UI_SOURCE } from '../native-extension-source.js';
 
 type Alias = { id: string; name: string; provider: string; keyEnv?: string };
 
@@ -91,14 +92,14 @@ describe('Cindy native provider refresh bridge', () => {
     expect(h.handlers.size).toBe(1);
   });
 
-  it('acknowledges success only after applying a valid staged snapshot', async () => {
+  it.each(['rpc', 'tui'] as const)('acknowledges success only after applying a valid staged snapshot in %s', async (mode) => {
     const source = CINDY_BRIDGE_EXTENSION_SOURCE;
     const start = source.indexOf('const initialNativeSettings =');
     const end = source.indexOf('if (!currentPermissionState().reviewOnly)', start);
     expect(start).toBeGreaterThan(0);
     expect(end).toBeGreaterThan(start);
     const code = ts.transpileModule(
-      `async function setup(pi: any, nativeProviderAdapters: any, parseCindyProviderRefreshSnapshot: any) {\nconst SECRET_ENV_NAMES = new Set<string>();\n${source.slice(start, end)}\n}\n(globalThis as any).setup = setup;`,
+      `${PI_NATIVE_HOST_UI_SOURCE}\nasync function setup(pi: any, nativeProviderAdapters: any, parseCindyProviderRefreshSnapshot: any) {\nconst SECRET_ENV_NAMES = new Set<string>();\n${source.slice(start, end)}\n}\n(globalThis as any).setup = setup;`,
       { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
     ).outputText;
     const sandbox: Record<string, unknown> = { piCodingAgent: { VERSION: '1.0.0' },
@@ -111,22 +112,45 @@ describe('Cindy native provider refresh bridge', () => {
     ) => Promise<void>;
     let handler: ((args: string, ctx: unknown) => Promise<void>) | undefined;
     const applied: unknown[] = [];
+    let failApply = false;
+    let finishApply!: () => void;
     let loaded = false;
     await setup({ getSettings: () => {
       if (!loaded) throw new Error('Action methods cannot be called during extension loading');
       return { compaction: { reserveTokens: 1234 } };
     },
       registerCommand: (_name: string, command: { handler: typeof handler }) => { handler = command.handler; } },
-      { refresh: async (snapshot: unknown) => { applied.push(snapshot); } },
+      { refresh: async (snapshot: unknown) => {
+        if (failApply) throw new Error('fixture apply failure');
+        await new Promise<void>(resolve => { finishApply = resolve; });
+        applied.push(snapshot);
+      } },
       (raw, nonce) => raw === 'valid' ? { nonce, env: {}, aliases: [] } : undefined);
     loaded = true;
     const calls: Array<{ title: string; payload: unknown }> = [];
-    const ctx = { ui: { input: async (title: string, raw: string) => {
+    let staged = 'valid';
+    const input = async (title: string, raw: string) => {
       const payload = JSON.parse(raw) as unknown;
       calls.push({ title, payload });
-      return title === 'cindy:provider-refresh' ? 'valid' : undefined;
+      if (title === 'cindy:provider-refresh-ack') {
+        // A successful apply receipt must follow the actual mutation.
+        expect(applied).toHaveLength(1);
+      }
+      return title === 'cindy:provider-refresh' ? staged : undefined;
+    };
+    Object.defineProperty(sandbox, Symbol.for('lex.pi.native.host-ui'), { value:
+      async ({ title, placeholder }: { title: string; placeholder: string }) => ({ value: await input(title, placeholder) }),
+    });
+    const ctx = { mode, ui: { input: async (title: string, raw: string) => {
+      expect(mode).toBe('rpc'); // Native private requests must use the task Host.
+      return input(title, raw);
     } } };
-    await handler?.('abcdefghijklmnop', ctx);
+    const applying = handler?.('abcdefghijklmnop', ctx);
+    await vi.waitFor(() => expect(finishApply).toBeTypeOf('function'));
+    expect(calls).toEqual([{ title: 'cindy:provider-refresh', payload: { nonce: 'abcdefghijklmnop' } }]);
+    expect(applied).toEqual([]);
+    finishApply();
+    await applying;
     expect(applied).toHaveLength(1);
     expect(calls).toEqual([
       { title: 'cindy:provider-refresh', payload: { nonce: 'abcdefghijklmnop' } },
@@ -134,12 +158,19 @@ describe('Cindy native provider refresh bridge', () => {
         runtimeSettings: { version: '1.0.0', compaction: { reserveTokens: 1234 } } } },
     ]);
     calls.length = 0;
-    await handler?.('abcdefghijklmnop', { ui: { input: async (title: string, raw: string) => {
-      calls.push({ title, payload: JSON.parse(raw) });
-      return title === 'cindy:provider-refresh'
-        ? JSON.stringify({ nonce: 'abcdefghijklmnop', operation: 'inspect' }) : undefined;
-    } } });
+    staged = JSON.stringify({ nonce: 'abcdefghijklmnop', operation: 'inspect' });
+    await handler?.('abcdefghijklmnop', ctx);
     expect(applied).toHaveLength(1); // Inspection never refreshes providers or credentials.
     expect(calls.at(-1)?.payload).toMatchObject({ ok: true, runtimeSettings: { version: '1.0.0' } });
+    calls.length = 0;
+    staged = 'invalid';
+    await handler?.('abcdefghijklmnop', ctx);
+    expect(applied).toHaveLength(1);
+    expect(calls.at(-1)?.payload).toEqual({ nonce: 'abcdefghijklmnop', ok: false, code: 'INVALID_PAYLOAD' });
+    calls.length = 0;
+    staged = 'valid'; failApply = true;
+    await handler?.('abcdefghijklmnop', ctx);
+    expect(applied).toHaveLength(1);
+    expect(calls.at(-1)?.payload).toEqual({ nonce: 'abcdefghijklmnop', ok: false, code: 'APPLY_FAILED' });
   });
 });

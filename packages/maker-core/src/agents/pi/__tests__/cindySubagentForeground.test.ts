@@ -214,7 +214,7 @@ describe('Cindy PI Subagent foreground durable path', () => {
         () => undefined,
         { ui: { input }, sessionManager: { getBranch: () => [] } },
       );
-      expect(input).toHaveBeenCalledWith('cindy:permission', expect.stringContaining('write'));
+      expect(input).toHaveBeenCalledWith('cindy:permission', expect.stringContaining('write'), undefined);
       expect(result.content[0].text).toContain(
         `foreground approved result:${expectedRouteToken}`,
       );
