@@ -1,6 +1,7 @@
 /** Local composer content is durable in Main, never in Renderer web storage. */
-import { ipcMain } from 'electron';
+import { app, ipcMain } from 'electron';
 import fs from 'node:fs';
+import path from 'node:path';
 import { z } from 'zod';
 import {
   COMPOSER_DRAFT_LOAD, COMPOSER_DRAFT_SAVE,
@@ -20,6 +21,7 @@ import { createOverrideSettingsFile } from './maker-host/override-settings-file.
 import { createLogger } from './logger.js';
 import { assertTrustedAppRendererEvent } from './security/trustedAppRenderer.js';
 import { throwIpcError } from './utils/ipcValidate.js';
+import { readBoundedFileNoFollowSync } from './utils/readBoundedFile.js';
 
 const log = createLogger('ComposerDrafts');
 const fileSchema = z.object({ entries: composerDraftEntriesSchema });
@@ -27,6 +29,9 @@ type DraftFile = z.infer<typeof fileSchema>;
 const stores = new Map<string, ReturnType<typeof createStore>>();
 const writes = new Map<string, Promise<void>>();
 const pending = new Map<string, Map<string, ComposerDraftWrite>>();
+// Keep every accepted operation until it settles, including an older save that
+// a later save/clear has superseded in the Renderer overlay or after an owner switch.
+const pendingMedia = new Set<ComposerDraftWrite>();
 
 function requireOwner(stamp: unknown): asserts stamp is DataOwnerPushStamp {
   const current = getActiveDataOwnerPushStamp();
@@ -102,6 +107,7 @@ export function saveComposerDraft(raw: unknown): Promise<void> {
   const overlay = pending.get(file) ?? new Map<string, ComposerDraftWrite>();
   pending.set(file, overlay);
   overlay.set(request.key, request);
+  pendingMedia.add(request);
   const operation: Promise<void> = (writes.get(file) ?? Promise.resolve()).catch(() => {}).then(async () => {
     requireOwner(request);
     await store.updateAtomic(({ value }) => {
@@ -116,6 +122,7 @@ export function saveComposerDraft(raw: unknown): Promise<void> {
     log.warn('Composer draft write did not complete');
     throwIpcError('INTERNAL', 'composer draft could not be saved');
   }).finally(() => {
+    pendingMedia.delete(request);
     if (overlay.get(request.key) === request) overlay.delete(request.key);
     if (overlay.size === 0 && pending.get(file) === overlay) pending.delete(file);
     if (writes.get(file) === operation) writes.delete(file);
@@ -124,19 +131,92 @@ export function saveComposerDraft(raw: unknown): Promise<void> {
   return operation;
 }
 
-/** Include disk-only drafts in the existing media recycler's live references. */
+function optionalLstat(file: string): fs.BigIntStats | null {
+  try { return fs.lstatSync(file, { bigint: true }); }
+  catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+function requireUnchangedDirectory(directory: string, before: fs.BigIntStats): void {
+  const after = fs.lstatSync(directory, { bigint: true });
+  if (!after.isDirectory() || after.isSymbolicLink() || before.dev !== after.dev ||
+      before.ino !== after.ino || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs) {
+    throw new Error('composer draft directory changed');
+  }
+}
+
+/** Host-only retention census. Never use this cross-owner result as a Renderer snapshot. */
+function readAllOwnerMediaUrls(): string[] {
+  const root = path.join(app.getPath('userData'), 'owners');
+  const rootStat = optionalLstat(root);
+  if (!rootStat) return []; // No owner namespace yet, not a failed/partial directory listing.
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error('invalid owner namespace');
+  const names = fs.readdirSync(root).sort();
+  // Abort rather than truncate a census that cannot fit a bounded Main operation.
+  if (names.length > 1000) throw new Error('composer draft owner census exceeds limit');
+  const urls = new Set<string>();
+  const ownerDirectories = new Map<string, fs.BigIntStats>();
+  let bytes = 0;
+  for (const name of names) {
+    const directory = path.join(root, name);
+    const ownerStat = fs.lstatSync(directory, { bigint: true });
+    // dataOwnerStorageKey's existing 20-hex namespace. Ignore ordinary metadata
+    // files, but never silently omit an unrecognizable directory or link.
+    if (!/^[a-f0-9]{20}$/.test(name) && ownerStat.isFile()) continue;
+    if (!/^[a-f0-9]{20}$/.test(name) || !ownerStat.isDirectory() || ownerStat.isSymbolicLink()) {
+      throw new Error('invalid composer draft owner namespace');
+    }
+    const realDirectory = fs.realpathSync(directory);
+    if (path.relative(fs.realpathSync(root), realDirectory) !== name) throw new Error('owner directory escaped');
+    const file = path.join(directory, 'composer-drafts.json');
+    // Another Host may be publishing a new reference. Missing draft files are
+    // legitimate only in a stable namespace with no in-flight atomic writer.
+    const requireNoWriter = () => {
+      if (optionalLstat(`${file}.lock`) || optionalLstat(`${file}.tmp`)) throw new Error('composer draft write in progress');
+    };
+    requireNoWriter();
+    const stat = optionalLstat(file);
+    if (stat) {
+      const buffer = readBoundedFileNoFollowSync(file, COMPOSER_DRAFT_FILE_MAX_BYTES, { containWithin: realDirectory });
+      if (!buffer) throw new Error('composer draft file unavailable');
+      bytes += buffer.length;
+      if (bytes > 128 * 1024 * 1024) throw new Error('composer draft census exceeds limit');
+      const parsed = fileSchema.parse(JSON.parse(buffer.toString('utf8')));
+      for (const entry of parsed.entries) {
+        for (const url of getComposerDraftContentUrls(entry.content)) urls.add(url);
+      }
+    }
+    requireNoWriter();
+    requireUnchangedDirectory(directory, ownerStat);
+    ownerDirectories.set(directory, ownerStat);
+  }
+  // A partial/changed enumeration must not look like an empty or complete census.
+  // An earlier owner's atomic write can finish while a later owner is scanned.
+  for (const [directory, ownerStat] of ownerDirectories) requireUnchangedDirectory(directory, ownerStat);
+  if (JSON.stringify(names) !== JSON.stringify(fs.readdirSync(root).sort())) throw new Error('owner census changed');
+  requireUnchangedDirectory(root, rootStat);
+  return [...urls];
+}
+
+/** All owners share blob bytes, so cleanup must retain even never-loaded owners' drafts. */
 export function getPersistedComposerDraftUrls(): string[] {
   const stamp = getActiveDataOwnerPushStamp();
   requireOwner(stamp);
-  // Pending deletion must not release disk references before the atomic clear
-  // succeeds. Pending additions must be protected before their write settles.
-  const entries = readEntries(false);
-  const { file } = currentStore();
-  const urls = entries.flatMap(entry => getComposerDraftContentUrls(entry.content));
-  for (const request of pending.get(file)?.values() ?? []) {
-    if (request.content) urls.push(...getComposerDraftContentUrls(request.content));
+  try {
+    const urls = new Set(readAllOwnerMediaUrls());
+    // A pending clear never hides disk references; every accepted addition is
+    // protected until its own write/failure settles, independently of the active owner.
+    for (const request of pendingMedia) {
+      if (request.content) for (const url of getComposerDraftContentUrls(request.content)) urls.add(url);
+    }
+    requireOwner(stamp);
+    return [...urls];
+  } catch {
+    // Do not return a partial set or expose another owner's filename/content.
+    throwIpcError('PRECONDITION_FAILED', 'composer draft media references are unavailable');
   }
-  return urls;
 }
 
 export async function flushComposerDraftWrites(): Promise<void> {

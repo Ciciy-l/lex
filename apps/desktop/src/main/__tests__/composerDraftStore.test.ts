@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ComposerDraftContent, ComposerDraftWrite } from '../../shared/composerDraft';
 
@@ -11,7 +12,7 @@ const harness = vi.hoisted(() => ({
   listeners: new Map<string, (...args: unknown[]) => unknown>(),
   warn: vi.fn(),
 }));
-vi.mock('electron', () => ({ ipcMain: {
+vi.mock('electron', () => ({ app: { getPath: () => harness.root }, ipcMain: {
   handle: (name: string, callback: (...args: unknown[]) => unknown) => harness.handlers.set(name, callback),
   on: (name: string, callback: (...args: unknown[]) => unknown) => harness.listeners.set(name, callback),
 } }));
@@ -19,7 +20,9 @@ vi.mock('../appSessionState.js', () => ({
   activeOwnerScopeKey: () => `${harness.owner}:${harness.generation}`,
   getActiveDataOwnerPushStamp: () => ({ dataOwnerId: harness.owner, ownerGeneration: harness.generation }),
   isAppSessionBoundaryPending: () => harness.boundary,
-  ownerScopedUserDataPath: (...parts: string[]) => path.join(harness.root, harness.owner ?? 'signed-out', ...parts),
+  ownerScopedUserDataPath: (...parts: string[]) => harness.owner
+    ? path.join(harness.root, 'owners', createHash('sha256').update(harness.owner).digest('hex').slice(0, 20), ...parts)
+    : path.join(harness.root, 'signed-out', ...parts),
 }));
 vi.mock('../logger.js', () => ({ createLogger: () => ({ info: vi.fn(), warn: harness.warn }) }));
 vi.mock('../security/trustedAppRenderer.js', () => ({
@@ -40,7 +43,9 @@ const content = (value: string): ComposerDraftContent => ({
 });
 const stamp = () => ({ dataOwnerId: harness.owner, ownerGeneration: harness.generation });
 const write = (key: string, value: ComposerDraftContent | null): ComposerDraftWrite => ({ ...stamp(), key, content: value });
-const file = () => path.join(harness.root, harness.owner ?? 'signed-out', 'composer-drafts.json');
+const ownerRoot = (owner = harness.owner ?? 'signed-out') => path.join(harness.root, 'owners',
+  createHash('sha256').update(owner).digest('hex').slice(0, 20));
+const file = () => path.join(ownerRoot(), 'composer-drafts.json');
 type MainStore = typeof import('../composerDraftStore');
 let store: MainStore;
 beforeEach(async () => {
@@ -53,6 +58,7 @@ beforeEach(async () => {
 afterEach(async () => {
   harness.releaseGate?.();
   await store.flushComposerDraftWrites();
+  vi.restoreAllMocks();
   fs.rmSync(harness.root, { recursive: true, force: true });
 });
 
@@ -113,7 +119,7 @@ describe('Main-owned durable composer drafts', () => {
     await Promise.resolve(); await Promise.resolve();
     harness.owner = 'account-b'; harness.generation++;
     release(); await rejected;
-    expect(fs.existsSync(path.join(harness.root, 'account-a', 'composer-drafts.json'))).toBe(false);
+    expect(fs.existsSync(path.join(ownerRoot('account-a'), 'composer-drafts.json'))).toBe(false);
     expect(fs.existsSync(file())).toBe(false);
   });
 
@@ -183,4 +189,97 @@ describe('Main-owned durable composer drafts', () => {
     expect(() => harness.handlers.get('composer-drafts:save')?.({}, write('task', content('denied')))).toThrow('untrusted');
     expect(fs.existsSync(file())).toBe(false);
   });
+
+  it('retains inactive-owner media after a fresh Host while keeping its draft private', async () => {
+    const url = `cindy-media://blobs/${'a'.repeat(64)}.png`;
+    const draft: ComposerDraftContent = { ...content('private A'), attachments: [{
+      id: 'image', name: 'image.png', path: '/synthetic/image.png', ext: '.png', size: 10,
+      category: 'image', mimeType: 'image/png', url,
+    }] };
+    await store.saveComposerDraft(write('same-task', draft));
+    harness.owner = 'account-b'; harness.generation++;
+    await store.saveComposerDraft(write('same-task', draft));
+    await store.saveComposerDraft(write('same-task', null));
+    vi.resetModules(); store = await import('../composerDraftStore');
+    expect(store.loadComposerDraftSnapshot(stamp())?.entries).toEqual([]);
+    expect(store.getPersistedComposerDraftUrls()).toContain(url);
+    harness.owner = 'account-a'; harness.generation++;
+    await store.saveComposerDraft(write('same-task', null));
+    expect(store.getPersistedComposerDraftUrls()).toEqual([]);
+  });
+
+  it('protects every pending addition across owner changes, including superseded saves before a clear', async () => {
+    const image = (marker: string): ComposerDraftContent => ({ ...content(marker), attachments: [{
+      id: marker, name: 'image.png', path: '/synthetic/image.png', ext: '.png', size: 10,
+      category: 'image', mimeType: 'image/png', url: 'cindy-media://blobs/' + marker.repeat(64) + '.png',
+    }] });
+    await store.saveComposerDraft(write('task', image('a')));
+    let release!: () => void;
+    harness.gate = new Promise<void>(resolve => { release = resolve; harness.releaseGate = resolve; });
+    const outcomes = Promise.allSettled([
+      store.saveComposerDraft(write('task', image('b'))),
+      store.saveComposerDraft(write('task', image('c'))),
+      store.saveComposerDraft(write('task', null)),
+    ]);
+    await Promise.resolve(); await Promise.resolve();
+    harness.owner = 'account-b'; harness.generation++;
+    expect(new Set(store.getPersistedComposerDraftUrls())).toEqual(new Set(['a', 'b', 'c'].map(
+      marker => 'cindy-media://blobs/' + marker.repeat(64) + '.png')));
+    release();
+    expect((await outcomes).every(outcome => outcome.status === 'rejected')).toBe(true);
+    expect(store.getPersistedComposerDraftUrls()).toEqual(['cindy-media://blobs/' + 'a'.repeat(64) + '.png']);
+  });
+
+  it('distinguishes an absent owner/draft file from an invalid namespace and partial enumeration', () => {
+    expect(store.getPersistedComposerDraftUrls()).toEqual([]);
+    fs.mkdirSync(ownerRoot(), { recursive: true });
+    expect(store.getPersistedComposerDraftUrls()).toEqual([]);
+    fs.writeFileSync(file(), JSON.stringify({ entries: [] }));
+    // Simulate a namespace entry discovered only after the first listing.
+    vi.spyOn(fs, 'readdirSync').mockReturnValueOnce([]);
+    expect(() => store.getPersistedComposerDraftUrls()).toThrow();
+  });
+
+  it('rejects a census when an earlier owner publishes during a later owner read', async () => {
+    await store.saveComposerDraft(write('task', content('first owner')));
+    harness.owner = 'account-b'; harness.generation++;
+    await store.saveComposerDraft(write('task', content('second owner')));
+    const root = path.join(harness.root, 'owners');
+    const files = fs.readdirSync(root).sort().map(name => path.join(root, name, 'composer-drafts.json'));
+    const open = fs.openSync;
+    vi.spyOn(fs, 'openSync').mockImplementation((target, flags, mode) => {
+      if (target === files[1]) {
+        // The other Host's lock and temp file have already disappeared by the
+        // final census check; its completed atomic publish changed the directory.
+        fs.writeFileSync(files[0] + '.tmp', JSON.stringify({ entries: [] }));
+        fs.renameSync(files[0] + '.tmp', files[0]);
+      }
+      return open(target, flags, mode);
+    });
+    expect(() => store.getPersistedComposerDraftUrls()).toThrow();
+  });
+
+  it.each(['.lock', '.tmp'])('refuses cleanup while an atomic writer artifact %s exists', (suffix) => {
+    fs.mkdirSync(ownerRoot(), { recursive: true });
+    fs.writeFileSync(file() + suffix, 'synthetic writer');
+    expect(() => store.getPersistedComposerDraftUrls()).toThrow();
+    expect(fs.readFileSync(file() + suffix, 'utf8')).toBe('synthetic writer');
+  });
+
+  it.each(['root-file', 'owner-file', 'unknown-owner-directory', 'oversized-file', 'incomplete-file'])(
+    'does not treat %s as a complete empty census', failure => {
+      if (failure === 'root-file') fs.writeFileSync(path.join(harness.root, 'owners'), 'synthetic invalid root');
+      else {
+        fs.mkdirSync(path.join(harness.root, 'owners'));
+        if (failure === 'owner-file') fs.writeFileSync(ownerRoot(), 'synthetic invalid owner');
+        if (failure === 'unknown-owner-directory') fs.mkdirSync(path.join(harness.root, 'owners', 'unrecognized'));
+        if (failure === 'incomplete-file') { fs.mkdirSync(ownerRoot()); fs.writeFileSync(file(), '{}'); }
+        if (failure === 'oversized-file') {
+          fs.mkdirSync(ownerRoot()); fs.writeFileSync(file(), '');
+          fs.truncateSync(file(), 32 * 1024 * 1024 + 1);
+        }
+      }
+      expect(() => store.getPersistedComposerDraftUrls()).toThrow();
+    },
+  );
 });

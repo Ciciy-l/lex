@@ -164,6 +164,18 @@ bytes into a new store. The media recycler includes disk-only draft URLs and
 pending additions before a Renderer mounts; pending deletion releases its
 protection only after the atomic clear succeeds. Corrupt draft storage blocks
 that cleanup rather than guessing which media is unused.
+Because blob bytes are shared across owners, the Host retention census reads
+every existing 20-hex owner namespace, including drafts never loaded in this
+process, rather than using only the active account or an in-memory registry.
+It returns only media retention references internally; Renderer hydration
+still reads exactly the verified active owner. Every accepted pending save
+remains protected until it settles, even after a later save/clear or owner
+switch. Atomic-writer artifacts, changed/incomplete directories, unreadable,
+malformed or oversized files abort cleanup instead of yielding a partial set.
+The bounded census refuses more than 1,000 namespace entries or 128 MiB of
+draft files. Deletion rechecks these references across asynchronous ledger
+operations. The original current-owner-only omission and its synthetic
+regression are retained; no real-user media deletion has been reproduced.
 
 Focused tests cover durable round trips, account/task and generation fences,
 newer edits, send/discard ordering, annotations, attachment protection and
