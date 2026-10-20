@@ -114,7 +114,7 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
             if (!currentTurn && value.reason === 'aborted' && value.isAborted === true
               && inputs.length === 1 && inputs[0]!.accepted
               && nativeInputs.get(inputs[0]!.nativeId!) === inputs[0]) {
-              events.push({ type: 'done', source: 'claude-code', data: { result: '', is_error: false, silentStop: true, nativeTurnId: value.turnId } });
+              events.push({ type: 'done', source: 'claude-code', data: { result: '', is_error: false, nativeTurnId: value.turnId, nativeTurnReason: 'aborted' } });
             }
             for (const input of inputs) removeInput(input);
             observedTurns.delete(value.turnId);

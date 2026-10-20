@@ -196,7 +196,8 @@ describe('Claude native structured product events', () => {
     f.send('turn.complete', terminal); f.send('turn.complete', terminal);
     expect(f.events.filter(event => event.type === 'done')).toHaveLength(1);
     expect(f.events.filter(event => event.type === 'error')).toHaveLength(reason === 'error' || reason === 'refusal' ? 1 : 0);
-    expect((f.events.at(-1)!.data as { silentStop?: boolean }).silentStop).toBe(reason === 'aborted' ? true : undefined);
+    expect(f.events.at(-1)!.data).toMatchObject({ nativeTurnId: 'turn', nativeTurnReason: reason });
+    expect(f.events.at(-1)!.data).not.toHaveProperty('silentStop');
     expect(f.events.at(-2)).toMatchObject({ type: 'status', data: { status: 'Done', isRunning: false } });
   });
 

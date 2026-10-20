@@ -225,8 +225,11 @@ export class ClaudeNativeEvents {
     const failed = value.reason === 'error' || value.reason === 'refusal';
     if (failed) this.push('error', { message: '任务执行失败（模型未返回错误详情）。', isTerminal: true, reason: 'turn-failed' });
     this.push('status', { ...snapshot, status: 'Done', isRunning: false });
+    // Mods reports an actual aborted terminal for Stop/Escape. It is not the
+    // SDK's successful empty response: silentStop would schedule a new prompt
+    // and occupy the input boundary after the user explicitly stopped it.
     this.push('done', { result: typeof value.answer === 'string' ? value.answer : '', is_error: failed,
-      ...(value.isAborted === true ? { silentStop: true } : {}), nativeTurnId: turn.id,
+      nativeTurnId: turn.id, nativeTurnReason: value.reason,
       ...(costUsd !== undefined ? { total_cost_usd: costUsd } : {}),
       duration_ms: count(value.durationMs), usage: record(value.usage), usageSegments: segments,
       // Mods does not expose per-request ids or retry/fork accounting. Never
