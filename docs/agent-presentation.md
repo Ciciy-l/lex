@@ -73,6 +73,38 @@ support the existing GUI semantics, including streaming and permissions.
 - Retire right-workbench Agent CLI quick launch only after left-pane acceptance;
   retain ordinary shell terminals and compatible restoration of saved layouts.
 
+### Ordinary Pi window evidence, Windows, 2026-10-20
+
+The ordinary Pi entry now selects the original interactive Pi 1.2.0 with its
+official extension API, not the RPC UI. On `7949150` the isolated ordinary page
+completed TUI-first input before any GUI message, semantic GUI continuation,
+both live drafts and focus, GUI Stop without automatic continuation, and one
+explicit subsequent native input. Actual native journal row IDs reconcile with
+the same task's persisted GUI history. Usage advanced 25 → 50 → 70 → 95.
+
+Exiting the idle original CLI exposed a separate recovery defect: the retry
+button only reattached a terminal view to the closed Session. Explicit retry
+now checks live status and, when needed, uses that task's existing owner-checked
+prepare/resume path before attaching. A live process is only reattached; busy
+or uncertain work is not replaced, and no input is replayed. Late owner results
+cannot prepare another task. The existing isolated window loaded this Renderer
+change through HMR, without a Desktop restart.
+
+`rc1-pi-window2/pi-ui28-retry-ready-readonly.json` and
+`pi-ui29-one-explicit-input-after-history-recovery.json` record recovery of the
+original session file, then exactly one new native input and GUI result. The
+provider count stayed 21 through recovery and became 22 only after that input;
+the actual row `a9da6f9e` appears in both native and product history, with usage
+120. The earlier failed reconnect and a premature focus assertion during
+startup remain recorded. A clean idle CLI exit still projects an inaccurate
+unexpected-exit error; correcting that lifecycle notice remains separate work.
+
+These results use a Windows isolated profile and loopback model. They do not
+establish real-provider, packaged or other-platform acceptance, native advanced
+command parity, or restoration of unsent GUI drafts across Desktop restarts.
+Migration of an older SDK-only Pi runtime also needs its own ordinary-window
+check; reopening this original native session file does not prove that path.
+
 ## Incremental delivery and acceptance
 
 Commit contract/probes, each engine adapter, common ownership/recovery, shared

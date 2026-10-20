@@ -5419,7 +5419,7 @@ export function CCAgentSessionView({
         </div>
         {presentation.supported && sessionId && (
           <div className={presentation.mode === 'tui' ? 'min-h-0 flex-1' : 'hidden'}>
-            <AgentNativeTerminal key={presentation.generation} sessionId={sessionId} active={presentation.mode === 'tui' && viewVisible} invoke={presentation.invoke} />
+            <AgentNativeTerminal key={presentation.generation} sessionId={sessionId} active={presentation.mode === 'tui' && viewVisible} invoke={presentation.invoke} onReconnect={presentation.reconnect} />
           </div>
         )}
         {presentation.mode === 'tui' && <div className="shrink-0 px-3 pb-3">{conversationFooter}</div>}

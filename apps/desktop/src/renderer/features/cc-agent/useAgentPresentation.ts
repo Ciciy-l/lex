@@ -47,6 +47,38 @@ export function useAgentPresentation({ sessionId, deviceId, ownerId, enabled, ru
   const mode = supported ? (chosen.scope === scope ? chosen.mode : preference(scope)) : 'gui';
   const opening = useRef<Promise<void> | undefined>(undefined);
   const liveScope = useRef(scope); liveScope.current = scope;
+  const liveView = useRef({ scope, enabled });
+  if (liveView.current.scope !== scope || liveView.current.enabled !== enabled) liveView.current = { scope, enabled };
+  const view = liveView.current;
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const reconnect = useCallback((): Promise<void> => {
+    const current = () => mounted.current && liveView.current === view && enabled && !!sessionId;
+    if (!sessionId || !current()) return Promise.reject(new Error('Native task view owner changed'));
+    if (opening.current) return opening.current;
+    const attempt = Promise.resolve().then(async () => {
+      if (!current()) throw new Error('Native task view owner changed');
+      let status = await invoke({ action: 'status', sessionId }) as AgentPresentationStatus;
+      if (!current()) throw new Error('Native task view owner changed');
+      if (!status.supported || status.state.status !== 'running') {
+        if (!prepare) throw new Error('Native task recovery is unavailable');
+        // Reuse the existing owner-checked creation/resume funnel. It rejects
+        // busy or uncertain work; this view never submits or replays a message.
+        await prepare();
+        if (!current()) throw new Error('Native task view owner changed');
+        status = await invoke({ action: 'status', sessionId }) as AgentPresentationStatus;
+      }
+      if (!current()) throw new Error('Native task view owner changed');
+      if (!status.supported || status.state.status !== 'running') throw new Error('Native task recovery is unavailable');
+      setAvailability({ scope, generation: status.state.generation });
+    }).catch(error => {
+      if (current()) setAvailability({ scope,
+        reason: extractIpcError(error)?.code === 'SESSION_RUNNING' ? 'task-busy' : 'startup-failed' });
+      throw error;
+    }).finally(() => { if (opening.current === attempt) opening.current = undefined; });
+    opening.current = attempt;
+    return attempt;
+  }, [view, scope, sessionId, enabled, prepare, invoke]);
   const change = useCallback((mode: Mode) => {
     if (mode === 'tui' && !supported && prepare && sessionId && enabled) {
       if (opening.current) return;
@@ -77,5 +109,5 @@ export function useAgentPresentation({ sessionId, deviceId, ownerId, enabled, ru
     change(selection.mode);
   }, [scope, enabled, sessionId, prepare, change]);
   const unavailableReason = enabled && availability.scope === scope ? availability.reason : undefined;
-  return { supported, selectable: supported || (enabled && !!prepare), mode, change, invoke, generation, unavailableReason };
+  return { supported, selectable: supported || (enabled && !!prepare), mode, change, reconnect, invoke, generation, unavailableReason };
 }

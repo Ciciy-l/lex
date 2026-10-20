@@ -154,11 +154,13 @@ describe('native task view', () => {
       if (request.action === 'write') throw new Error('receipt lost');
       return original(request);
     });
-    render(<AgentNativeTerminal sessionId="task" active invoke={f.invoke} />);
+    const recover = vi.fn(async () => {});
+    render(<AgentNativeTerminal sessionId="task" active invoke={f.invoke} onReconnect={recover} />);
     await waitFor(() => expect(mock.terminals[0].options.disableStdin).toBe(false));
     act(() => mock.terminals[0].input('uncertain'));
     await screen.findByText('ccAgent.presentation.unavailable');
     fireEvent.click(screen.getByRole('button', { name: 'ccAgent.presentation.retry' }));
+    expect(recover).toHaveBeenCalledOnce();
     await waitFor(() => expect(mock.terminals[1].options.disableStdin).toBe(false));
     expect(mock.terminals[0].dispose).toHaveBeenCalledOnce();
     expect(f.invoke).toHaveBeenCalledWith({ action: 'detach', attachmentId: 'view-1', sessionId: 'task' });
@@ -166,5 +168,27 @@ describe('native task view', () => {
     expect(mock.terminals[1].write).not.toHaveBeenCalled();
     expect(f.invoke.mock.calls.filter(([r]) => r.action === 'write')).toHaveLength(1);
     expect(f.invoke.mock.calls.every(([r]) => ['attach', 'control', 'read', 'write', 'release', 'detach'].includes(r.action))).toBe(true);
+  });
+
+  it('waits for explicit same-task recovery before reattaching an exited native process', async () => {
+    const f = fixture(), original = f.invoke.getMockImplementation()!;
+    const ready = deferred<void>();
+    const recover = vi.fn(() => ready.promise);
+    let attachments = 0;
+    f.invoke.mockImplementation(request => request.action === 'attach' && ++attachments === 1
+      ? Promise.resolve({ attachmentId: 'old-view', replay: replay({
+        state: { ...replay().state, status: 'exited' },
+      }) }) : original(request));
+    render(<AgentNativeTerminal sessionId="original-task" active invoke={f.invoke} onReconnect={recover} />);
+    await screen.findByText('ccAgent.presentation.exited');
+    expect(recover).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'ccAgent.presentation.retry' }));
+    expect(recover).toHaveBeenCalledOnce();
+    expect(attachments).toBe(1);
+    await act(async () => { ready.resolve(); });
+    await waitFor(() => expect(mock.terminals[1].options.disableStdin).toBe(false));
+    expect(attachments).toBe(2);
+    expect(f.invoke.mock.calls.every(([request]) => request.sessionId === 'original-task')).toBe(true);
+    expect(f.invoke.mock.calls.filter(([request]) => request.action === 'write')).toEqual([]);
   });
 });
