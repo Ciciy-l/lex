@@ -110,6 +110,9 @@ export function readCreateSessionOpts(
     throwIpcError('INVALID_PARAMS', 'createSession opts must be an object');
   }
   const body = requireObject(input, 'createSession opts');
+  if (body.requireNativePresentation !== undefined && typeof body.requireNativePresentation !== 'boolean') {
+    throwIpcError('INVALID_PARAMS', 'requireNativePresentation must be a boolean');
+  }
   const agentKind = readAgentKind(body.agentKind);
   const model = requireString(body.model, 'model');
   const workspaceKind = readWorkspaceKind(body.workspaceKind);

@@ -5580,6 +5580,7 @@ interface ElectronAPI {
     }>;
 
     createSession: (opts: {
+      requireNativePresentation?: boolean;
       /** 可选: 复用外部 sessionId(本端 chat 用 local-db:sessions:create 拿到的 id) */
       id?: string;
       agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';

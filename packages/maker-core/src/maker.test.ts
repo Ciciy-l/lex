@@ -1034,6 +1034,94 @@ describe('Maker session creation owner guard', () => {
 });
 
 describe('Maker session creation singleflight', () => {
+  it('restores a persisted legacy task without presentation metadata or a hydrated native id', async () => {
+    const storage = createStorage();
+    await storage.create({ id: 'cold-legacy-task', agentKind: 'claude-code', workDir: '/fixture', model: 'test-model',
+      title: 'Existing history', sdkSessionId: 'original-claude-session' });
+    const handle = { ...createHandle({ id: 'original-claude-session', agentKind: 'claude-code' }),
+      activatePresentation: async () => ({ status: 'ready' as const }) };
+    const start = vi.fn(async () => handle);
+    const maker = new Maker({ agents: { 'claude-code': createAgent(start, 'claude-code') }, storage, logger: createLogger() });
+    const session = await maker.createSession({ id: 'cold-legacy-task', agentKind: 'claude-code', workingDir: '/fixture',
+      model: 'test-model', nativePresentation: true, requireNativePresentation: true });
+    expect(start).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ resumeSessionId: 'original-claude-session',
+      sessionId: 'cold-legacy-task', nativePresentation: true }));
+    expect(session.agentKind).toBe('claude-code'); expect(session.sdkSessionId).toBe('original-claude-session');
+    expect(await storage.list()).toHaveLength(1);
+    expect((await storage.get(session.id))?.title).toBe('Existing history');
+    await maker.shutdown();
+  });
+
+  it('reopens an idle legacy task once with its original native history on explicit TUI selection', async () => {
+    const storage = createStorage();
+    const old = createHandle({ id: 'existing-thread' });
+    old.send = vi.fn(async () => undefined);
+    old.close = vi.fn(async () => undefined);
+    const native = { ...createHandle({ id: 'existing-thread' }),
+      send: vi.fn(async () => undefined),
+      activatePresentation: vi.fn(async () => ({ status: 'ready' as const })) };
+    const start = vi.fn().mockResolvedValueOnce(old).mockResolvedValueOnce(native);
+    const maker = new Maker({ agents: { codex: createAgent(start) }, storage, logger: createLogger() });
+    const options = { id: 'legacy-task', agentKind: 'codex' as const, workingDir: '/fixture', model: 'test-model' };
+    const first = await maker.createSession(options);
+    expect((await storage.get(options.id))?.sdkSessionId).toBe('existing-thread');
+    const selected = { ...options, nativePresentation: true, requireNativePresentation: true };
+    const [second, concurrent] = await Promise.all([maker.createSession(selected), maker.createSession(selected)]);
+    expect(second).toBe(concurrent); expect(second).not.toBe(first);
+    expect(second.id).toBe(first.id); expect(second.sdkSessionId).toBe(first.sdkSessionId);
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(start.mock.calls[1]![0]).toMatchObject({ sessionId: options.id, resumeSessionId: 'existing-thread', nativePresentation: true });
+    expect(old.close).toHaveBeenCalledExactlyOnceWith({ reason: 'navigation' });
+    expect(old.send).not.toHaveBeenCalled(); expect(native.send).not.toHaveBeenCalled();
+    expect(await storage.list()).toHaveLength(1);
+    await maker.shutdown();
+  });
+
+  it('keeps a busy legacy runtime and its input intact until explicit TUI selection can retry', async () => {
+    const old = createHandle({ id: 'busy-thread' });
+    old.send = vi.fn(async () => undefined);
+    old.close = vi.fn(async () => undefined);
+    let busy = true; old.isTurnRunning = () => busy;
+    const native = { ...createHandle({ id: 'busy-thread' }), activatePresentation: async () => ({ status: 'ready' as const }) };
+    const start = vi.fn().mockResolvedValueOnce(old).mockResolvedValueOnce(native);
+    const maker = new Maker({ agents: { codex: createAgent(start) }, storage: createStorage(), logger: createLogger() });
+    const options = { id: 'busy-task', agentKind: 'codex' as const, workingDir: '/fixture', model: 'test-model' };
+    const first = await maker.createSession(options);
+    const selected = { ...options, nativePresentation: true, requireNativePresentation: true };
+    await expect(maker.createSession(selected)).rejects.toThrow('waiting for the current task input');
+    expect(maker.getSession(options.id)).toBe(first); expect(old.close).not.toHaveBeenCalled();
+    expect(start).toHaveBeenCalledOnce(); expect(old.send).not.toHaveBeenCalled();
+    busy = false;
+    expect((await maker.createSession(selected)).sdkSessionId).toBe('busy-thread');
+    await maker.shutdown();
+  });
+
+  it('does not retire a legacy task for a changed engine or unconfirmed native identity', async () => {
+    const old = createHandle({ id: 'original-thread' }); old.close = vi.fn(async () => undefined);
+    const start = vi.fn(async () => old);
+    const maker = new Maker({ agents: { codex: createAgent(start) }, storage: createStorage(), logger: createLogger() });
+    const options = { id: 'owned-task', agentKind: 'codex' as const, workingDir: '/fixture', model: 'test-model' };
+    await maker.createSession(options);
+    const selected = { ...options, nativePresentation: true, requireNativePresentation: true };
+    await expect(maker.createSession({ ...selected, resumeSessionId: 'another-thread' })).rejects.toThrow('cannot replace');
+    await expect(maker.createSession({ ...selected, agentKind: 'claude-code' })).rejects.toThrow('cannot replace');
+    expect(old.close).not.toHaveBeenCalled(); expect(start).toHaveBeenCalledOnce();
+    await maker.shutdown();
+  });
+
+  it('retains the old runtime when its close is unconfirmed instead of starting another owner', async () => {
+    const old = createHandle({ id: 'unknown-owner-thread' });
+    old.send = vi.fn(async () => undefined);
+    old.close = vi.fn(async () => { throw new Error('close unconfirmed'); });
+    const start = vi.fn(async () => old);
+    const maker = new Maker({ agents: { codex: createAgent(start) }, storage: createStorage(), logger: createLogger() });
+    const options = { id: 'unknown-owner-task', agentKind: 'codex' as const, workingDir: '/fixture', model: 'test-model' };
+    await maker.createSession(options);
+    await expect(maker.createSession({ ...options, nativePresentation: true, requireNativePresentation: true })).rejects.toThrow('close unconfirmed');
+    expect(start).toHaveBeenCalledOnce(); expect(old.send).not.toHaveBeenCalled();
+    old.close = vi.fn(async () => undefined); await maker.shutdown();
+  });
+
   it('persists the durable resume id while exposing a distinct transient request id', async () => {
     const storage = createStorage();
     const handle = { ...createHandle({ id: 'sdk-source', agentKind: 'claude-code' }), requestSessionId: 'sdk-unaccepted-fork' };

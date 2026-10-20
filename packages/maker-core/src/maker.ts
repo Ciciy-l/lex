@@ -41,6 +41,7 @@ import type { PiRuntimeCapabilityManifest } from './types/pi-runtime-capabilitie
 import { piExplicitSkillRuntimePath } from './agents/pi/skill-runtime-provenance.js';
 import { fingerprintPiProjectSkillEntrypoint } from './agents/pi/project-resource-assembly.js';
 import { Session, generateSessionId, type SessionStartupPreferences } from './session.js';
+import { AgentPresentationBusyError } from './agents/presentation.js';
 import {
   AgentNotAuthenticatedError,
   AgentStartupCleanupPendingError,
@@ -151,6 +152,8 @@ export interface MakerDeps {
 }
 
 export interface CreateSessionOptions extends StartSessionOptions {
+  /** Explicit view selection: an idle legacy runtime may reopen its exact native history. */
+  requireNativePresentation?: boolean;
   /** Host caller preferences before generated context; retained only by the live Session. */
   hostStartupPreferences?: SessionStartupPreferences;
   agentKind: AgentKind;
@@ -446,6 +449,7 @@ interface SessionCreationScope {
 
 interface InFlightSessionCreation {
   promise: Promise<Session>;
+  nativePresentation?: boolean;
   scopeKey?: object;
   settled: Promise<void>;
   resolveSettled: () => void;
@@ -805,6 +809,23 @@ export class Maker {
       await this.retryFailedHandleCleanup(opts.id);
       guard?.assertCurrent();
     }
+    const inFlight = this.inFlightSessionCreations.get(opts.id);
+    if (inFlight) {
+      if (inFlight.scopeKey === guard?.scopeKey) {
+        const session = await inFlight.promise;
+        if (!opts.requireNativePresentation || session.presentation || session.presentationInitialization) {
+          return { session, createdByCaller: false };
+        }
+        if (inFlight.nativePresentation) throw new Error('The selected runtime has no native presentation transport');
+        await inFlight.settled;
+        guard?.assertCurrent();
+        return this.createSessionWhileRunning(opts, guard);
+      }
+      await inFlight.promise.catch(() => undefined);
+      await inFlight.settled;
+      guard?.assertCurrent();
+      return this.createSessionWhileRunning(opts, guard);
+    }
 
     // 进程内已经活着或正在启动的 session, 直接复用 (避免 spawn 第二个 SDK)。
     // close() 失败的 Session 不能继续收消息，但也不能立刻从 activeSessions
@@ -816,6 +837,8 @@ export class Maker {
       guard?.assertCurrent();
     }
     const reusable = this.activeSessions.get(opts.id);
+    let presentationUpgrade: Session | undefined;
+    let resumeSessionId: string | undefined;
     if (reusable) {
       guard?.assertCurrent();
       const previousScope = this.sessionCreationScopes.get(reusable);
@@ -829,27 +852,39 @@ export class Maker {
         guard.assertCurrent();
         return this.createSessionWhileRunning(opts, guard);
       }
-      return { session: reusable, createdByCaller: false };
-    }
-
-    const inFlight = this.inFlightSessionCreations.get(opts.id);
-    if (inFlight) {
-      if (inFlight.scopeKey === guard?.scopeKey) {
-        return { session: await inFlight.promise, createdByCaller: false };
+      if (opts.requireNativePresentation && !reusable.presentation && !reusable.presentationInitialization) {
+        // A view cannot attach a PTY to an SDK-only process. Retire only an idle
+        // incarnation, then resume its confirmed native identity under the same
+        // singleflight slot. Never turn an unknown/unfinished input into fresh work.
+        resumeSessionId = reusable.sdkSessionId;
+        if (!opts.nativePresentation || reusable.agentKind !== opts.agentKind
+          || reusable.remoteHostId !== (opts.remoteHostId ?? null)
+          || !resumeSessionId || resumeSessionId === '<pending>'
+          || (opts.resumeSessionId && opts.resumeSessionId !== resumeSessionId)) {
+          throw new Error('Native presentation cannot replace this task runtime');
+        }
+        presentationUpgrade = reusable;
+      } else {
+        return { session: reusable, createdByCaller: false };
       }
-      await inFlight.promise.catch(() => undefined);
-      await inFlight.settled;
-      guard?.assertCurrent();
-      return this.createSessionWhileRunning(opts, guard);
     }
 
     let resolveSettled!: () => void;
     const settled = new Promise<void>((resolve) => { resolveSettled = resolve; });
-    const promise = this.createSessionOnce(opts, guard).then((session) =>
+    const promise = (async () => {
+      if (presentationUpgrade) {
+        if (!await presentationUpgrade.closeIfIdle()) {
+          throw new AgentPresentationBusyError();
+        }
+        guard?.assertCurrent();
+      }
+      return this.createSessionOnce(presentationUpgrade ? { ...opts, resumeSessionId } : opts, guard);
+    })().then((session) =>
       this.validateSessionCreationGuard(session, undefined, guard, true),
     );
     const creation: InFlightSessionCreation = {
       scopeKey: guard?.scopeKey,
+      nativePresentation: opts.nativePresentation,
       settled,
       resolveSettled: () => resolveSettled(),
       promise,
@@ -969,6 +1004,23 @@ export class Maker {
       await notifyStartFailed(stage, error, cleanupFailed);
       throw error;
     };
+    if (opts.requireNativePresentation && opts.id && !startOpts.resumeSessionId) {
+      try {
+        // Older UI records need no presentation marker. The owner-scoped native
+        // identity in storage is authoritative when the hydrated view lacks it.
+        const persisted = await this.storage.get(id);
+        if (persisted && (persisted.agentKind !== opts.agentKind
+          || (persisted.remoteHostId ?? null) !== (opts.remoteHostId ?? null))) {
+          throw new Error('Native presentation cannot change the stored task engine or host');
+        }
+        if (persisted?.sdkSessionId && persisted.sdkSessionId !== '<pending>') {
+          startOpts.resumeSessionId = persisted.sdkSessionId;
+        }
+      } catch (error) {
+        await notifyStartFailed('prepare', error);
+        throw error;
+      }
+    }
     if (this.lifecycleHooks.prepareStartOptions) {
       try {
         await this.lifecycleHooks.prepareStartOptions(id, startOpts);
@@ -994,7 +1046,7 @@ export class Maker {
     }
     if (
       opts.agentKind === 'codex' &&
-      opts.resumeSessionId &&
+      startOpts.resumeSessionId &&
       startOpts.codexHistoryHasProductPrompt === undefined &&
       this.lifecycleHooks.getCodexHistoryHasProductPrompt
     ) {
