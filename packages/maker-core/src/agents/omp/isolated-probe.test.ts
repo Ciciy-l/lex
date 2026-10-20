@@ -140,6 +140,7 @@ describe('OMP isolated remote probe', () => {
 
     expect(captured.cwd).toBe(`${runtimeHome}/workdir`);
     expect(files.mkdirp).toHaveBeenCalledWith(`${runtimeHome}/workdir`);
+    expect(files.mkdirp).toHaveBeenCalledWith(`${runtimeHome}/tmp`);
     expect(files.stat).not.toHaveBeenCalled();
     expect(files.linkDirectory).not.toHaveBeenCalled();
     expect(files.mkdirp.mock.calls.flat()).not.toContain('/home/user/.agents/skills');

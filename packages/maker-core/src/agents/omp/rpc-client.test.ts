@@ -49,6 +49,25 @@ afterEach(() => {
 });
 
 describe('OMP RPC command channel', () => {
+  it.each(['new_session', 'prompt'] as const)(
+    'keeps %s delivery unknown on close and never replays it',
+    async (type) => {
+      const test = fixture();
+      const request = test.client.request(type === 'prompt'
+        ? { type, message: 'keep this input pending' } : { type });
+      const failure = expect(request.response).rejects.toThrow(
+        'OMP RPC closed; execution outcome is unknown',
+      );
+      test.disconnect();
+      await failure;
+      test.disconnect();
+      expect(() => test.client.request({ type: 'new_session' })).toThrow('closed');
+      expect(test.writeLine).toHaveBeenCalledOnce();
+      expect(JSON.parse(test.writeLine.mock.calls[0][0]).type).toBe(type);
+      expect(test.closed).toHaveBeenCalledOnce();
+    },
+  );
+
   it.each(["essential", "discoverable", undefined] as const)(
     "preserves host-tool visibility %s through the actual wire encoder",
     async (loadMode) => {

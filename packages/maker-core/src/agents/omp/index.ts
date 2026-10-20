@@ -943,6 +943,7 @@ export class OmpAgent extends BaseAgent {
       if (remoteRuntime) {
         await remoteRuntime.fileOps.mkdirp(plan.roots.agent);
         await remoteRuntime.fileOps.mkdirp(plan.roots.sessions);
+        await remoteRuntime.fileOps.mkdirp(plan.roots.temporary);
         if (isolatedProbe) {
           await remoteRuntime.fileOps.mkdirp(plan.roots.workingDir);
         } else {
@@ -952,6 +953,9 @@ export class OmpAgent extends BaseAgent {
       } else {
         await fs.mkdir(plan.roots.agent, { recursive: true });
         await fs.mkdir(plan.roots.sessions, { recursive: true });
+        // The native runtime uses TMP/TEMP during new_session as well as tools.
+        // A missing private temp root can close RPC after ready, before its ACK.
+        await fs.mkdir(plan.roots.temporary, { recursive: true });
         if (isolatedProbe) {
           await fs.mkdir(plan.roots.workingDir, { recursive: true });
         } else {
