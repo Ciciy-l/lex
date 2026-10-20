@@ -45,8 +45,35 @@ describe('OMP official extension native input gate', () => {
     await f.emit('context', event); expect(f.requests).toHaveLength(1);
   });
   it('aborts before provider execution when a user row has not been persisted', async () => {
-    const f = await fixture(); await f.emit('context', { messages: [f.row('not-persisted').message] });
+    const f = await fixture();
+    vi.useFakeTimers();
+    try {
+      const pending = f.emit('context', { messages: [f.row('not-persisted').message] });
+      await vi.advanceTimersByTimeAsync(8_000);
+      await pending;
+    } finally { vi.useRealTimers(); }
     expect(f.ctx.abort).toHaveBeenCalled(); expect(f.requests).toHaveLength(0);
+  });
+  it('waits for the independent journal commit before admitting the exact native row', async () => {
+    const f = await fixture(), row = f.row('delayed-real-row');
+    // OMP does not await message_end persistence before its context callback.
+    // The row may become visible on a later event-loop turn, not one microtask.
+    const commit = setTimeout(() => f.rows.push(row), 0);
+    try {
+      expect(await f.emit('context', { messages: [structuredClone(row.message)] })).toMatchObject({ messages: [{ content: [{ text: 'product prepared' }] }] });
+      expect(f.requests).toHaveLength(1);
+      expect(f.requests[0].request.input.row.id).toBe('delayed-real-row');
+      expect(f.ctx.abort).not.toHaveBeenCalled();
+    } finally { clearTimeout(commit); }
+  });
+  it('refuses a session identity change while waiting for the real journal row', async () => {
+    const f = await fixture(), row = f.row('delayed-other-session');
+    const change = setTimeout(() => vi.spyOn(f.ctx.sessionManager, 'getSessionFile').mockReturnValue('/different/session.jsonl'), 0);
+    try {
+      await f.emit('context', { messages: [row.message] });
+      expect(f.ctx.abort).toHaveBeenCalled();
+      expect(f.requests).toHaveLength(0);
+    } finally { clearTimeout(change); }
   });
   it('refuses repeated-text ambiguity instead of inventing a journal association', async () => {
     const f = await fixture(), row = f.row('real-row'); f.rows.push(row);

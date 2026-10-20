@@ -18,9 +18,11 @@ export default function (pi) {
     if (events.length >= 256) { fail(); return; }
     events.push({ sequence: ++sequence, kind, value });
   };
-  const fail = () => {
+  const fail = (reason = 'transport') => {
     context?.abort();
     if (stopped) return;
+    // Fixed phases/counts only: no prompt, credentials or request payload.
+    console.error('[lex-omp-native] ' + (typeof reason === 'string' ? reason : 'transport'));
     stopped = true; lifetime.abort();
     context?.ui.notify('Lex task connection interrupted. Reopen this task before sending again.', 'error');
     context?.shutdown();
@@ -122,13 +124,24 @@ export default function (pi) {
   });
   pi.on('context', async (event, ctx) => {
     if (stopped || ctx.sessionManager.getSessionFile() !== nativeId) { ctx.abort(); return; }
-    // OMP commits message_end independently of extension notification delivery.
-    // Yield to that already-queued journal commit, never infer an entry id.
-    await Promise.resolve();
-    const branch = ctx.sessionManager.getBranch();
-    const fresh = branch.filter(row => row.type === 'message' && row.message.role === 'user' && !seenRows.has(row.id));
+    // OMP's independent message_end persistence can still be queued when
+    // context runs. Wait for the actual row, within the same admission budget,
+    // rather than assuming that one microtask has committed the journal.
+    const deadline = Date.now() + 8_000;
+    const unseenUsers = new Set(event.messages.filter(message => message.role === 'user' && !seenUsers.has(fingerprint(message))).map(fingerprint));
+    const needsRow = unseenUsers.size > 0;
+    let branch = ctx.sessionManager.getBranch();
+    let fresh = branch.filter(row => row.type === 'message' && row.message.role === 'user' && !seenRows.has(row.id));
+    while (needsRow && fresh.length === 0 && !branch.some(row => row.type === 'message' && row.message.role === 'user' && unseenUsers.has(fingerprint(row.message)))
+      && !stopped && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 5));
+      if (ctx.sessionManager.getSessionFile() !== nativeId) { ctx.abort(); fail('journal-session-changed'); return; }
+      branch = ctx.sessionManager.getBranch();
+      fresh = branch.filter(row => row.type === 'message' && row.message.role === 'user' && !seenRows.has(row.id));
+    }
+    if (stopped) { ctx.abort(); return; }
     if (fresh.length === 0) {
-      if (event.messages.some(message => message.role === 'user' && !seenUsers.has(fingerprint(message)))) { ctx.abort(); fail(); return; }
+      if (needsRow) { ctx.abort(); fail('journal-commit-unavailable'); return; }
       // Preserve host-prepared bytes on subsequent model requests in this same turn.
       if (!preparedUsers.size) return;
       return { messages: event.messages.map(message => {
@@ -144,10 +157,11 @@ export default function (pi) {
     const oldLeaf = gui?.leaf === null ? -1 : branch.findIndex(entry => entry.id === gui?.leaf);
     if (fresh.length !== 1 || matches.length !== 1 || (gui &&
       ((gui.leaf !== null && oldLeaf < 0) || branch.indexOf(row) <= oldLeaf || row.message.timestamp < gui.submittedAt ||
-       textContent(row.message.content) !== gui.command.payload.text))) { ctx.abort(); fail(); return; }
+       textContent(row.message.content) !== gui.command.payload.text))) { ctx.abort(); fail('journal-association-' + fresh.length + '-' + matches.length); return; }
+    if (Date.now() >= deadline) { ctx.abort(); fail('journal-admission-budget'); return; }
     for (const entry of branch) seenRows.add(entry.id);
     const admission = new AbortController();
-    const guard = setTimeout(() => { ctx.abort(); admission.abort(); }, 8_000);
+    const guard = setTimeout(() => { ctx.abort(); admission.abort(); }, Math.max(1, deadline - Date.now()));
     try {
       const answer = await request('admit-input', { sessionFile: nativeId, row,
         ...(gui ? { commandId: gui.command.id } : {}) }, admission.signal);
