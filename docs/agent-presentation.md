@@ -619,9 +619,18 @@ Launch files and leases remain until the exact native process has exited.
 
 This connects an adapter to the ordinary product entry, not just the earlier
 probe. Focused tests cover Session admission, continuation, unknown outcomes,
-same-file resume, host-tool ownership and Main cleanup. Actual new/legacy-task
-GUI/TUI switching, native approval UI and cancellation still need isolated
-window acceptance. Model/source changes use the existing managed-route rebuild;
+same-file resume, host-tool ownership and Main cleanup. The Windows isolated
+ordinary Desktop at `c465054de` passed same-file history recovery, original-TUI
+input and GUI result return, GUI semantic continuation, running-process dual
+drafts/focus, and Stop followed by one explicit new native input without an
+automatic continuation. A fresh unnamed task also completed its first input
+directly from TUI and returned the same history to GUI. SQLite receipts matched
+the real native journal IDs, and each explicit input produced one loopback
+provider request. Evidence is retained under `rc1-omp-window4` outside the repo.
+The model was simulated: real suppliers, native tool approval and other
+platforms are not covered. Native journal usage was present, but persisted
+product total usage remained zero and is a separate observed gap. Model/source
+changes use the existing managed-route rebuild;
 the native permission mode remains fixed for this process. Pi's production
 interactive extension adapter is still separate work; this does not complete
 all four engines or establish SSH, Device Link or non-Windows acceptance.
