@@ -6,6 +6,11 @@ import { REMOTE_VIEWER } from '../shared/remoteDesktopViewer';
 
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import {
+  COMPOSER_DRAFT_LOAD, COMPOSER_DRAFT_SAVE,
+  type ComposerDraftSnapshot, type ComposerDraftWrite,
+} from '../shared/composerDraft';
+import { composerDraftEntriesSchema } from '../shared/composerDraftValidation';
 import { DESKTOP_LOCAL, type RemoteDesktopApi } from '../shared/remoteDesktop';
 import { DEVICE_LINK_PUSH } from '../shared/deviceLinkIpc';
 import {
@@ -5034,6 +5039,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
       sessionId: string; repositoryId?: string;
       confirmForce?: ReviewPushConfirmForce;
     }): Promise<ReviewPushResult> => ipcRenderer.invoke('git-review:push', params),
+  },
+
+  composerDrafts: {
+    loadSnapshot: (stamp: DataOwnerPushStamp): ComposerDraftSnapshot | null => {
+      const value: unknown = ipcRenderer.sendSync(COMPOSER_DRAFT_LOAD, stamp);
+      if (!isDataOwnerPushStamp(value) || !('entries' in value)) return null;
+      const entries = composerDraftEntriesSchema.safeParse(value.entries);
+      return entries.success ? {
+        dataOwnerId: value.dataOwnerId, ownerGeneration: value.ownerGeneration, entries: entries.data,
+      } : null;
+    },
+    save: (request: ComposerDraftWrite): Promise<void> => ipcRenderer.invoke(COMPOSER_DRAFT_SAVE, request),
   },
 
   // Sidebar identity state is owner-scoped in main and every mutation/push is generation-fenced.

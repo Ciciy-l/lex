@@ -3096,6 +3096,14 @@ export function ChatInput({
   const voiceInputBusyRef = useRef(false);
   const voiceInputStopAndSendPromiseRef = useRef<Promise<void> | null>(null);
 
+  // Renderer reload need not wait for the 120ms typing debounce.
+  // The scheduled writer retains its original task/owner checks.
+  useEffect(() => {
+    const flush = () => draftSaveSchedulerRef.current?.flush();
+    window.addEventListener('beforeunload', flush);
+    return () => window.removeEventListener('beforeunload', flush);
+  }, []);
+
   // Declared before useVoiceInput so React 19 runs this cleanup first
   // (declaration order). Arm must be visible before the voice hook decides
   // whether to cancel or settle; otherwise the run is cancelled and a later

@@ -134,9 +134,43 @@ still runs the earlier Main/Core code, so a live usage-total fix is not claimed.
 These results use a Windows isolated profile and loopback model. They do not
 establish real-provider, packaged or other-platform acceptance, native advanced
 command parity, or restoration of unsent GUI drafts across Desktop restarts.
-GUI drafts are currently held only in Renderer memory, with no durable
-composer store. Cross-Desktop-restart draft recovery still needs a Main-owned,
-owner-scoped storage path and its own restart acceptance.
+
+### Durable local GUI drafts, awaiting candidate window acceptance
+
+The previous composer Map was process-local, so a Desktop restart discarded
+unsent GUI content. Main now owns `owners/<owner-key>/composer-drafts.json`,
+using the verified active account/generation and an opaque task key. The new
+task composer has its own key. Signed-out, stale-owner, transitioning-account
+and untrusted-frame requests cannot read or mutate another account's drafts.
+This is local UI state; no Device Link channel, account sync or agent input
+replay is added. A draft-storage failure affects that local draft write, not
+the running task, its transport, or another controller.
+
+Owner hydration reads a bounded snapshot synchronously before editor restore.
+Locally edited or explicitly cleared keys win if bootstrap storage was
+temporarily unavailable. Text/quotes, attachment metadata, annotations and
+browser comments survive; one-shot focus and capability handoff flags do not.
+Successful send and explicit discard use the existing clear paths. Ordered,
+atomic Main writes prevent an older accepted save from following its clear;
+unreadable files are preserved rather than replaced with an empty snapshot.
+The existing quit lifecycle drains accepted writes, and Renderer reload
+flushes the typing debounce. Abrupt termination can still lose an edit that
+has not reached Main or finished writing; this is not a crash-proof journal.
+The bounded local file holds up to 1,000 drafts / 32 MiB, with 8 MiB per draft;
+a rejected write keeps the live editor and does not truncate older storage.
+
+Attachments remain in the existing media/staging lifecycle, without copying
+bytes into a new store. The media recycler includes disk-only draft URLs and
+pending additions before a Renderer mounts; pending deletion releases its
+protection only after the atomic clear succeeds. Corrupt draft storage blocks
+that cleanup rather than guessing which media is unused.
+
+Focused tests cover durable round trips, account/task and generation fences,
+newer edits, send/discard ordering, annotations, attachment protection and
+corrupt-file preservation. The earlier window does not load these Main/preload
+changes. Cross-Desktop-restart acceptance and the new Claude startup, Pi idle
+exit and OMP token-total fixes require the fixed candidate to be manually
+started through the formal isolated entry; no new window pass is claimed.
 
 ## Incremental delivery and acceptance
 

@@ -4387,6 +4387,12 @@ interface ElectronAPI {
     }) => Promise<import('@/lib/gitReview.types').ReviewPushResult>;
   };
 
+  composerDrafts: {
+    loadSnapshot: (stamp: import('../shared/dataOwnerPush').DataOwnerPushStamp) =>
+      import('../shared/composerDraft').ComposerDraftSnapshot | null;
+    save: (request: import('../shared/composerDraft').ComposerDraftWrite) => Promise<void>;
+  };
+
   sidebarSettings: {
     claimLegacyRendererOwner: () => import('../shared/sidebarSettings').SidebarLegacyRendererOwnerClaim;
     loadSnapshot: () => import('../shared/sidebarSettings').SidebarSettingsSnapshot;
