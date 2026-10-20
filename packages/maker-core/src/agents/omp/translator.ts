@@ -121,8 +121,10 @@ export class OmpTranslator {
   private cacheReadTokens = 0;
   private cacheWriteTokens = 0;
   private costUsd = 0;
+  private contextTokens = 0;
   private contextWindow: number;
   private streamedTextInTurn = false;
+  private turnSettled = false;
   private turnText = '';
 
   constructor(private readonly options: OmpTranslatorOptions) {
@@ -144,11 +146,9 @@ export class OmpTranslator {
 
   getUsageSnapshot(): UsageSnapshot {
     const tokenUsage = this.inputTokens + this.outputTokens;
-    const contextTokens =
-      this.inputTokens + this.cacheReadTokens + this.cacheWriteTokens;
     return {
       tokenUsage,
-      contextTokens: contextTokens > 0 ? contextTokens : 0,
+      contextTokens: this.contextTokens,
       contextWindow: this.contextWindow,
       costUsd: this.costUsd,
       outputTokens: this.outputTokens,
@@ -237,8 +237,11 @@ export class OmpTranslator {
     this.hasResponseSpeed = true;
     this.responseSpeed.reset('turn');
     this.streaming = true;
+    this.turnSettled = false;
     this.streamedTextInTurn = false;
     this.turnText = '';
+    // Status and done usage describe this turn, never the sum of prior turns.
+    this.inputTokens = this.outputTokens = this.cacheReadTokens = this.cacheWriteTokens = 0;
     return { kind: 'events', events: [this.status('OMP is working', true)] };
   }
 
@@ -303,7 +306,7 @@ export class OmpTranslator {
       }
       this.seenMessageEnds.add(dedupeKey);
     }
-    this.applyUsage(message);
+    if (message.role === 'assistant') this.applyUsage(message);
     if (this.hasResponseSpeed && message.role === 'assistant') {
       const usage = readRecord(message.usage);
       const output = typeof usage?.output === 'number' && Number.isFinite(usage.output) && usage.output >= 0
@@ -439,6 +442,8 @@ export class OmpTranslator {
   private translateAgentEnd(frame: Readonly<Record<string, unknown>>): OmpTranslation {
     // spike §4：`isTerminal` 是终态标志；显式 false 表示还有后续 turn。
     if (frame.isTerminal === false) return { kind: 'ignored' };
+    if (this.turnSettled) return { kind: 'ignored' };
+    this.turnSettled = true;
     this.responseSpeed.finish();
     this.streaming = false;
     const result = this.turnText ? this.turnText.slice(0, PREVIEW_LIMIT * 8) : undefined;
@@ -451,7 +456,10 @@ export class OmpTranslator {
         this.status('Done', false),
         this.event(
           'done',
-          { ...(result === undefined ? {} : { result }) },
+          { ...(result === undefined ? {} : { result }), usage: {
+            inputTokens: this.inputTokens, outputTokens: this.outputTokens,
+            cacheReadTokens: this.cacheReadTokens, cacheCreateTokens: this.cacheWriteTokens,
+          } },
           { ...this.getUsageSnapshot() },
         ),
       ],
@@ -513,6 +521,7 @@ export class OmpTranslator {
       this.outputTokens += readNumber(usage.output);
       this.cacheReadTokens += readNumber(usage.cacheRead);
       this.cacheWriteTokens += readNumber(usage.cacheWrite);
+      this.contextTokens = readNumber(usage.input) + readNumber(usage.cacheRead) + readNumber(usage.cacheWrite);
     }
     // OMP 的 cost 形状未在 spike 中抓到（只看到字段存在）；取不到就保持 0，
     // 绝不猜一个"看起来像钱"的数。
