@@ -13,6 +13,25 @@ function fixture() {
 }
 
 describe('Claude native structured product events', () => {
+  it('provides the shared renderer status contract throughout native input and usage updates', () => {
+    const f = fixture();
+    f.send('session.compacted', { trigger: 'manual', tokensAfter: 200 });
+    f.begin();
+    f.send('step-result', { turnId: 'turn', index: 0, usage });
+    f.send('session.compacted', { trigger: 'auto', tokensAfter: 100 });
+    f.send('turn.complete', { turnId: 'turn', reason: 'answer', usage });
+    expect(f.events.filter(event => event.type === 'status').map(event => {
+      const data = event.data as { status: string; isRunning: boolean };
+      return { status: data.status, isRunning: data.isRunning };
+    })).toEqual([
+      { status: 'Done', isRunning: false },
+      { status: 'Working', isRunning: true },
+      { status: 'Working', isRunning: true },
+      { status: 'Working', isRunning: true },
+      { status: 'Done', isRunning: false },
+    ]);
+  });
+
   it('projects root compaction outside a turn without fabricating finality or missing token counts', () => {
     const f = fixture(); f.adapter.usage.setContextTokensAfterCompact(900);
     f.send('session.compacted', { trigger: 'manual', tokensBefore: 900, tokensAfter: 200 });
@@ -178,6 +197,7 @@ describe('Claude native structured product events', () => {
     expect(f.events.filter(event => event.type === 'done')).toHaveLength(1);
     expect(f.events.filter(event => event.type === 'error')).toHaveLength(reason === 'error' || reason === 'refusal' ? 1 : 0);
     expect((f.events.at(-1)!.data as { silentStop?: boolean }).silentStop).toBe(reason === 'aborted' ? true : undefined);
+    expect(f.events.at(-2)).toMatchObject({ type: 'status', data: { status: 'Done', isRunning: false } });
   });
 
   it('settles a policy-denied tool from its actual transcript without requiring tool.call', () => {
