@@ -166,6 +166,9 @@ const CORE_INVOKE_CHANNELS: readonly string[] = [
   'maker:list-active',
   'maker:any-session-in-turn',
   'maker:session-in-turn',
+  // Same-account task-owned native views. No process launch; host fences every
+  // operation by task, attachment, runtime generation and trusted peer identity.
+  'maker:presentation:v1',
   // Review evidence and the Reviewer session are created on the data-owning
   // device. The handler remains host-owned; this only permits the explicit
   // start request to cross the device-link tunnel.

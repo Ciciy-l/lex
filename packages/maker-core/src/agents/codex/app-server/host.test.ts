@@ -153,6 +153,109 @@ class NotificationTransport implements Transport {
   }
 }
 
+describe('native notification initialization scope', () => {
+  const initializeCapabilities = (transport: NotificationTransport) => transport.lines
+    .map(line => JSON.parse(line) as { method?: string; params?: { capabilities?: { optOutNotificationMethods?: string[] } } })
+    .find(frame => frame.method === 'initialize')?.params?.capabilities;
+
+  it('preserves legacy delta opt-outs and cannot upgrade an initialized connection by calling ensureStarted again', async () => {
+    const transport = new NotificationTransport();
+    const createTransport = vi.fn(() => transport);
+    const host = new AppServerHost({ createTransport, logger, clientInfo: { name: 'legacy', version: '0' } });
+    try {
+      const first = await host.ensureStarted();
+      expect(initializeCapabilities(transport)?.optOutNotificationMethods).toEqual([
+        'item/plan/delta', 'item/commandExecution/outputDelta', 'item/fileChange/outputDelta',
+      ]);
+      expect(host.captureNativeNotificationReceipt()).toBeUndefined();
+      expect(await host.ensureStarted({ optOutNotificationMethods: [] })).toBe(first);
+      expect(host.hasCompleteNativeNotifications).toBe(false);
+      expect(transport.lines.map(line => JSON.parse(line)).filter(frame => frame.method === 'initialize')).toHaveLength(1);
+      expect(createTransport).toHaveBeenCalledTimes(1);
+      await expect(host.request('thread/read', { threadId: 'existing-gui-task' })).resolves.toEqual({});
+    } finally { await host.shutdown(); }
+  });
+
+  it('selects complete notifications before GUI-first creation and binds the real initialize ACK to one connection generation', async () => {
+    const transports: NotificationTransport[] = [];
+    const host = new AppServerHost({ createTransport: () => {
+      const transport = new NotificationTransport(); transports.push(transport); return transport;
+    }, logger, clientInfo: { name: 'native-task', version: '0' }, notificationProfile: 'native-presentation' });
+    try {
+      expect(host.captureNativeNotificationReceipt()).toBeUndefined();
+      const ack = await host.ensureStarted();
+      const first = host.captureNativeNotificationReceipt()!;
+      expect(first).toBeDefined(); expect(Object.isFrozen(first)).toBe(true);
+      expect(first.userAgent).toBe(ack.userAgent);
+      expect(first.optOutNotificationMethods).toEqual([]);
+      expect(initializeCapabilities(transports[0])?.optOutNotificationMethods).toEqual([]);
+      expect(first.isCurrent()).toBe(true);
+      // The existing client returns after the initialize ACK; obtaining this
+      // receipt creates no thread, turn, or frontend.
+      expect(transports[0].lines.map(line => JSON.parse(line).method)).toEqual(['initialize']);
+      await host.shutdown();
+      expect(first.signal.aborted).toBe(true); expect(first.isCurrent()).toBe(false);
+      expect(host.captureNativeNotificationReceipt()).toBeUndefined();
+      expect(transports).toHaveLength(1);
+      await host.ensureStarted();
+      const next = host.captureNativeNotificationReceipt()!;
+      expect(next.connectionId).toBe(first.connectionId);
+      expect(next.generation).toBeGreaterThan(first.generation);
+      expect(next.isCurrent()).toBe(true); expect(first.isCurrent()).toBe(false);
+      expect(transports).toHaveLength(2);
+    } finally { await host.shutdown(); }
+  });
+
+  it('does not publish complete-flow evidence before initialize has actually returned', async () => {
+    vi.useFakeTimers();
+    const host = new AppServerHost({ createTransport: () => new DelayedTransport(10), logger,
+      clientInfo: { name: 'native-task', version: '0' }, notificationProfile: 'native-presentation' });
+    try {
+      const pending = host.ensureStarted();
+      expect(host.captureNativeNotificationReceipt()).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(10); await pending;
+      expect(host.captureNativeNotificationReceipt()?.isCurrent()).toBe(true);
+    } finally { await host.shutdown(); vi.useRealTimers(); }
+  });
+
+  it('keeps an explicit initial exclusion from being mistaken for complete native notifications', async () => {
+    const transport = new NotificationTransport();
+    const host = new AppServerHost({ createTransport: () => transport, logger, clientInfo: { name: 'test', version: '0' },
+      notificationProfile: 'native-presentation' });
+    try {
+      await host.ensureStarted({ optOutNotificationMethods: ['item/plan/delta'] });
+      expect(initializeCapabilities(transport)?.optOutNotificationMethods).toEqual(['item/plan/delta']);
+      expect(host.captureNativeNotificationReceipt()).toBeUndefined();
+      await host.ensureStarted({ optOutNotificationMethods: [] });
+      expect(host.captureNativeNotificationReceipt()).toBeUndefined();
+    } finally { await host.shutdown(); }
+  });
+
+  it('revokes the receipt on transport exit without silently restarting the service', async () => {
+    const transport = new NotificationTransport(); const createTransport = vi.fn(() => transport);
+    const host = new AppServerHost({ createTransport, logger, clientInfo: { name: 'test', version: '0' },
+      notificationProfile: 'native-presentation' });
+    try {
+      await host.ensureStarted(); const receipt = host.captureNativeNotificationReceipt()!;
+      await transport.close('native proof transport exit');
+      expect(receipt.signal.aborted).toBe(true); expect(receipt.isCurrent()).toBe(false);
+      expect(host.captureNativeNotificationReceipt()).toBeUndefined();
+      expect(createTransport).toHaveBeenCalledTimes(1);
+    } finally { await host.shutdown(); }
+  });
+
+  it('does not call a connection complete when its first initialize disabled experimental notifications', async () => {
+    const transport = new NotificationTransport();
+    const host = new AppServerHost({ createTransport: () => transport, logger, clientInfo: { name: 'test', version: '0' },
+      notificationProfile: 'native-presentation' });
+    try {
+      await host.ensureStarted({ experimentalApi: false });
+      expect(host.captureNativeNotificationReceipt()).toBeUndefined();
+      expect(host.hasCompleteNativeNotifications).toBe(false);
+    } finally { await host.shutdown(); }
+  });
+});
+
 describe('concrete writer candidate proof', () => {
   it.each(['request', 'notification', 'subscription'])('retains %s evidence until confirmed process exit', async (source) => {
     const transports: NotificationTransport[] = [];
@@ -1142,15 +1245,19 @@ describe('AppServerHost descendant thread routing', () => {
     );
     expect(commandExecutionApproval).toHaveBeenCalledWith(
       expect.objectContaining({ threadId: 'child-thread' }),
+      { requestId: 'server-command' },
     );
     expect(fileChangeApproval).toHaveBeenCalledWith(
       expect.objectContaining({ threadId: 'child-thread' }),
+      { requestId: 'server-file' },
     );
     expect(mcpServerElicitation).toHaveBeenCalledWith(
       expect.objectContaining({ threadId: 'child-thread' }),
+      { requestId: 'server-elicitation' },
     );
     expect(permissionsApproval).toHaveBeenCalledWith(
       expect.objectContaining({ threadId: 'child-thread' }),
+      { requestId: 'server-permissions' },
     );
     expect(requestUserInput).toHaveBeenCalledWith(
       expect.objectContaining({ threadId: 'child-thread' }),
@@ -1211,6 +1318,7 @@ describe('AppServerHost descendant thread routing', () => {
     });
     expect(mcpServerElicitation).toHaveBeenCalledWith(
       expect.objectContaining({ threadId: 'child-thread', serverName: 'node_repl' }),
+      { requestId: 'early-elicitation' },
     );
 
     await subscription.release();
@@ -1796,5 +1904,31 @@ describe('AppServerHost buffered descendant notification replay', () => {
 
     await subscription.release();
     await host.shutdown();
+  });
+});
+
+describe('AppServerHost native frontend generation binding', () => {
+  it('does not start a transport merely to obtain a frontend binding', async () => {
+    const createTransport = vi.fn(() => new NotificationTransport());
+    const host = new AppServerHost({ createTransport, logger: logger, clientInfo: { name: 'fixture', version: '0' } });
+    expect(await host.getNativeFrontendBinding()).toBeUndefined(); expect(createTransport).not.toHaveBeenCalled();
+    await host.ensureStarted(); expect(await host.getNativeFrontendBinding()).toBeUndefined();
+    await host.shutdown();
+  });
+  it('revokes a captured endpoint at shutdown before native transport cleanup finishes', async () => {
+    const transport = Object.assign(new NotificationTransport(), {
+      endpoint: Promise.resolve({ url: 'ws://127.0.0.1:31415', token: 'fixture-only' }),
+    });
+    const host = new AppServerHost({ createTransport: () => transport, logger: logger, clientInfo: { name: 'fixture', version: '0' } });
+    await host.ensureStarted(); const binding = (await host.getNativeFrontendBinding())!;
+    expect(binding.isCurrent()).toBe(true);
+    let finish!: () => void;
+    const pending = new Promise<void>(resolve => { finish = resolve; });
+    const originalClose = transport.close.bind(transport);
+    vi.spyOn(transport, 'close').mockImplementation(async () => { await pending; await originalClose(); });
+    const closing = host.shutdown();
+    expect(binding.signal.aborted).toBe(true); expect(binding.isCurrent()).toBe(false);
+    expect(await host.getNativeFrontendBinding()).toBeUndefined();
+    finish(); await closing;
   });
 });

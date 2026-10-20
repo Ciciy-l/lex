@@ -84,6 +84,25 @@ describe('createCodexMcpThreadContextStore', () => {
     expect(store.getContextForSessionInstanceId('instance-1')).toBe(first);
   });
 
+  it.each([
+    ['descendant', 'descendant', true],
+    ['unknown', 'unknown', true],
+    ['unattested root', 'root', false],
+    ['missing provenance', undefined, undefined],
+  ] as const)('does not borrow root provenance for an alias with %s provenance', (_label, mcpCallerKind, mcpCallerAttested) => {
+    const store = createCodexMcpThreadContextStore();
+    const root = { ...ctx('session-1'), sessionInstanceId: 'instance-1', mcpCallerKind: 'root' as const, mcpCallerAttested: true };
+    const alias = { ...root, mcpCallerKind, mcpCallerAttested };
+    store.registerThreadContext('root-thread', root);
+    store.registerThreadContext('auxiliary-thread', alias);
+
+    expect(store.getContextForSessionInstanceId('instance-1')).toBeUndefined();
+    expect(store.getContextForThreadId('root-thread')).toBe(root);
+    expect(store.getContextForThreadId('auxiliary-thread')).toBe(alias);
+    store.unregisterThreadContext('root-thread');
+    expect(store.getContextForSessionInstanceId('instance-1')).toBe(alias);
+  });
+
   it('ignores a stale unregister after the same thread id is rebound to a new session instance', () => {
     const store = createCodexMcpThreadContextStore();
     const oldContext = { ...ctx('session-1'), sessionInstanceId: 'instance-old' };

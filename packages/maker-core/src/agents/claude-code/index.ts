@@ -42,7 +42,10 @@ import type {
   Settings,
 } from '@anthropic-ai/claude-agent-sdk';
 import { discoverSubagentDefinitions } from './subagent-definitions.js';
-import { spawnObservedClaudeProcess } from './local-process-spawn.js';
+import { claudeSdkOptions, type ClaudeLocalSessionLaunch } from './local-session-launch.js';
+import { prepareClaudeLocalMcp, type ClaudeLocalMcpSources } from './local-mcp-servers.js';
+import type { ClaudeNativeSessionHandle } from './native-session.js';
+import { prepareClaudeNativeInputContent } from './native-input-content.js';
 import { claudeMcpServerToolsReport, type ClaudeMcpServerStatusEntry } from './mcp-server-tools.js';
 import {
   reportSubagentModelDiagnostics,
@@ -1715,9 +1718,11 @@ export class ClaudeCodeAgent extends BaseAgent {
       }
       if (currentQ === q) nonHarnessMcpServerNames = fallbackNames;
     };
+    let localMcpSources: ClaudeLocalMcpSources | undefined;
     const buildMcpServers = (): Record<string, McpServerConfig> | undefined => {
       const providers = mcpProviders;
       if (providers.length === 0) {
+        localMcpSources = undefined;
         hostMcpServerNames = new Set();
         registeredMcpServerNames = hostMcpServerNames;
         nonHarnessMcpServerNames = hostMcpServerNames;
@@ -1739,40 +1744,18 @@ export class ClaudeCodeAgent extends BaseAgent {
         ...(opts.sessionInstanceId ? { sessionInstanceId: opts.sessionInstanceId } : {}),
         getSessionContext: () => context,
       };
-      // null-prototype: server 名来自用户可控的自定义 MCP id, 而 id 正则允许下划线,
-      // `__proto__` 是合法 id。用普通 `{}` 时 `out['__proto__'] = config` 命中的是原型
-      // 访问器 —— 不产生自有属性(hasOwnProperty / Object.keys 都看不见, 去重与归属判定
-      // 一起失效), 反而把这个 map 的原型换成了 config。null-prototype 让这类名字退化成
-      // 普通字符串键。
-      const out: Record<string, McpServerConfig> = Object.create(null);
-      for (const provider of providers) {
-        // cindy_memory: per-session flag 关 → 不注册; remote → in-process sdk 实例
-        // 不可序列化, 这里跳过, 由 host 的 remoteCcQueryFactory 按同一 flag 以
-        // http 形态经 bridge 注入 (见 cc-remote-mcp.ts)。
-        if (provider.name === 'cindy_memory' && (!makerMemoryEnabled || opts.remoteHostId)) continue;
-        if (provider.isEnabled && !provider.isEnabled(context)) continue;
-        // 同名 provider 先注册者胜 —— host 把用户自定义 MCP **追加**在内置之后, 后写
-        // 覆盖会让一个 id 取名 `cindy_browser` 的自定义远程端点顶替内置 server:
-        // 既悄悄换掉了内置能力, 又让审批策略(只看 serverName)把第三方端点的所有工具
-        // 当第一方静默放行。host 侧也拦了这类保留名, 这里是纵深防御。
-        if (Object.prototype.hasOwnProperty.call(out, provider.name)) {
-          log.warn('duplicate MCP server name; keeping the first registration', {
-            serverName: provider.name,
-          });
-          continue;
-        }
-        const config = provider.toClaudeSdkConfig?.(context);
-        if (!config) continue;
-        out[provider.name] = config as McpServerConfig;
-      }
+      const selected = prepareClaudeLocalMcp({
+        providers, context, makerMemoryEnabled, remote: Boolean(opts.remoteHostId),
+        onDuplicate: serverName => log.warn('duplicate MCP server name; keeping the first registration', { serverName }),
+      });
+      localMcpSources = selected.sources;
+      const out = selected.servers;
       // canUseTool 只认这批真实注册过的 server 名, 不靠 `mcp__` 工具名切分猜归属
       // (见 resolveMcpToolTarget: 自定义 server id 可以含 `__`, 盲切会被冒名顶替)。
-      hostMcpServerNames = new Set(Object.keys(out));
+      hostMcpServerNames = new Set(Object.keys(out ?? {}));
       registeredMcpServerNames = hostMcpServerNames;
       nonHarnessMcpServerNames = hostMcpServerNames;
-      // 交回普通对象: SDK / RPC 序列化路径按普通对象处理(有的实现会调 obj.hasOwnProperty)。
-      // spread 走 CreateDataProperty, 不触发 `__proto__` setter, 所以这一步是安全的。
-      return Object.keys(out).length > 0 ? { ...out } : undefined;
+      return out;
     };
 
     // ── userMessageStream + permission callback 准备 ────────────────────────
@@ -1987,8 +1970,9 @@ export class ClaudeCodeAgent extends BaseAgent {
      */
     async function dispatchInteraction(
       req: InteractionRequest,
-      opts?: { forcePrompt?: boolean; directorySensitive?: boolean },
+      opts?: { forcePrompt?: boolean; directorySensitive?: boolean; signal?: AbortSignal },
     ): Promise<InteractionDecision> {
+      if (opts?.signal?.aborted) return safeDefaultDecision(req.kind, 'native_request_retired');
       if (!interactionResolver) {
         return safeDefaultDecision(req.kind, 'no_resolver_attached');
       }
@@ -1996,7 +1980,7 @@ export class ClaudeCodeAgent extends BaseAgent {
       return new Promise<InteractionDecision>((resolve) => {
         const entry: PendingEntry = {
           kind: req.kind,
-          resolve,
+          resolve: decision => { opts?.signal?.removeEventListener('abort', retire); resolve(decision); },
           settled: false,
           ...(opts?.forcePrompt ? { forcePrompt: true } : {}),
           ...(opts?.directorySensitive ? { directorySensitive: true } : {}),
@@ -2005,11 +1989,15 @@ export class ClaudeCodeAgent extends BaseAgent {
             : {}),
         };
         pendingInteractions.set(req.requestId, entry);
+        const retire = () => {
+          if (pendingInteractions.get(req.requestId) === entry) dismissSinglePending(req.requestId, 'native_request_retired');
+        };
+        opts?.signal?.addEventListener('abort', retire, { once: true });
         const finalize = (d: InteractionDecision) => {
           if (entry.settled) return;
           entry.settled = true;
-          pendingInteractions.delete(req.requestId);
-          resolve(d);
+          if (pendingInteractions.get(req.requestId) === entry) pendingInteractions.delete(req.requestId);
+          entry.resolve(d);
         };
         resolver(req)
           .then(finalize)
@@ -2168,7 +2156,7 @@ export class ClaudeCodeAgent extends BaseAgent {
     //  3. 其他工具:        转 permission kind, allow/deny + 可选 updatedInput
     // 注: destructive guard(agentManager.ts:1054-1065)只在 feishuBot session 启用; chat 默认 OFF,
     // 本轮不在 maker-core 实现; 若未来需要按 session opt-in, 通过 vendorOptions 传入 guard 函数。
-    const canUseTool: CanUseTool = async (toolName, input, options) => {
+    const canUseToolImpl: CanUseTool = async (toolName, input, options) => {
       // SDK 不保证 assistant message 先于 canUseTool yield, 冗余 add (Set 幂等),
       // 顺便覆盖 AskUserQuestion / ExitPlanMode 等用户交互期间不计 idle 配额。
       if (typeof options.toolUseID === 'string' && options.toolUseID.length > 0) {
@@ -2187,7 +2175,8 @@ export class ClaudeCodeAgent extends BaseAgent {
           requestId: options.toolUseID,
           toolUseId: options.toolUseID,
           questions,
-        });
+        }, { signal: options.signal });
+        if (options.signal?.aborted) return { behavior: 'deny', message: 'Native permission request retired' };
         if (decision.kind !== 'ask_user_question') {
           log.warn('AskUserQuestion got mismatched decision', { decKind: decision.kind });
           return { behavior: 'deny', message: 'resolver kind mismatch' };
@@ -2224,7 +2213,8 @@ export class ClaudeCodeAgent extends BaseAgent {
           toolUseId: options.toolUseID,
           plan,
           planFilePath,
-        });
+        }, { signal: options.signal });
+        if (options.signal?.aborted) return { behavior: 'deny', message: 'Native permission request retired' };
         if (decision.kind !== 'plan_review') {
           log.warn('ExitPlanMode got mismatched decision', { decKind: decision.kind });
           return { behavior: 'deny', message: 'resolver kind mismatch' };
@@ -2410,8 +2400,9 @@ export class ClaudeCodeAgent extends BaseAgent {
         unavailableHandoff
           ? annotatePermissionRequestForUnavailableReview(permissionRequest)
           : permissionRequest,
-        { forcePrompt, directorySensitive: directorySensitivePermission },
+        { forcePrompt, directorySensitive: directorySensitivePermission, signal: options.signal },
       );
+      if (options.signal?.aborted) return { behavior: 'deny', message: 'Native permission request retired' };
       notifyIfAutoReviewConfirmUndelivered(unavailableHandoff, decision);
       if (decision.kind !== 'permission') {
         log.warn('permission got mismatched decision', { tool: toolName, decKind: decision.kind });
@@ -2450,6 +2441,14 @@ export class ClaudeCodeAgent extends BaseAgent {
         return out;
       }
       return { behavior: 'deny', message: formatPermissionDenial(isSystemPermissionDenialReason(decision.reason) ? 'system' : 'user', decision.reason) };
+    };
+
+    // Native TUI and GUI can race to answer the same request. The original
+    // request signal owns its card and invalidates a late policy/GUI result.
+    const canUseTool: CanUseTool = async (toolName, input, options) => {
+      if (options.signal?.aborted) return { behavior: 'deny', message: 'Native permission request retired' };
+      const result = await canUseToolImpl(toolName, input, options);
+      return options.signal?.aborted ? { behavior: 'deny', message: 'Native permission request retired' } : result;
     };
 
     // ── thinking display 配置（与 vendor/claude/runtime.ts:121-126 等价） ─────
@@ -2595,6 +2594,10 @@ export class ClaudeCodeAgent extends BaseAgent {
       autoReviewUnavailableNotice.reset();
       autoReviewConfirmUndeliveredNotice.reset();
     };
+    const acceptInputPolicy = (message: UserMessage, sendOpts?: SendOptions): void => {
+      activeCapabilitySelectionText = userMessageTextForCapabilityRouting(message.content);
+      setAutoReviewIntent(appendAutoReviewUserIntent(priorAutoReviewIntent(), message.content, sendOpts), { authority: autoReviewContext() });
+    };
     // 「自动审核不可用」的会话级一次性提示(issue #1574)。走既有的非终止 error 事件 +
     // `[CODE]` 约定,不新增事件类型;逐条提示会把 Auto 退化成比 Ask 更烦的东西,所以去重。
     const emitAutoReviewRuntimeNotice = (message: string): void => {
@@ -2736,6 +2739,12 @@ export class ClaudeCodeAgent extends BaseAgent {
     let mutableEffort: Effort = opts.effort ?? 'high';
     let mutablePermissionMode: PermissionMode =
       reviewMode ? 'ask' : opts.permissionMode ?? 'default';
+    function validateTurnSendOptions(sendOpts: SendOptions): void {
+      if (sendOpts.turnPermissionPolicy
+        && (mutablePermissionMode === 'acceptEdits' || mutablePermissionMode === 'bypassPermissions')) {
+        throw new TurnPermissionPolicyUnsupportedError('claude-code', mutablePermissionMode);
+      }
+    }
     // 计划模式(与 permissionMode 正交, **一次性选择**): mutablePlanMode 是 UI 勾选的
     // "武装"态 —— send 消耗它并立即 emit plan_mode_changed(false) 让勾选熄灭;
     // 本轮 plan turn 由 planTurnActive 承载(SDK 保持 plan 档): ExitPlanMode 批准
@@ -3223,12 +3232,18 @@ export class ClaudeCodeAgent extends BaseAgent {
     // 三件套 (resume + resumeSessionAt + forkSession) 通过 extra 注入。
     // startSession 首次调 buildQuery() 不传 extra, 走 vendorOptions.resumeSessionAt /
     // forkSession 透传 (老链路兼容); rewind 重启时传 extra, 强制三件套。
-    const buildQuery = async (extra?: {
+    type QueryBuildOptions = {
       resumeSessionAt?: string;
       forkSession?: boolean;
       permissionMode?: SdkPermissionMode;
       fresh?: boolean;
-    }): Promise<Query> => {
+    };
+    const buildExecution = async (extra?: QueryBuildOptions, native = false): Promise<
+      { kind: 'sdk'; query: Query } | { kind: 'native'; handle: ClaudeNativeSessionHandle }
+    > => {
+      if (native && (opts.remoteHostId || vo.resumeSessionAt || vo.forkSession || extra?.resumeSessionAt || extra?.forkSession)) {
+        throw new Error('Native Claude remote/history restoration is not integrated');
+      }
       const currentSdkModel = sdkModelFor(mutableModel);
       const workingWindow = resolveModelContextWindow(mutableModel);
       appliedContextWindow = workingWindow;
@@ -3805,7 +3820,7 @@ export class ClaudeCodeAgent extends BaseAgent {
 
         if (finalRemotePermissionMode === 'auto') nativeAutoQueries.add(remoteQuery);
         if (modelUsageCumulativeStartsAtZero) modelUsageStartsAtZeroQueries.add(remoteQuery);
-        return remoteQuery;
+        return { kind: 'sdk', query: remoteQuery };
       }
 
       // ── 本地 SDK 分支 ──
@@ -3860,7 +3875,9 @@ export class ClaudeCodeAgent extends BaseAgent {
               }
             }
           }
-          if (outcome === 'missing') {
+          // An interactive reopen must keep its requested identity. Let native
+          // resume report missing history; never clear it and silently start fresh.
+          if (outcome === 'missing' && !native) {
             const cleared = await clearInvalidResumeSession(resumeSdkSid, 'transcript_preflight');
             if (cleared) {
               // 本地 CLI 没有转录就不可能恢复。spawn 前转 fresh，当前用户消息尚未
@@ -3908,7 +3925,7 @@ export class ClaudeCodeAgent extends BaseAgent {
         void managedPlugins?.dispose().catch((error) => log.warn('managed skill plugin cleanup failed', { error: String(error) }));
       };
       const querySignal = abortController.signal;
-      if (managedPlugins) querySignal.addEventListener('abort', releaseManagedPlugins, { once: true });
+      if (managedPlugins && !native) querySignal.addEventListener('abort', releaseManagedPlugins, { once: true });
       const managedSkillPluginRoots = reviewMode
         ? []
         : [...new Set([...(managedPlugins?.roots ?? []), ])];
@@ -3916,126 +3933,112 @@ export class ClaudeCodeAgent extends BaseAgent {
       // A fork keeps its resume source but must publish a new destination id.
       const newSdkSessionId = !resumeSdkSid || finalFork ? randomUUID() : undefined;
       const previousSdkSessionId = sdkSessionId;
-      const createLocalQueryArgs = (): Parameters<typeof sdkQuery>[0] => ({
-
-        prompt: inputQueue as unknown as Parameters<typeof sdkQuery>[0]['prompt'],
-        options: {
-          abortController,
-          cwd: opts.workingDir,
-          // 附加目录在 Query 创建时冻结；运行时 setter 立即收紧 Cindy 审核，后续 Query
-          // 重建再取最新 closure。空数组省略字段，让 SDK 走默认。
-          ...(additionalDirectories.length > 0 ? { additionalDirectories } : {}),
-          // Bot 自有技能和已按启用状态/白名单过滤的 Cindy 托管技能，
-          // 只通过本次 Query 的本地插件加载，不写用户共用技能目录。
-          // 与 additionalDirectories 同理:路径是本机的,远端 cc-mgr 分支不透传。
-          ...(managedSkillPluginRoots.length > 0
-            ? { plugins: managedSkillPluginRoots.map((root) => ({ type: 'local' as const, path: root })) }
-            : {}),
-          model: currentSdkModel,
-          ...(currentSdkEffort ? { effort: currentSdkEffort } : {}),
-          permissionMode: sdkStartPermissionMode,
-          includePartialMessages: true,
-          ...thinkingOpts,
-          pathToClaudeCodeExecutable: binaryPath,
-          // SDK preset is followed by the shared engine, memory/contact/plugin rules,
-          // host instructions, current memory index and per-call user prompt.
-          systemPrompt: (() => {
-            const appendText = buildClaudeSystemPromptAppend({
-              makerMemoryRules,
-              contactsRules,
-              ghostRosterPrompt,
-              hostSystemPrompt,
-              makerMemoryIndex,
-              userPrompt: reviewMode ? undefined : opts.userPrompt,
-            });
-            return {
-              type: 'preset' as const,
-              preset: 'claude_code' as const,
-              ...(appendText ? { append: appendText } : {}),
-            };
-          })(),
-          ...(resumeSdkSid ? { resume: resumeSdkSid } : {}),
-          ...(newSdkSessionId ? { sessionId: newSdkSessionId } : {}),
-          enableFileCheckpointing,
-          ...(finalResumeAt ? { resumeSessionAt: finalResumeAt } : {}),
-          ...(finalFork ? { forkSession: true } : {}),
-          env,
-          ...(this.deps.registerLocalAgentProcess
-            ? {
-                spawnClaudeCodeProcess: (spawnOptions) =>
-                  spawnObservedClaudeProcess({
-                    spawnOptions,
-                    registerProcess: (pid) =>
-                      this.deps.registerLocalAgentProcess?.({
-                        pid,
-                        kind: 'claude',
-                        role: 'task-host',
-                      }),
-                    onStderr: vo.onStderrLine as ((line: string) => void) | undefined,
-                  }),
-              }
-            : {}),
-          // 订阅 token 到期续命回调 —— 仅当本次 spawn 实际注入了订阅 OAuth token
-          // (oauth-spawn, 见 desktop auth-adapters getAuthEnv)且 host 实现了强刷时接线。
-          // cc 侧 turn 中途 401 会发 oauth_token_refresh control 请求, SDK 调本回调向
-          // host 要新 token (SDK 检测到回调存在时自动注入 CLAUDE_CODE_SDK_HAS_OAUTH_REFRESH=1
-          // 告知 CLI)。gateway-key 模式 env 里没有 CLAUDE_CODE_OAUTH_TOKEN, 不接 —— 避免
-          // API-key 401 被误引导去刷订阅 token。回调字段 SDK Options 类型未声明但运行时
-          // 支持 (sdk.mjs oauth_token_refresh 分支), 经 spread 注入绕过 excess property 检查。
-          // ⚠️ 本回调生效有两个前提, 缺一即静默失效: (a) SDK 注入的 SDK_HAS_OAUTH_REFRESH;
-          // (b) CLAUDE_CODE_ENTRYPOINT 在 cc 的白名单内 —— 由 env-builder 在 oauth-spawn
-          // 时强制设为 claude-vscode。cc 的 401 恢复有两条路: 先走本回调
-          // (tengu_oauth_401_sdk_callback_refreshed), 回调超时/失败后还会直接重读系统
-          // 凭证库兜底 (tengu_oauth_401_recovered_from_disk) —— host 刷新总是写回凭证库,
-          // 所以即使回调超时返回 null, 第二条路仍能捡到新 token, 排障时两条都要看。
-          ...(env.CLAUDE_CODE_OAUTH_TOKEN && this.deps.auth.getFreshSubscriptionToken
-            ? {
-                getOAuthToken: (): Promise<string | null> =>
-                  this.refreshSubscriptionTokenInPlace(env),
-              }
-            : {}),
-          // 第一方只读工具由 host 精确列名, 直接走 SDK public allowlist, 避免
-          // permissionMode=auto 时再调用远程安全分类器。动态聚合入口不在列表中。
-          ...(claudeAllowedTools ? { allowedTools: [...claudeAllowedTools] } : {}),
-          canUseTool,
-          // Bot MCP selection is explicit; native delegation remains available.
-          settingSources: reviewMode || false
-            ? []
-            : ['user', 'project', 'local'],
-          // Settings (SDK "flag settings" 层, 优先级最高 — 覆盖 user/project/local 文件层):
-          //  - showThinkingSummaries        : reasoning summary 展示开关
-          //  - autoMemoryEnabled / autoDream: memory 联动 (host 通过 runtimeConfig.memoryEnabled 或
-          //    BaseAgent.setMemory 控制; this.memoryOverride === undefined 时不传, 让 SDK 走默认)
-          // **同一对象远端分支也透传 (extraOptions.settings)**, 别在两边漂移。
-          settings: buildSettings(),
-          allowDangerouslySkipPermissions:
-            !reviewMode,
-          stderr: vo.onStderrLine as ((line: string) => void) | undefined,
-          // SDK debug 等同 --debug CLI flag, 让 cc 子进程吐 verbose 日志。
-          // - debug: true 触发 verbose 模式
-          // - debugFile (可选): 直接写到指定文件, 绕过 stderr 这条对 SEA 二进制不一定通的路
-          // host 在开 debug 时通过 resolveCcDebugFile 把 debugFile 指到该 session 的
-          // sessions/<id>/cc-debug.raw.log (见上 ccDebugFile); 没注入则回退全局
-          // XDT_CC_DEBUG_FILE, 都没有就只开 debug:true 走 stderr 兜底。
-          ...(process.env.XDT_CC_DEBUG_NET === '1'
-            ? {
-                debug: true,
-                ...(ccDebugFile ? { debugFile: ccDebugFile } : {}),
-              }
-            : {}),
-          ...(mcpServers ? { mcpServers } : {}),
-          // Host hooks keep their normal behavior, while the harness adapter
-          // prepends its narrow capability-route guard. Both run in-process
-          // before Claude's permission mode (including Full access).
-          ...(Object.keys(localClaudeHooks).length > 0
-            ? { hooks: localClaudeHooks }
-            : {}),
-        },
+      const createLocalLaunch = (): ClaudeLocalSessionLaunch => ({
+        abortController,
+        cwd: opts.workingDir,
+        additionalDirectories,
+        managedSkillPluginRoots,
+        model: currentSdkModel,
+        effort: currentSdkEffort,
+        permissionMode: sdkStartPermissionMode,
+        thinking: thinkingOpts.thinking,
+        binaryPath,
+        systemPromptAppend: buildClaudeSystemPromptAppend({
+          makerMemoryRules, contactsRules, ghostRosterPrompt, hostSystemPrompt, makerMemoryIndex,
+          userPrompt: reviewMode ? undefined : opts.userPrompt,
+        }),
+        resume: resumeSdkSid,
+        sessionId: newSdkSessionId,
+        enableFileCheckpointing,
+        resumeSessionAt: finalResumeAt,
+        forkSession: finalFork,
+        env,
+        registerProcess: this.deps.registerLocalAgentProcess
+          ? (pid) => this.deps.registerLocalAgentProcess?.({ pid, kind: 'claude', role: 'task-host' })
+          : undefined,
+        getOAuthToken: env.CLAUDE_CODE_OAUTH_TOKEN && this.deps.auth.getFreshSubscriptionToken
+          ? () => this.refreshSubscriptionTokenInPlace(env) : undefined,
+        allowedTools: claudeAllowedTools,
+        canUseTool,
+        settingSources: reviewMode ? [] : ['user', 'project', 'local'],
+        settings: buildSettings(),
+        allowDangerouslySkipPermissions: !reviewMode,
+        stderr: vo.onStderrLine as ((line: string) => void) | undefined,
+        debug: process.env.XDT_CC_DEBUG_NET === '1',
+        debugFile: ccDebugFile,
+        mcpServers,
+        mcpSources: localMcpSources,
+        hooks: localClaudeHooks,
       });
+      if (native) {
+        let disposal: Promise<void> | undefined;
+        const releaseNativeResources = () => disposal ??= (async () => {
+          await managedPlugins?.dispose();
+        })();
+        let handedToHost = false;
+        try {
+          const factory = this.deps.createLocalClaudeNativeSession;
+          if (!factory) throw new Error('Native Claude host is not configured');
+          const launch = createLocalLaunch();
+          // These controls still need native parity. Reject at this gated host
+          // entry rather than quietly dropping a requested plan or subscription.
+          if (mutablePlanMode) throw new Error('Native Claude plan controls are not integrated');
+          launch.releaseNativeResources = releaseNativeResources;
+          handedToHost = true;
+          const handle = await factory({
+            launch, model: mutableModel, logger: log, events: eventQueue, usageTracker, disabledSkillPaths: disabledSkillSnapshot,
+            onEvent() {},
+            onFault: () => log.warn('native Claude semantic connection interrupted'),
+            policy: {
+              setInteractionResolver(resolver) { interactionResolver = resolver; },
+              validateSendOptions(sendOpts) {
+                validateTurnSendOptions(sendOpts);
+                if (sendOpts.planMode) throw new Error('Native Claude plan controls are not integrated');
+              },
+              beforeInput(message, sendOpts) {
+                activeTurnPermissionPolicy = sendOpts.turnPermissionPolicy ?? null;
+                acceptInputPolicy(message, sendOpts);
+                if (sendOpts.logTitle !== undefined) lastSendTitle = sendOpts.logTitle;
+                resetToolLoopGuards(); pendingToolIds.clear(); turnInFlight = true;
+              },
+              onEvent(event) {
+                if (event.type === 'done') {
+                  turnInFlight = false; activeTurnPermissionPolicy = null;
+                  pendingToolIds.clear(); clearToolLoopObservations();
+                }
+              },
+              close() {
+                closed = true; turnInFlight = false;
+                dismissAllPending('session_closed', 'deny');
+                clearToolLoopObservations(); clearUpstreamResponseIdle();
+                pendingToolIds.clear(); inputQueue.end(); abortController.abort();
+              },
+            },
+            async prepareInput(message, signal, importMedia) {
+              if (reviewMode) await assertReviewMessageContentPaths(message.content, opts.workingDir, reviewReadGrants);
+              return prepareClaudeNativeInputContent(await toClaudeSdkContent(message.content), {
+                nativeSessionId: launch.resume ?? launch.sessionId!, signal: signal ?? abortController.signal, importMedia,
+              });
+            },
+          });
+          sdkSessionId = handle.requestSessionId;
+          // Native readiness publishes the confirmed id through the shared queue.
+          // A merely spawned process must not persist an uncreated transcript.
+          if (handle.id !== '<pending>') durableSdkSessionId = publishedSdkSessionId = handle.id;
+          return { kind: 'native', handle };
+        } catch (error) {
+          // Once invoked, Main keeps launch resources if process exit is unknown.
+          if (!handedToHost) await releaseNativeResources();
+          throw error;
+        }
+      }
       let query: Query;
       try {
         if (managedPlugins && querySignal.aborted) throw new Error('Claude session closed before skill plugins were loaded');
-        const queryArgs = createLocalQueryArgs();
+        const queryArgs: Parameters<typeof sdkQuery>[0] = {
+          prompt: inputQueue as unknown as Parameters<typeof sdkQuery>[0]['prompt'],
+          options: claudeSdkOptions(createLocalLaunch()),
+        };
         if (newSdkSessionId) sdkSessionId = newSdkSessionId;
         query = sdkQuery(queryArgs);
       } catch (error) {
@@ -4067,7 +4070,12 @@ export class ClaudeCodeAgent extends BaseAgent {
       }
       localQueryStarted = true;
 
-      return query;
+      return { kind: 'sdk', query };
+    };
+    const buildQuery = async (extra?: QueryBuildOptions): Promise<Query> => {
+      const execution = await buildExecution(extra);
+      if (execution.kind !== 'sdk') throw new Error('Unexpected native Claude rebuild');
+      return execution.query;
     };
 
     // ── 死 handle 终结器 —— U2 (远端 daemon 突死) 与 crash (SDK 流异常) 共用 ──
@@ -5650,6 +5658,11 @@ export class ClaudeCodeAgent extends BaseAgent {
     }
 
     // ── 首次起 q + 启动 forward loop ─────────────────────────────────────────
+    if (this.deps.createLocalClaudeNativeSession && !opts.remoteHostId) {
+      const execution = await buildExecution(undefined, true);
+      if (execution.kind !== 'native') throw new Error('Native Claude startup did not produce a native handle');
+      return execution.handle;
+    }
     q = await buildQuery();
     startForwardLoop(q);
     // Anthropic 清单动态发现:init 后 fire-and-forget 捕获 supportedModels(见文件顶注)。
@@ -5880,18 +5893,7 @@ export class ClaudeCodeAgent extends BaseAgent {
       agentKind: 'claude-code',
       get model() { return mutableModel; },
 
-      validateSendOptions(sendOpts: SendOptions) {
-        if (
-          sendOpts.turnPermissionPolicy &&
-          (mutablePermissionMode === 'acceptEdits' ||
-            mutablePermissionMode === 'bypassPermissions')
-        ) {
-          throw new TurnPermissionPolicyUnsupportedError(
-            'claude-code',
-            mutablePermissionMode,
-          );
-        }
-      },
+      validateSendOptions: validateTurnSendOptions,
 
       async send(message: UserMessage, sendOpts?: SendOptions) {
         // idle resume fallback 正在重建(亚秒窗):等它完成再走正常受理。重建成功时
@@ -6264,8 +6266,7 @@ export class ClaudeCodeAgent extends BaseAgent {
               eventQueue.push({ type: 'session_id', data: sdkSessionId, source: 'claude-code' });
             }
           }
-          activeCapabilitySelectionText = userMessageTextForCapabilityRouting(message.content);
-          setAutoReviewIntent(appendAutoReviewUserIntent(priorAutoReviewIntent(), message.content, sendOpts), { authority: autoReviewContext() });
+          acceptInputPolicy(message, sendOpts);
           replayableUserInput = sdkInput;
           sendInAcceptPhase = false;
           // upstream-response-idle watchdog 起表 — 放在 inputQueue.push 之后, 避免把

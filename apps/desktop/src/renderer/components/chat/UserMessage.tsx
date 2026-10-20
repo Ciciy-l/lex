@@ -1,3 +1,4 @@
+import { nativeMessageConsumptionLabel, type NativeMessageConsumption } from '@cindy/maker-shared/message-presentation';
 import type { ImMessageSource } from '../../../shared/imMessageSource';
 import { hasEmbeddedImPrompt } from './userMessageDisplayText';
 /**
@@ -199,6 +200,8 @@ interface UserMessageProps {
   automationOrigin?: MessageAutomationOrigin;
   /** Hook 来源元数据;存在时渲染左对齐 Cindy 署名任务卡片(替代右对齐气泡)。 */
   hookSource?: ImMessageSource;
+  nativePluginSource?: string;
+  nativeInputStatus?: NativeMessageConsumption['status'];
   /** /goal 目标设定/更新标记:在气泡上方渲一个「目标 / 目标已更新」徽标。 */
   goalBadge?: { updated: boolean };
   /** 订阅槽①:本条消息被意识钩子拦下(未发出)。存在时气泡下方渲一条 error
@@ -941,9 +944,12 @@ export function UserMessage({
   isLastUserMessage,
   automationOrigin,
   hookSource,
+  nativePluginSource,
+  nativeInputStatus,
   goalBadge,
   blockedByGhost,
 }: UserMessageProps) {
+  const consumptionLabel = nativeMessageConsumptionLabel(nativeInputStatus, sessionRunning === true);
   const { t } = useTranslation();
   // Capability gate: 没传 agentKind (调用方未升级) → 默认两者都允许 (兼容旧路径)
   // 传了 agentKind → 按 capabilities.fork/rewind.supported 决定 icon 显示
@@ -1200,6 +1206,7 @@ export function UserMessage({
   // 同时按 capabilities.fork.supported gate (Codex 现支持; 未来若 agent 不支持自动隐藏)。
   const navigationMode = useSessionNavigationMode();
   const canFork =
+    !consumptionLabel &&
     isInteractiveSessionNavigationMode(navigationMode) &&
     Boolean(sessionId && messageClientId) &&
     !isFirstUserMessage &&
@@ -1252,6 +1259,7 @@ export function UserMessage({
   // NO_PRIOR_ASSISTANT。直接藏掉按钮，避免无效点击。
   // 同时按 capabilities.rewind.supported gate；Codex 入口还要用户显式开启 Git safety。
   const canRewind =
+    !consumptionLabel &&
     Boolean(sessionId && messageClientId) &&
     !isFirstUserMessage &&
     rewindSupported &&
@@ -1482,6 +1490,23 @@ export function UserMessage({
             点击跳转自动化页并 focus 对应条目(与侧边栏自动化分组"编辑"同款 query
             机制);任务已删除时 SchedulerPage 的 focus 兜底会自动回退到列表首条。 */}
             {automationOrigin && <AutomationOriginBadge automationOrigin={automationOrigin} />}
+            {consumptionLabel && (
+              <span className="text-11" style={{ color: 'var(--text-secondary)' }} role="status">
+                {consumptionLabel === 'pending'
+                  ? t('chat.userMessage.nativeInput.pending')
+                  : consumptionLabel === 'unconsumed'
+                    ? t('chat.userMessage.nativeInput.unconsumed')
+                    : t('chat.userMessage.nativeInput.unknown')}
+              </span>
+            )}
+            {nativePluginSource && (
+              <span className="inline-flex max-w-full rounded-full px-2 py-0.5 text-11"
+                style={{ backgroundColor: 'var(--surface-chip)', color: 'var(--text-secondary)' }}>
+                <span className="min-w-0 truncate" title={nativePluginSource}>
+                  {t('chat.userMessage.nativePluginSource', { name: nativePluginSource })}
+                </span>
+              </span>
+            )}
             {/* /goal 目标设定/更新:气泡上方右对齐渲一个徽标(不进气泡、不入 copyText)。 */}
             {goalBadge && (
               <span

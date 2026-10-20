@@ -1,3 +1,4 @@
+import { nativeMessageConsumptionStatus } from '@cindy/maker-shared/message-presentation';
 /**
  * rewind-session：消息级 Rewind 业务函数。
  *
@@ -213,6 +214,10 @@ async function loadRewindContext(
   }
   if (target.role !== 'user') {
     throw rewindError('NOT_USER_MESSAGE', 'rewind 只能在 user 消息上发起');
+  }
+  const nativeInputStatus = nativeMessageConsumptionStatus(target.agentMeta);
+  if (nativeInputStatus && nativeInputStatus !== 'consumed') {
+    throw rewindError('REWIND_UNSUPPORTED_HISTORY', 'Native input has no confirmed processed history boundary');
   }
 
   // edit-last-message: SDK 副作用之前的第一道 main 侧最新校验(见

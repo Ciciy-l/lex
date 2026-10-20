@@ -5,7 +5,8 @@
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import ts from 'typescript';
 
 import {
   clearControllerPlatforms,
@@ -418,7 +419,43 @@ describe('排队 / 插入两条路径的接线(源码级守卫)', () => {
     expect(register).toContain("isMobileControllerInvoke() || so.fromMobileClient === true");
     expect(register).toContain('shouldPrependMobileClientPromptNote(normalized, sess.agentKind)');
     expect(register).toContain('prependNoteToWireUserMessage(normalized as HandoffWireMessage, steerNote)');
-    expect(register).toContain('await sess.steer(steerPayload as never');
+    expect(register).toContain('await dispatch(steerPayload as never');
+    const start = register.indexOf('const dispatch = native');
+    const end = register.indexOf('await dispatch(steerPayload as never', start);
+    const dispatch = register.slice(start, end);
+    expect(dispatch).toContain('sess.acceptNativeSteer({ ...native.input, message: payload as UserMessage }, options)');
+    expect(dispatch).toContain('sess.steer.bind(sess)');
+  });
+
+  it.each([false, true])('keeps the mobile note out of original input on native=%s dispatch', async isNative => {
+    const noteStart = register.indexOf('const steerNote =');
+    const noteEnd = register.indexOf('    try {', noteStart);
+    const dispatchStart = register.indexOf('const dispatch = native', noteEnd);
+    const dispatchEnd = register.indexOf('      await dispatch(', dispatchStart);
+    expect(noteStart).toBeGreaterThan(0);
+    expect(dispatchStart).toBeGreaterThan(noteEnd);
+    const code = register.slice(noteStart, noteEnd) + '\n' + register.slice(dispatchStart, dispatchEnd) + '\nreturn dispatch(steerPayload, {});';
+    const deliver = new Function('sess', 'native', 'normalized', 'so', 'isMobileControllerInvoke',
+      'shouldPrependMobileClientPromptNote', 'buildMobileClientPromptNote', 'prependNoteToWireUserMessage',
+      ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText);
+    for (const mobile of [false, true]) {
+      const original = Object.freeze({ type: 'user' as const, content: 'User instruction' });
+      const input = Object.freeze({ message: original, inputId: 'native-id', nativeTurnId: 'turn' });
+      const steer = vi.fn();
+      const acceptNativeSteer = vi.fn();
+      await deliver({ agentKind: 'codex', steer, acceptNativeSteer }, isNative ? { input } : undefined,
+        original, { fromMobileClient: mobile }, () => false, () => true, () => 'Mobile context', prependNoteToWireUserMessage);
+      const payload = mobile ? prependNoteToWireUserMessage(original, 'Mobile context') : original;
+      if (isNative) {
+        expect(acceptNativeSteer).toHaveBeenCalledExactlyOnceWith({ ...input, message: payload }, {});
+        expect(steer).not.toHaveBeenCalled();
+      } else {
+        expect(steer).toHaveBeenCalledExactlyOnceWith(payload, {});
+        expect(acceptNativeSteer).not.toHaveBeenCalled();
+      }
+      expect(original.content).toBe('User instruction');
+      expect(input.message).toBe(original);
+    }
   });
 
   it('直连 maker:send 的 wire sendOpts 必须消毒', () => {

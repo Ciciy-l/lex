@@ -52,6 +52,9 @@ export interface MessageAutomationOrigin {
  * 只接受 SDK 自己分配的 uuid，所以这是 fork 的唯一主键。
  */
 export interface CcMeta {
+  /** Host-authored native input provenance, retained across history and remote delivery. */
+  nativeSource?: import('@cindy/maker-shared/message-presentation').NativeMessageSource;
+  nativeConsumption?: import('@cindy/maker-shared/message-presentation').NativeMessageConsumption;
   /** Host captured authority receipt, never accepted from renderer writes. */
   autoReviewUserText?: string | { kind: 'scheduled-continuation' | 'delegated-continuation' };
   uuid?: string;

@@ -1810,15 +1810,15 @@ describe('New Maker 草稿的 wire model id 口径', () => {
     );
   });
 
-  it('六条建会话成功路径都把草稿锚点延续到会话槽,且用各分支实际提交的 model/providerId', () => {
+  it('七条建会话成功路径都把草稿锚点延续到会话槽,且用各分支实际提交的 model/providerId', () => {
     // carryDraftFavoriteAnchorToSession(Chris 2026-08-19):草稿选了收藏、发送建会话后,
     // 会话面板必须还勾在那一条上。调用点 = SSH / device-link 远程发送 / 本地发送 /
-    // 新建目标(本地) / Goal(本地) / **Goal(device-link 远端)**,共 6 处;
+    // 新建目标(本地) / Goal(本地) / **Goal(device-link 远端)** / 原生终端首发,共 7 处;
     // 少一处 = 那条路建出来的会话锚点丢失(远端 Goal 正是 review 抓到的遗漏)。
     const carryCalls =
       newMakerDraftRouteSource.match(/carryDraftFavoriteAnchorToSession\(/g) ?? [];
-    // 恰好 6 处调用(定义是 `= useCallback(`,不带同名左括号,不计入)。
-    expect(carryCalls.length).toBe(6);
+    // 恰好 7 处调用(定义是 `= useCallback(`,不带同名左括号,不计入)。
+    expect(carryCalls.length).toBe(7);
     // SSH 分支用 ssh 侧解析的提交值(≠ draftInitialModel)。
     expect(newMakerDraftRouteSource).toContain(
       'carryDraftFavoriteAnchorToSession(newSession.id, draftVendor, sshModel, sshProviderId)',
@@ -1830,5 +1830,21 @@ describe('New Maker 草稿的 wire model id 口径', () => {
         /carryDraftFavoriteAnchorToSession\(\s*remoteSessionId,\s*persistedAgentKind,\s*createArgs\.model,/g,
       ) ?? []).length,
     ).toBe(2);
+    // 零消息的 TUI 入口同样创建正式会话,收藏必须使用该次 createSession 的实际路由。
+    const nativeStart = newMakerDraftRouteSource.indexOf('const handleDraftPresentation =');
+    expect(nativeStart).toBeGreaterThan(-1);
+    const nativeEntry = newMakerDraftRouteSource.slice(
+      nativeStart, newMakerDraftRouteSource.indexOf('/**', nativeStart),
+    );
+    expect(nativeEntry).toContain('agentKind: persistedAgentKind,');
+    expect(nativeEntry).toContain('model: draftInitialModel,');
+    expect(nativeEntry).toContain('providerId: chatInitialProviderId ?? null,');
+    expect(nativeEntry).toMatch(
+      /carryDraftFavoriteAnchorToSession\(newSession\.id, persistedAgentKind,\s*draftInitialModel, chatInitialProviderId \?\? null\)/,
+    );
+    expect(nativeEntry.indexOf('carryDraftFavoriteAnchorToSession(')).toBeGreaterThan(
+      nativeEntry.indexOf('await createSession('),
+    );
+    expect(nativeEntry).toContain('nativePresentation: { sessionId: newSession.id, ownerId: dataOwnerId }');
   });
 });

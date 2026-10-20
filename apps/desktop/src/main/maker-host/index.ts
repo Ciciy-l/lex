@@ -1,3 +1,4 @@
+import { t } from '../i18n.js';
 import { assertNotRetiredCompanionSession } from '../localDb/retiredCompanions.js';
 import { scanLocalCustomizations } from '../skillhub/customizationScanHost';
 import { readAgentCapabilityCatalog, RUNTIME_MCP_NAMES_KEY, type AgentCapabilityQuery } from './agentCapabilityCatalog.js';
@@ -113,6 +114,8 @@ import { getThinkingEnabledFromMemory } from './newMakerDefaultsCache.js';
 import { registerUsagePricing, clearUsagePricing } from './model-usage-pricing.js';
 import { getSessionFastMode } from './session-effort-store.js';
 import { createSshDaemonTransport } from './codex-remote-transport.js';
+import { createCodexNativeHostService } from './codex-native-host.js';
+import { createTaskCodexNativePresentation, prepareTaskCodexNativePresentation } from './codex-native-presentation.js';
 import {
   getRemoteSshPool,
   broadcastSilentInstallStatus,
@@ -1498,6 +1501,38 @@ export function getMaker(): Maker {
         ?? 'default';
     };
     const codexAgent = new CodexAgent({
+      useLocalCodexNativePresentation: options => options.nativePresentation === true,
+      createLocalCodexNativeService: createCodexNativeHostService,
+      prepareLocalCodexNativePresentation: launch => prepareTaskCodexNativePresentation(launch, {
+        executable: codexPath, env: process.env as Record<string, string>, logger: desktopMakerLogger,
+        registerProcess: pid => registerCodexProcessRole(pid, 'task-host'),
+      }),
+      createLocalCodexNativePresentation: launch => createTaskCodexNativePresentation(launch, {
+        executable: codexPath, env: process.env as Record<string, string>, logger: desktopMakerLogger,
+        registerProcess: pid => registerCodexProcessRole(pid, 'task-host'),
+        control: (call, scope) => {
+          if (!launch.routingContext.control) throw new Error('Native task control is unavailable');
+          return launch.routingContext.control(call, scope);
+        },
+      }),
+      getCodexNativeFileApprovalCopy: () => ({
+        header: t('ccAgent.presentation.nativeFileApproval.header'),
+        confirmation: t('ccAgent.presentation.nativeFileApproval.confirmation'),
+        once: t('ccAgent.presentation.nativeFileApproval.once'),
+        onceDescription: t('ccAgent.presentation.nativeFileApproval.onceDescription'),
+        cancel: t('ccAgent.presentation.nativeFileApproval.cancel'),
+        cancelDescription: t('ccAgent.presentation.nativeFileApproval.cancelDescription'),
+      }),
+      getCodexNativePermissionCopy: () => ({
+        header: t('ccAgent.presentation.nativePermissions.header'),
+        confirmation: t('ccAgent.presentation.nativePermissions.confirmation'),
+        once: t('ccAgent.presentation.nativePermissions.once'),
+        onceDescription: t('ccAgent.presentation.nativePermissions.onceDescription'),
+        strict: t('ccAgent.presentation.nativePermissions.strict'),
+        strictDescription: t('ccAgent.presentation.nativePermissions.strictDescription'),
+        deny: t('ccAgent.presentation.nativePermissions.deny'),
+        denyDescription: t('ccAgent.presentation.nativePermissions.denyDescription'),
+      }),
       getDisabledSkillPaths: readDisabledSkillPaths,
       getManagedSkills: listCindyManagedSkills,
       scanLocalCustomizations,

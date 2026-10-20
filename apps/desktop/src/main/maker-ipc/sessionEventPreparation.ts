@@ -1,3 +1,5 @@
+import { nativeQuestionDecision } from './nativeQuestionDecision.js';
+import { createSessionPermissionUpdate } from '@cindy/maker-core';
 import { captureTurnUsageContext, type TurnUsageContext } from './turnUsageContext.js';
 
 import type {
@@ -73,6 +75,8 @@ export interface PrepareSessionEventDeps {
     request: InteractionRequest,
     decision: InteractionDecision | Record<string, unknown>,
   ) => void;
+  readonly onQuestionAnswered?: (sessionId: string, request: InteractionRequest,
+    decision: Extract<InteractionDecision, { kind: 'ask_user_question' }>) => void;
   readonly broadcastToAllWindows: (channel: string, payload: unknown) => void;
   readonly broadcastCodexImageAsToolResult: (sessionId: string, event: AgentEvent) => Promise<void>;
   readonly autoResumeBookkeeping: Pick<
@@ -181,15 +185,25 @@ export function prepareSessionEvent(
   }
   const broadcastEvent = deps.redactEventForRenderer(attributedEvent);
   if (event.type === 'interaction_dismissed') {
-    const data = event.data as { requestId?: unknown; reason?: unknown };
+    let answeredQuestion: Extract<InteractionDecision, { kind: 'ask_user_question' }> | undefined;
+    const data = event.data as { requestId?: unknown; reason?: unknown; resolvedAs?: unknown; nativePermissionScope?: unknown };
     if (typeof data.requestId === 'string') {
       deps.handleAgentIslandInteractionDismissed(session.id, data.requestId);
       const entry = deps.clearPendingInteraction(data.requestId);
       if (entry) {
-        const decision = deps.defaultDecisionForPending(
-          entry.kind,
-          typeof data.reason === 'string' ? data.reason : 'dismissed',
-        );
+        // A native answer already passed the owning Agent's policy and single-
+        // answer gate. Retiring the other view must persist that actual answer,
+        // not turn an accepted TUI action into a historical GUI refusal.
+        answeredQuestion = nativeQuestionDecision(event, entry.request);
+        const decision: InteractionDecision = answeredQuestion ?? (event.source === 'codex' && entry.kind === 'permission'
+          && data.reason === 'native_answered' && (data.resolvedAs === 'allow' || data.resolvedAs === 'deny')
+          ? { kind: 'permission', behavior: data.resolvedAs,
+            ...(data.resolvedAs === 'allow' && data.nativePermissionScope === 'session'
+              ? { permissionUpdates: [createSessionPermissionUpdate({ type: 'codexSessionApproval' })] } : {}) }
+          : deps.defaultDecisionForPending(
+            entry.kind,
+            typeof data.reason === 'string' ? data.reason : 'dismissed',
+          ));
         entry.resolve(decision);
         deps.persistInteractionDecision(
           session.id,
@@ -198,11 +212,14 @@ export function prepareSessionEvent(
           entry.request,
           decision,
         );
+        if (answeredQuestion) deps.onQuestionAnswered?.(session.id, entry.request, answeredQuestion);
       }
     }
     deps.broadcastToAllWindows(MAKER_PUSH.INTERACTION_DISMISSED, {
       sessionId: session.id,
       ...(event.data as object),
+      // Use the existing cross-window/cross-device resolved-card contract.
+      ...(answeredQuestion ? { reason: 'resolved', decision: answeredQuestion } : {}),
     });
     return;
   }

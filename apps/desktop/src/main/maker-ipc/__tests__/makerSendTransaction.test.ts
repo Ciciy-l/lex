@@ -9,6 +9,7 @@ import {
   type AgentKind,
   type SessionSendOptions,
   type SessionSendResult,
+  type SessionNativeInput,
   type UserMessage,
 } from '@cindy/maker-core';
 import { CODEX_RESUME_NOT_READY_WIRE_MESSAGE } from '@cindy/maker-shared/agent-input-projection';
@@ -101,6 +102,136 @@ function createDeps(overrides: Partial<MakerSendTransactionDeps> = {}) {
 }
 
 describe('maker SEND transaction', () => {
+  it.each(['success', 'missing', 'failed'])('keeps native receipt %s separate from dispatch acceptance', async outcome => {
+    const link = vi.fn(async () => {
+      if (outcome === 'failed') throw new Error('database unavailable');
+      return outcome === 'success';
+    });
+    const capture = vi.fn(() => link);
+    const { deps, session } = createDeps({ captureNativeUserMessageLink: capture });
+    session.agentKind = 'claude-code';
+    const source = { version: 1 as const, engine: 'claude-code' as const, sessionId: 'native', messageId: 'native-row',
+      origin: { kind: 'plugin', name: 'lex-native-bridge' } };
+    vi.mocked(session.send).mockImplementation(async (_message, opts) => {
+      await opts?.onAccepted?.();
+      expect(deps.createDbMessage).toHaveBeenCalledOnce();
+      await opts?.onNativeUserMessage?.(source);
+      expect(opts?.onTranscriptUserEntry).toBeUndefined();
+      return { accepted: true };
+    });
+    const result = await createMakerSendTransaction(deps).sendToAgentAccepted('session-1', 'hello', undefined, {
+      messageUuid: 'host-uuid', persistUserMessage: { clientId: 'gui-row', content: 'hello', expectedClearBoundaryMs: null },
+    });
+    expect(capture).toHaveBeenCalledWith({ session, clientId: 'gui-row', expectedUuid: 'host-uuid', expectedClearBoundaryMs: null });
+    expect(link).toHaveBeenCalledExactlyOnceWith(source);
+    expect(session.send).toHaveBeenCalledOnce();
+    expect(result.outcome).toMatchObject({ kind: 'session-dispatch', dispatched: true });
+    expect(deps.log.warn).toHaveBeenCalledTimes(outcome === 'success' ? 0 : 1);
+  });
+
+  function nativeFixture() {
+    const { deps, session } = createDeps({
+      applyPendingAgentSwitch: vi.fn(async () => {}),
+      prepareUnhealthySession: vi.fn(async () => {}),
+      assertBeforeVendorDispatch: vi.fn(),
+    });
+    session.agentKind = 'claude-code';
+    session.acceptNativeInput = vi.fn(async (input: SessionNativeInput, options?: SessionSendOptions): Promise<SessionSendResult> => {
+      await options?.onAccepted?.();
+      options?.onDispatching?.();
+      await input.accept(input.message, options ?? {});
+      return { accepted: true };
+    });
+    const input: SessionNativeInput = { nativeSessionId: 'native-session',
+      message: { type: 'user', content: 'from TUI' }, accept: vi.fn(async () => {}) };
+    const sendOpts = { messageUuid: 'native-row', expectedClearBoundaryMs: null, expectedInputGeneration: 7,
+      persistUserMessage: { clientId: 'native-input', content: 'from TUI', sdkSessionId: 'native-session', delivery: 'turn' } };
+    return { deps, session, input, sendOpts, transaction: createMakerSendTransaction(deps) };
+  }
+
+  it('admits a held native input through real normalization, history and final fences without resubmission', async () => {
+    const f = nativeFixture(), order: string[] = [];
+    vi.mocked(f.deps.prepareSendUserMessage).mockImplementation(async () => ({ type: 'user', content: 'prepared native input' }));
+    vi.mocked(f.deps.createDbMessage).mockImplementation(async () => { order.push('history'); });
+    vi.mocked(f.input.accept).mockImplementation(async () => { order.push('native'); });
+    await f.transaction.acceptNativeInput(f.session, f.input, f.sendOpts);
+    expect(order).toEqual(['history', 'native']);
+    expect(f.input.accept).toHaveBeenCalledWith({ type: 'user', content: 'prepared native input' }, expect.any(Object));
+    expect(f.deps.createDbMessage).toHaveBeenCalledWith('session-1', expect.objectContaining({
+      clientId: 'native-input', content: 'from TUI', agentMeta: expect.objectContaining({ uuid: 'native-row', sdkSessionId: 'native-session' }),
+    }), expect.objectContaining({ expectedClearBoundaryMs: null }));
+    expect(f.deps.assertBeforeVendorDispatch).toHaveBeenCalledWith('session-1', expect.objectContaining({ expectedInputGeneration: 7 }));
+    expect(f.session.send).not.toHaveBeenCalled();
+    expect(f.deps.applyPendingAgentSwitch).not.toHaveBeenCalled();
+    expect(f.deps.prepareUnhealthySession).not.toHaveBeenCalled();
+    expect(f.deps.bootstrapSession).not.toHaveBeenCalled();
+    await expect(f.transaction.acceptNativeInput(f.session, f.input, f.sendOpts)).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(f.input.accept).toHaveBeenCalledOnce();
+  });
+
+  it('rejects a native input after Session replacement during preparation without persisting or rebuilding', async () => {
+    const f = nativeFixture();
+    vi.mocked(f.deps.prepareSendUserMessage).mockImplementation(async (_id, message) => {
+      vi.mocked(f.deps.getSession).mockReturnValue(createSession());
+      return message as UserMessage;
+    });
+    await expect(f.transaction.acceptNativeInput(f.session, f.input, f.sendOpts)).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(f.deps.createDbMessage).not.toHaveBeenCalled();
+    expect(f.input.accept).not.toHaveBeenCalled();
+    expect(f.session.send).not.toHaveBeenCalled();
+    expect(f.deps.closeSession).not.toHaveBeenCalled();
+  });
+
+  it('refuses late native continuation when a clear or runtime replacement wins the history write', async () => {
+    for (const boundary of ['clear', 'replacement']) {
+      const f = nativeFixture();
+      vi.mocked(f.deps.createDbMessage).mockImplementation(async () => {
+        if (boundary === 'replacement') vi.mocked(f.deps.getSession).mockReturnValue(createSession());
+        else vi.mocked(f.deps.assertBeforeVendorDispatch!).mockImplementation(() => {
+          throw Object.assign(new Error('input cleared'), { code: 'PRECONDITION_FAILED' });
+        });
+      });
+      await expect(f.transaction.acceptNativeInput(f.session, f.input, f.sendOpts)).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+      expect(f.input.accept).not.toHaveBeenCalled();
+      expect(f.session.send).not.toHaveBeenCalled();
+    }
+  });
+
+  it('refuses native input requiring a cwd rebuild while ordinary sends retain recovery', async () => {
+    const f = nativeFixture();
+    vi.mocked(f.deps.checkWorkDirExists).mockResolvedValue(false);
+    vi.mocked(f.deps.readSessionWorkingDirFromDb).mockResolvedValue('replacement-workdir');
+    await expect(f.transaction.acceptNativeInput(f.session, f.input, f.sendOpts)).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(f.deps.closeSession).not.toHaveBeenCalled();
+    expect(f.deps.bootstrapSession).not.toHaveBeenCalled();
+    expect(f.deps.createDbMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not turn a native-looking wire field into a host admission capability', async () => {
+    const f = nativeFixture();
+    await f.transaction.sendToAgentAccepted(f.session.id, 'GUI', undefined, { ...f.sendOpts, nativeInput: f.input });
+    expect(f.session.send).toHaveBeenCalledOnce();
+    expect(f.session.acceptNativeInput).not.toHaveBeenCalled();
+    expect(f.input.accept).not.toHaveBeenCalled();
+  });
+
+  it('persists a frozen host-native identity and rejects source belonging to another session', async () => {
+    const f = nativeFixture();
+    const source = { version: 1 as const, engine: 'claude-code' as const, sessionId: f.input.nativeSessionId,
+      messageId: 'actual-native-row', origin: { kind: 'plugin', name: 'external-plugin' } };
+    await expect(f.transaction.acceptNativeInput(f.session, f.input, f.sendOpts, { ...source, sessionId: 'other' }))
+      .rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    vi.mocked(f.deps.prepareSendUserMessage).mockImplementation(async (_id, message) => {
+      source.origin.name = 'changed-after-receipt'; return message as UserMessage;
+    });
+    await f.transaction.acceptNativeInput(f.session, f.input, f.sendOpts, source);
+    expect(f.deps.createDbMessage).toHaveBeenCalledWith('session-1', expect.objectContaining({ agentMeta: expect.objectContaining({
+      uuid: 'actual-native-row', sdkSessionId: f.input.nativeSessionId, nativeSource: expect.objectContaining({
+        origin: { kind: 'plugin', name: 'external-plugin' },
+      }),
+    }) }), expect.any(Object));
+  });
+
   it('stamps device-link provenance at the enqueue boundary and rejects forged local values', () => {
     const item = { clientId: 'input-1', text: 'hello' } as unknown as AgentInputQueuedMessage;
     expect(stampTrustedDeviceLinkQueuedOrigin(item, true)).toMatchObject({

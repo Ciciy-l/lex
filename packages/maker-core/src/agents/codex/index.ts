@@ -1,3 +1,21 @@
+import { CodexNativeSteerAdmission, CODEX_NATIVE_STEER, type CodexNativeSteerOptions } from './native-steer.js';
+import { CodexSettingsQueue } from './native-settings-queue.js';
+import { CodexNativeRuntimeControls } from './native-runtime-controls.js';
+import { AgentNativeStopBinding } from '../native-stop.js';
+import { projectNativeFileApproval } from './native-file-approval.js';
+import { projectNativePermissions } from './native-permissions.js';
+import { CodexNativeQuestions, type CodexNativeQuestionRequest } from './native-questions.js';
+import { projectNativeMcpConfirmation, decodeNativeMcpConfirmation } from './native-mcp-confirmation.js';
+import { CodexNativeTaskPresentation } from './native-task-presentation.js';
+import type { CodexNativePreparedPresentation } from './native-task-presentation.js';
+import { CodexNativeTaskCreation } from './native-task-creation.js';
+import { mergeCodexNativeThreadStart } from './native-start-params.js';
+import { CodexNativeDynamicTools } from './native-dynamic-tools.js';
+import { CodexNativeAttachUnavailable, waitForCodexNativeAttach, type CodexNativeAttachOrigin } from './native-attach-readiness.js';
+import type { AgentPresentationOwner, AgentPresentationInitialization, AgentPresentationUnavailableReason } from '../presentation.js';
+import type { CodexNativeServiceBinding } from './native-service-slot.js';
+import { CodexNativeApprovals, type CodexNativeApprovalRequest, type CodexNativeApprovalResponse } from './native-approvals.js';
+import { CODEX_NATIVE_TURN, CodexNativeInputAdmission, type CodexNativeSendOptions, type CodexNativeSessionHandle } from './native-input.js';
 import { syncCodexArchiveState } from './archive-state.js';
 import { normalizeAutoReviewUserIntent, createAutoReviewActionContext, type AutoReviewUserIntent } from '../shared/auto-review-decision.js';
 /**
@@ -184,6 +202,7 @@ import {
   isOversizedLiveTailStats,
   measureRolloutLiveTailStats,
   assertCodexRolloutRewriteSupported,
+  readCodexRolloutDynamicTools,
   readCodexRolloutModelProvider,
   sanitizeCodexForkRolloutFileInPlace,
 } from './rollout-sanitize.js';
@@ -192,7 +211,7 @@ import { CodexForkError, type CodexForkStage } from './fork-error.js';
 import { resolveForkTurnAnchor } from './fork-turn-anchor.js';
 import { parseReconnectAttemptMessage } from '../shared/network-error.js';
 import { extractNonSecretErrorSignals } from '@cindy/maker-shared/error-redaction';
-import { AppServerHost, CodexNativeInitializationStoppedError, type ThreadEventHandlers, type ThreadSubscription } from './app-server/host.js';
+import { AppServerHost, CodexNativeInitializationStoppedError, type ThreadEventHandlers, type ThreadSubscription, type CodexNotificationProfile } from './app-server/host.js';
 import { AppServerRequestTimeoutError } from './app-server/client.js';
 import { useCodexHistoryHome, type CodexExternalAuth } from './app-server/external-auth.js';
 import {
@@ -287,7 +306,7 @@ const TERMINAL_RATE_LIMIT_RETRY_POLICY: TurnReplayRetryPolicy = {
   delayMs: terminalRateLimitRetryDelayMs,
 };
 
-type CodexEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
+type CodexEffort = Effort | 'none';
 
 const CODEX_MINIMAL_EFFORT_MODELS = new Set([
   'bytedance-seed/seed-2.1-pro',
@@ -376,7 +395,7 @@ function shellCommandFromCodexItem(
  * 把 minimal 收敛到 low。max / ultra 直接透传，不再静默降级为 xhigh(issue #352)。
  * 某模型是否真支持某档位由目录 efforts 与 UI/reconcile 门控保证。
  */
-function clampEffortForCodex(model: string, e: Effort): CodexEffort {
+function clampEffortForCodex(model: string, e: Effort | 'none'): CodexEffort {
   if (e === 'minimal' && !CODEX_MINIMAL_EFFORT_MODELS.has(model)) return 'low';
   return e;
 }
@@ -506,12 +525,16 @@ function localSessionHostIdentity(input: {
   customContext: boolean;
   storage?: { sqliteHome: string; historyHome: string };
   policy: 'isolated' | 'legacy-shared';
+  notificationProfile?: CodexNotificationProfile;
 }): string {
   const base = input.accountSessionHost
     ? `local-account:${input.accountProviderId ?? 'openai'}:session:${input.sessionId}`
     : input.reviewMode ? localReviewHostKey(input.sessionId)
       : input.customContext ? localCustomContextHostKey(input.sessionId) : hostKey(input.remoteHostId);
-  return codexLocalAuthHostIdentity(base + (input.storage
+  const presentationKey = input.notificationProfile === 'native-presentation' && !input.remoteHostId
+    ? `:native-presentation:session:${input.sessionId}` : '';
+  if (presentationKey && !input.sessionId) throw new Error('Native presentation requires a local Session identity');
+  return codexLocalAuthHostIdentity(base + presentationKey + (input.storage
     ? `:storage:${input.storage.sqliteHome}:history:${input.storage.historyHome}` : ''), input.policy);
 }
 
@@ -519,6 +542,10 @@ const LOCAL_CONTROL_PLANE_HOST_PREFIX = 'local-control:';
 // One bridge is shared by every local host, including account and utility hosts.
 const LOCAL_MCP_REFRESH_KEY = 'local-mcp-refresh';
 const LOCAL_CONFIGURATION_CHANGE_KEY = LOCAL_MCP_REFRESH_KEY;
+// An initialized host cannot gain a different notification profile by reuse.
+// This error never enters credential-change retirement/restart.
+class CodexNotificationProfileMismatchError extends Error {}
+
 // Only raised before a caller sends a thread RPC; safe to select a fresh route.
 class CodexRouteSelectionChangedError extends Error {
   constructor(message = 'Codex route changed during startup', readonly retryable = true) { super(message); }
@@ -1060,6 +1087,7 @@ function userInputQuestionsFingerprint(
 type UserInputAnswersByPosition = string[][];
 
 interface PendingUserInputInteraction {
+  requestId: string;
   interactionPromise: Promise<UserInputAnswersByPosition>;
   cancelledPromise: Promise<void>;
   cancel: () => void;
@@ -1328,7 +1356,7 @@ const CODEX_YIELD_CONTINUATION = Symbol('codexYieldContinuation');
 const CODEX_INTERNAL_CONTINUATION = Symbol('codexInternalContinuation');
 const CODEX_INTERACTION_CONTINUATION = Symbol('codexInteractionContinuation');
 const YIELD_CONTINUATION_MAX_ATTEMPTS = 2;
-type CodexInternalSendOptions = SendOptions & {
+type CodexInternalSendOptions = CodexNativeSendOptions & {
   [CODEX_INHERITED_CAPABILITY_SELECTION]?: string;
   [CODEX_AUTO_REVIEW_INTENT]?: AutoReviewUserIntent;
   [CODEX_YIELD_CONTINUATION]?: number;
@@ -2011,6 +2039,7 @@ export class CodexAgent extends BaseAgent {
     credentialMode: AgentCredentialMode | undefined;
     credentialModeResolved: boolean;
     generation: number;
+    notificationProfile: CodexNotificationProfile;
   }>();
 
   /**
@@ -2539,6 +2568,7 @@ export class CodexAgent extends BaseAgent {
       routeIsCurrent?: () => boolean;
       routeSignal?: AbortSignal;
       reuseExistingUtilityHost?: boolean;
+      notificationProfile?: CodexNotificationProfile;
       localAuthPolicy?: 'isolated' | 'legacy-shared';
       keyOverride?: string;
       hostPurpose?: 'control-plane' | 'review' | 'custom-context';
@@ -2548,6 +2578,15 @@ export class CodexAgent extends BaseAgent {
       historyHome?: string;
     } = {},
   ): Promise<AppServerHost> {
+    const notificationProfile = opts.notificationProfile ?? 'legacy';
+    if (notificationProfile === 'native-presentation' && (remoteHostId || !opts.keyOverride)) {
+      throw new CodexNotificationProfileMismatchError('Native presentation requires an explicit local task host');
+    }
+    const assertNotificationProfile = (actual: CodexNotificationProfile): void => {
+      if (actual !== notificationProfile) {
+        throw new CodexNotificationProfileMismatchError('Codex host notification profile cannot be upgraded in place');
+      }
+    };
     const key = opts.keyOverride ?? (opts.providerId ? `local-account:${opts.providerId}` : hostKey(remoteHostId));
     const assertRouteCurrent = (): void => {
       if (opts.routeIsCurrent && !opts.routeIsCurrent()) throw new CodexRouteSelectionChangedError();
@@ -2617,6 +2656,7 @@ export class CodexAgent extends BaseAgent {
 
       const existing = this.hosts.get(key);
       if (existing) {
+        assertNotificationProfile(existing.notificationProfile);
         // Preserve getUtilityHost's reuse semantics if a switch finished while it awaited getHost.
         if (opts.reuseExistingUtilityHost) return existing;
         const currentMode = this.hostCredentialModes.get(key);
@@ -2651,6 +2691,7 @@ assertRouteCurrent();
 
       const inflight = this.hostPromises.get(key);
       if (inflight) {
+        assertNotificationProfile(inflight.notificationProfile);
         if (opts.reuseExistingUtilityHost) {
           await inflight.promise;
           continue;
@@ -2749,6 +2790,7 @@ assertRouteCurrent();
         credentialMode: AgentCredentialMode | undefined;
         credentialModeResolved: boolean;
         generation: number;
+        notificationProfile: CodexNotificationProfile;
       } | null = null;
       const promise = this.createHost(
         remoteHostId,
@@ -2769,6 +2811,7 @@ assertRouteCurrent();
         opts.historyHome,
         opts.localAuthPolicy,
         opts.routeIsCurrent,
+        notificationProfile,
       ).finally(() => {
         // 成功: this.hosts 已赋值, 后续走快路径; 失败: 清掉 promise 让下次调用能重试
         const current = this.hostPromises.get(key);
@@ -2779,6 +2822,7 @@ assertRouteCurrent();
         credentialMode: spawnMode,
         credentialModeResolved: remoteHostId !== undefined || spawnMode !== 'gateway-key',
         generation,
+        notificationProfile,
       };
       this.hostPromises.set(key, inflightEntry);
       const host = await promise;
@@ -3037,6 +3081,7 @@ assertRouteCurrent();
     historyHome?: string,
     localAuthPolicy?: 'isolated' | 'legacy-shared',
     routeIsCurrent?: () => boolean,
+    notificationProfile: CodexNotificationProfile = 'legacy',
   ): Promise<AppServerHost> {
     const seq = (this.createHostSeqByKey.get(key) ?? 0) + 1;
     this.createHostSeqByKey.set(key, seq);
@@ -3332,7 +3377,10 @@ assertRouteCurrent();
       createTransport = () => provider(remoteHostId);
     } else {
       const binaryPath = this.requireLocalBinaryPath();
-      createTransport = () => createStdioTransport({
+      const createLocalTransport = hostPurpose !== 'control-plane' && this.deps.createLocalCodexNativeService
+        && (notificationProfile === 'native-presentation' || !this.deps.useLocalCodexNativePresentation)
+        ? this.deps.createLocalCodexNativeService : createStdioTransport;
+      createTransport = () => createLocalTransport({
         binaryPath,
         env,
         extraArgs,
@@ -3350,6 +3398,7 @@ assertRouteCurrent();
 
     const host = new AppServerHost({
       createTransport,
+      notificationProfile,
       externalAuth,
       requireEphemeralAuth,
       logger: this.deps.logger,
@@ -3715,6 +3764,7 @@ assertRouteCurrent();
       }
     }
 
+    let nativeAdmission: CodexNativeInputAdmission | undefined;
     const eventQueue: AsyncQueue<AgentEvent> = createAsyncQueue<AgentEvent>();
     const usageTracker = new UsageTracker();
     const translatorRt: CodexRuntimeState = newCodexRuntimeState();
@@ -4675,6 +4725,17 @@ assertRouteCurrent();
     }
 
     let closed = false;
+    const nativePresentation = this.deps.createLocalCodexNativePresentation && !opts.remoteHostId && !reviewMode
+      && (this.deps.useLocalCodexNativePresentation?.(opts) ?? true)
+      ? new CodexNativeTaskPresentation(message => log.warn(message)) : undefined;
+    // Frozen before any owning-host lookup, including GUI-first initialization.
+    const notificationProfile: CodexNotificationProfile = nativePresentation ? 'native-presentation' : 'legacy';
+    const nativePresentationLifetime = nativePresentation ? new AbortController() : undefined;
+    const nativeApprovals = new CodexNativeApprovals();
+    const nativeDynamicTools = new CodexNativeDynamicTools(() => !closed && isCurrentHost());
+    let nativeCreation: CodexNativeTaskCreation | undefined;
+    let preparedNativeFrontend: CodexNativePreparedPresentation | undefined;
+    let freshNativeService: CodexNativeServiceBinding | undefined;
     let subscriptionInvalidatedByTransport = false;
     let sessionHostForceRetired = false;
     let subscription: ThreadSubscription | null = null;
@@ -4892,6 +4953,7 @@ assertRouteCurrent();
 
     /** Phase 3: mutable 配置, 下一个 turn/start 透传; resume 时也透传一次。 */
     let mutableModel = opts.model;
+    let modelSelectionGeneration = 0, effortSelectionGeneration = 0, planSelectionGeneration = 0;
     /**
      * 运行时 provider 路由(会话创建时取 opts.providerId,setModel 可带新值覆盖)。
      * host 侧的 provider route 与它必须同步,窗口上限按 (provider, model) 解析。
@@ -4944,7 +5006,7 @@ assertRouteCurrent();
      * server 的 wire 规范化只动 mutableModel。
      */
     let mutableCatalogModel: string | undefined = opts.model;
-    let mutableEffort: Effort = opts.effort ?? 'high';
+    let mutableEffort: Effort | 'none' = opts.effort ?? 'high';
     let mutablePermissionMode: PermissionMode =
       reviewMode ? 'ask' : opts.permissionMode ?? 'ask';
     let mutableExtraDirs = [...(opts.extraDirs ?? [])];
@@ -4982,6 +5044,8 @@ assertRouteCurrent();
     // was attempted, prefer resume before replacing the thread; "no rollout"
     // is the only safe proof that the thread is still unused.
     let threadMayHaveRollout = false;
+    // Actual initial ACK provenance, independent of the turn/rollout heuristic.
+    let nativeAttachOrigin: CodexNativeAttachOrigin | undefined;
     // 计划模式(与 permissionMode 正交, **一次性选择**): mutablePlanMode 是 UI 勾选的
     // "武装"态 —— send 消耗它并立即 emit plan_mode_changed(false) 让勾选熄灭;
     // 本轮「计划 → 审阅 → 修订/批准」循环由 planCycleActive 承载:
@@ -5114,6 +5178,7 @@ assertRouteCurrent();
     const resolveSessionHostKey = (): string => localSessionHostIdentity({
       sessionId: sid, remoteHostId: opts.remoteHostId, accountSessionHost, accountProviderId,
       reviewMode, customContext: usesCustomContextHost, storage: sessionStorage, policy: localAuthPolicy,
+      notificationProfile,
     });
     let currentHostKey = resolveSessionHostKey();
     let releaseHostBindingLease: (() => void) | null = null;
@@ -5138,7 +5203,9 @@ assertRouteCurrent();
         ...(accountProviderId ? { providerId: accountProviderId } : {}),
         ...(sessionSqliteHome ? { sqliteHome: sessionSqliteHome } : {}),
         ...(sessionStorage ? { historyHome: sessionStorage.historyHome } : {}),
-        ...(accountSessionHost || reviewMode || usesCustomContextHost || sessionSqliteHome ? { keyOverride: currentHostKey } : {}),
+        notificationProfile,
+        ...(notificationProfile === 'native-presentation' || accountSessionHost || reviewMode || usesCustomContextHost || sessionSqliteHome
+          ? { keyOverride: currentHostKey } : {}),
         ignoreBindingLeases: 1,
         routeIsCurrent: routeSelection.isCurrent,
         routeSignal: startupRouteSignal,
@@ -5182,23 +5249,24 @@ assertRouteCurrent();
     const hostGeneration = this.hostGenerations.get(currentHostKey) ?? 0;
     const capturedHostWasRegistered = this.hosts.get(currentHostKey) === host;
     const retireSingleSessionHost = async (): Promise<void> => {
-      if (!reviewMode && !usesCustomContextHost && !accountSessionHost && !sessionSqliteHome) return;
-      const purpose = reviewMode ? 'Review' : accountSessionHost ? 'account' : 'custom context';
+      if (notificationProfile === 'legacy' && !reviewMode && !usesCustomContextHost && !accountSessionHost && !sessionSqliteHome) return;
+      const purpose = reviewMode ? 'Review' : accountSessionHost ? 'account'
+        : notificationProfile === 'native-presentation' ? 'native presentation' : 'custom context';
       const reason = `Cindy ${purpose} host is single-session`;
       await this.retireHostKey(currentHostKey, reason, {
         failIfActive: false,
         logPrefix: `codex ${purpose.toLowerCase()} host cleanup`,
         ...(capturedHostWasRegistered ? { expectedHost: host } : {}),
         expectedGeneration: hostGeneration,
-        throwOnShutdownFailure: accountSessionHost,
+        throwOnShutdownFailure: accountSessionHost || notificationProfile === 'native-presentation',
       }).catch((error) => {
-        if (accountSessionHost) throw error;
+        if (accountSessionHost || notificationProfile === 'native-presentation') throw error;
         log.warn(`${purpose} host retire failed`, {
           error: error instanceof Error ? error.message : String(error),
         });
       });
     };
-    if (usesCustomContextHost || accountSessionHost) {
+    if (notificationProfile === 'native-presentation' || usesCustomContextHost || accountSessionHost) {
       registerFailedCustomContextStartupCleanup(async () => {
         releaseHostBindingLeaseIfNeeded();
         await retireSingleSessionHost();
@@ -6351,8 +6419,17 @@ assertRouteCurrent();
           : {}),
         // Lex owns goal dispatch and pause/resume; native continuation must not bypass the host.
         'features.goals': false,
-        ...(readonlyReferenceDirsSupported ? readonlyReferencesConfig() : {}),
+        // Register only the selected named profile. An unselected permissions
+        // table makes native config reload (MCP status/settings) invalid when
+        // the task uses the ordinary sandbox and has no default_permissions.
+        ...(currentWorkspacePermissionProfile() === READONLY_REFERENCES_PERMISSION_PROFILE
+          ? readonlyReferencesConfig() : {}),
         ...(reviewMode ? reviewPermissionsConfig : {}),
+        // Native reloads this per-thread snapshot independently of the
+        // thread/start selector (for example mcpServerStatus/list). Keep the
+        // selected profile explicit within the same request-only config.
+        ...(currentWorkspacePermissionProfile()
+          ? { default_permissions: currentWorkspacePermissionProfile() } : {}),
         ...(reviewMode
           ? {
               // Windows native sandboxes cannot enforce this split read scope.
@@ -6821,7 +6898,41 @@ assertRouteCurrent();
       };
       acquireHostBindingLeaseIfNeeded();
       assertCurrentHost('thread/start');
-      const resp = await withMcpDiscoveryContext(() => {
+      const freshFactory = nativePresentation && this.deps.prepareLocalCodexNativePresentation;
+      let resp: ThreadStartResponse;
+      if (freshFactory) {
+        if (nativeCreation) throw new Error('Native root creation is already reserved');
+        freshNativeService = await host.getNativeFrontendBinding();
+        if (!freshNativeService) throw new Error('Native fresh start requires its owning service');
+        const service = freshNativeService;
+        const signal = AbortSignal.any([nativePresentationLifetime!.signal, service.signal, startup.signal]);
+        const current = () => !signal.aborted && !closed && isCurrentHost() && service.isCurrent();
+        nativeCreation = new CodexNativeTaskCreation({ host, signal, isCurrent: current, timeoutMs: CRITICAL_THREAD_RPC_TIMEOUT_MS,
+          dispatchContext: withMcpDiscoveryContext, onDispatched: () => { startup.threadDispatched = true; },
+          onUnavailable: () => { void preparedNativeFrontend?.close().catch(() => log.warn('native fresh frontend close unconfirmed')); } });
+        const creation = nativeCreation;
+        try {
+          preparedNativeFrontend = await freshFactory({ sessionId: sid!, service, host, creation, cwd: opts.workingDir,
+            signal, isCurrent: current, attachNativeApprovalFrontend: receive => nativeApprovals.attach(receive),
+            attachNativeToolFrontend: receive => nativeDynamicTools.attach(receive),
+            readRuntime: () => Object.freeze({ catalogModel: mutableCatalogModel ?? mutableModel, nativeModel: mutableModel,
+              providerId: mutableProviderId ?? null, nativeModelProvider: threadModelProvider,
+              effort: mutableEffort, fastMode: isFastServiceTier(mutableServiceTier) }),
+            prepareStart: async nativeParams => withMcpDiscoveryContext(async () => {
+              assertCurrentHost('native thread/start preparation');
+              const configured = new Set((this.deps.mcpProviders ?? []).map(provider => provider.name));
+              const merged = mergeCodexNativeThreadStart(params, nativeParams, configured);
+              nativeDynamicTools.register(nativeParams.dynamicTools);
+              return merged;
+            }),
+          });
+          resp = await creation.created;
+        } catch (error) {
+          creation.close();
+          await preparedNativeFrontend?.close().catch(() => log.warn('native fresh startup cleanup unconfirmed'));
+          throw error;
+        }
+      } else resp = await withMcpDiscoveryContext(() => {
           assertCurrentHost('thread/start dispatch');
           return host.request<ThreadStartResponse>(Method.ThreadStart, params, {
             timeoutMs: CRITICAL_THREAD_RPC_TIMEOUT_MS,
@@ -6840,6 +6951,7 @@ assertRouteCurrent();
         mutableCatalogModel = resp.model;
       }
       threadId = resp.thread.id;
+      nativeAttachOrigin = Object.freeze({ kind: 'fresh', threadId });
       await recordNativeThreadLocation(resp.thread);
       codexThreadModelProviderId = resp.modelProvider?.trim();
       refreshCodexAutoReviewerRoute(threadId);
@@ -6863,46 +6975,23 @@ assertRouteCurrent();
       });
     };
 
-    /**
-     * 会话中途把单个设置 (serviceTier / model / effort) 立即推给 app-server,
-     * 写入后续 turn 的 sticky context — 不必等下一个 turn/start 携带 (与官方
-     * Codex Desktop 的 thread/settings/update 通道对齐; experimentalApi 已恒开,
-     * 0.142.0 实测支持)。
-     *
-     * - 门: 只在 thread 已 start (threadId 就绪) 且会话未关时发; thread/start 前的
-     *   设置由首个 thread/start 携带, 不需要这条。
-     * - **串行化**: 用 promise 链把多条 update 排队顺序发 (前一条 ack 后再发下一条)。
-     *   renderer 单次切换会并发触发 setModel/setEffort/setFastMode, 若并发发送, server
-     *   回带的 thread/settings/updated 通知会乱序到达, reconcile 出现中间态闪现 (实测过
-     *   null→fast→default)。串行后 server 按序处理、通知按序回, 最终态一次到位。
-     * - serviceTier 双 Option: 调用方传 'fast' (开) / null (清空); 不传该 key = 不变。
-     * - **失败吞错**: settings/update 失败绝不抛 — turn/start 携带仍是兜底, 会话不受
-     *   影响。server 回 ack 后真正状态经 thread/settings/updated 通知回带 (见 handlers)。
-     *
-     * 返回入队任务的 promise (链已 catch, 永不 reject), 调用方可 await 到本次发送完成。
-     */
-    let settingsUpdateChain: Promise<void> = Promise.resolve();
-    const pushThreadSettings = (patch: Omit<ThreadSettingsUpdateParams, 'threadId'>): Promise<void> => {
-      if (!threadId || closed) return Promise.resolve();
-      const run = settingsUpdateChain.then(async () => {
-        if (!threadId || closed) return; // 排到队头时再校验一次 (期间可能已 close)
-        if (skipIfStaleHost('thread/settings/update')) return;
-        try {
-          await host.request<ThreadSettingsUpdateResponse>(Method.ThreadSettingsUpdate, {
-            threadId,
-            ...patch,
-          });
-        } catch (e) {
-          log.warn('thread/settings/update failed (turn/start carry remains fallback)', {
-            threadId,
-            patchKeys: Object.keys(patch),
-            error: e instanceof Error ? e.message : String(e),
-          });
-        }
-      });
-      settingsUpdateChain = run;
-      return run;
-    };
+    // GUI setters keep their desired-state fallback. A native menu response
+    // must instead await a confirmed write, bound to this thread and host.
+    const settingsQueue = new CodexSettingsQueue(
+      () => !closed && threadId && isCurrentHost() ? threadId : undefined,
+      patch => host.request<ThreadSettingsUpdateResponse>(Method.ThreadSettingsUpdate, { threadId, ...patch }),
+      (patchKeys, error) => log.warn('thread/settings/update failed', {
+        threadId, patchKeys, error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+    const pushThreadSettings = (patch: Omit<ThreadSettingsUpdateParams, 'threadId'>): Promise<void> =>
+      settingsQueue.update(patch);
+    const nativeSteerAdmission = new CodexNativeSteerAdmission(() => threadId, () => currentTurnId,
+      (message, options) => handle.steer(message, options));
+    const nativeStop = new AgentNativeStopBinding(() => threadId, () => !closed && !reviewMode && isCurrentHost(), () => currentTurnId);
+    const nativeRuntimeControls = new CodexNativeRuntimeControls(
+      () => closed || !isCurrentHost() ? '<closed>' : threadId,
+      (run, signal) => settingsQueue.confirmed(run, signal));
     if (opts.resumeSessionId && isLikelyValidThreadId(opts.resumeSessionId)) {
       // Phase 3: thread/resume is the historical-session path. Only the exact
       // provider "no rollout found" response below may fall back to thread/start.
@@ -6952,6 +7041,8 @@ assertRouteCurrent();
         }
         if (preparedResumePath && resp.thread.id !== opts.resumeSessionId) throw new Error('Codex resumed an unexpected thread');
         threadId = resp.thread.id;
+        nativeAttachOrigin = resp.thread.id === opts.resumeSessionId
+          ? Object.freeze({ kind: 'resumed', threadId }) : undefined;
         await recordNativeThreadLocation(resp.thread);
         codexThreadModelProviderId = resp.modelProvider?.trim();
         refreshCodexAutoReviewerRoute(threadId);
@@ -7388,6 +7479,21 @@ assertRouteCurrent();
       onSystemDenied?: (reason: string) => void;
     }
     const pendingApprovals = new Map<string, PendingEntry>();
+    const getNativeFileApprovalCopy = this.deps.getCodexNativeFileApprovalCopy;
+    const nativeQuestions = new CodexNativeQuestions(nativeApprovals, (requestId, decision) => {
+      eventQueue.push({ type: 'interaction_dismissed', data: { requestId, reason: 'native_answered',
+        nativeQuestionAnswers: decision.answers }, source: 'codex' });
+    });
+    const nativeApprovalRequests = new Map<string | number, { requestId: string; threadId: string; resolved: boolean }>();
+    async function withNativeApprovalRequest<T>(params: { threadId: string; itemId: string; approvalId?: string | null },
+      meta: { requestId: string | number } | undefined, call: () => Promise<T>): Promise<T> {
+      if (!meta) return call();
+      if (nativeApprovalRequests.has(meta.requestId)) throw new Error('Duplicate native approval identity');
+      const owner = { requestId: params.approvalId ?? params.itemId, threadId: params.threadId, resolved: false };
+      nativeApprovalRequests.set(meta.requestId, owner);
+      try { return await call(); }
+      finally { if (nativeApprovalRequests.get(meta.requestId) === owner) nativeApprovalRequests.delete(meta.requestId); }
+    }
     const seenGuardianReviewIds = new Set<string>();
     const userInputBroker = new CodexInteractionBroker<ToolRequestUserInputResponse>();
     const dynamicToolBroker = new CodexInteractionBroker<DynamicToolCallResponse>();
@@ -7635,8 +7741,19 @@ assertRouteCurrent();
         autoReviewAction?: ReviewableAction;
         hostAutoApprove?: boolean;
         itemId?: string;
+        nativeRequest?: CodexNativeApprovalRequest;
+        /** Cancellation identity only; never a synthetic native prompt. */
+        nativeRequestId?: string | number;
+        nativePrompt?: {
+          requestId: string | number;
+          open(allowPersistent: boolean, accept: (decision: ApprovalDecision) => void): { close(): void };
+        };
       },
-    ): Promise<{ decision: ApprovalDecision; reason?: string }> {
+    ): Promise<{ decision: ApprovalDecision; reason?: string; nativeResponse?: CodexNativeApprovalResponse }> {
+      let nativeResponse: CodexNativeApprovalResponse | undefined;
+      const nativeRequestId = opts?.nativeRequest?.id ?? opts?.nativePrompt?.requestId ?? opts?.nativeRequestId;
+      const nativeOwner = nativeRequestId === undefined ? undefined : nativeApprovalRequests.get(nativeRequestId);
+      if (nativeOwner?.resolved || closed) return { decision: 'decline' };
       // Reasons stay inside Cindy for Host-owned dynamic tool results. Stock Codex
       // approval responses cannot carry them into native exec/patch tool output.
       const timingPauseId = `approval:${kind}:${requestId}`;
@@ -7763,13 +7880,16 @@ assertRouteCurrent();
             forcePrompt = true;
           }
         }
+        if (nativeOwner?.resolved) return 'decline';
         const routedRequest =
           forcePrompt && approvalRequest.kind === 'permission'
             ? { ...approvalRequest, suggestions: undefined }
             : approvalRequest;
         return await new Promise<ApprovalDecision>((resolve) => {
+          let nativePrompt: { close(): void } | undefined;
           const entry: PendingEntry = {
             resolve: (decision, reason) => {
+              nativePrompt?.close();
               if (reason) denialReason = formatPermissionDenial('system', reason);
               resolve(decision);
             },
@@ -7786,10 +7906,44 @@ assertRouteCurrent();
             if (entry.settled) return;
             entry.settled = true;
             pendingApprovals.delete(requestId);
+            nativePrompt?.close();
             // A stale/custom UI may still return a session grant. Forced policy
             // confirmation applies to this call only and must never persist.
             resolve(forcePrompt && d === 'acceptForSession' ? 'accept' : d);
           };
+          if (opts?.nativeRequest) {
+            try {
+              const accept = (response: CodexNativeApprovalResponse, behavior: 'allow' | 'deny', session: boolean) => {
+                if (entry.settled) return;
+                nativeResponse = response;
+                if (behavior === 'deny') {
+                  denialReason = formatPermissionDenial('user');
+                  reportMcpDenial('user');
+                }
+                finalize(behavior === 'deny' ? 'decline' : session ? 'acceptForSession' : 'accept');
+                eventQueue.push({ type: 'interaction_dismissed', data: { requestId, reason: 'native_answered',
+                  resolvedAs: behavior, nativePermissionScope: session ? 'session'
+                    : typeof response.decision === 'object' ? 'persistent' : 'once' }, source: 'codex' });
+              };
+              if (forcePrompt && opts.nativeRequest.method === 'item/fileChange/requestApproval') {
+                const prompt = projectNativeFileApproval(opts.nativeRequest, getNativeFileApprovalCopy?.());
+                nativePrompt = nativeApprovals.openInteraction(prompt.request, { normalize: prompt.decode,
+                  accept: response => accept(response, response.decision === 'accept' ? 'allow' : 'deny', false) });
+              } else {
+                nativePrompt = nativeApprovals.open(opts.nativeRequest, { allowPersistent: !forcePrompt, accept });
+              }
+            } catch { finalize('decline'); return; }
+          }
+          if (opts?.nativePrompt) {
+            try { nativePrompt = opts.nativePrompt.open(!forcePrompt, d => {
+              if (entry.settled) return;
+              const behavior = d === 'decline' || d === 'cancel' ? 'deny' : 'allow';
+              if (behavior === 'deny') { denialReason = formatPermissionDenial('user'); reportMcpDenial('user'); }
+              finalize(d);
+              eventQueue.push({ type: 'interaction_dismissed', data: { requestId, reason: 'native_answered',
+                resolvedAs: behavior, nativePermissionScope: d === 'acceptForSession' ? 'session' : 'once' }, source: 'codex' });
+            }); } catch { finalize('decline'); return; }
+          }
           dispatchInteraction(routedRequest)
             .then((decision) => {
               if (entry.settled) return;
@@ -7827,7 +7981,7 @@ assertRouteCurrent();
             });
         });
       });
-      return { decision, ...(decision === 'decline' ? { reason: denialReason } : {}) };
+      return { decision, ...(decision === 'decline' ? { reason: denialReason } : {}), ...(nativeResponse ? { nativeResponse } : {}) };
     }
 
     /**
@@ -7867,6 +8021,7 @@ assertRouteCurrent();
     });
 
     function dismissLiveAskUser(requestId: string, reason: string): void {
+      nativeQuestions.cancel(requestId);
       liveAskUserByRequestId.delete(requestId);
       forgetPendingUserInputRequest(requestId);
       eventQueue.push({
@@ -7937,6 +8092,7 @@ assertRouteCurrent();
         dismiss(live.requestId, live.delivery === 'async' ? 'turn_completed' : 'superseded');
       }
       for (const meta of [...cancelledUserInput, ...cancelledDynamicTools]) {
+        nativeQuestions.retireNative(meta.requestId);
         dismiss(serverInteractionId(meta.requestId), 'turn_completed');
       }
     }
@@ -8783,6 +8939,7 @@ assertRouteCurrent();
     // ── ServerRequest handlers (Phase 2 approval, Phase 5 dismiss-on-mode-change) ──
     const commandExecutionApproval = async (
       params: CommandExecutionRequestApprovalParams,
+      meta?: { requestId: import("./app-server/protocol.js").JsonRpcId },
     ): Promise<CommandExecutionRequestApprovalResponse> => {
       if (reviewMode) return { decision: 'decline' };
       // buffered/墓碑 turn 的审批请求不得上 UI (codex R12 P1) — 孤儿直接拒。
@@ -8857,12 +9014,14 @@ assertRouteCurrent();
               : { cwdUnknown: true }),
         },
         itemId: params.itemId,
+        ...(meta ? { nativeRequest: { id: meta.requestId, method: 'item/commandExecution/requestApproval' as const, params } } : {}),
       });
-      return { decision: decision.decision };
+      return decision.nativeResponse ?? { decision: decision.decision };
     };
 
     const fileChangeApproval = async (
       params: FileChangeRequestApprovalParams,
+      meta?: { requestId: import("./app-server/protocol.js").JsonRpcId },
     ): Promise<FileChangeRequestApprovalResponse> => {
       if (reviewMode) return { decision: 'decline' };
       // buffered/墓碑 turn 的审批请求不得上 UI (codex R12 P1) — 孤儿直接拒。
@@ -8903,8 +9062,9 @@ assertRouteCurrent();
             : { kind: 'other' }
           : { kind: 'file-write', path: params.grantRoot ?? undefined },
         itemId: params.itemId,
+        ...(meta ? { nativeRequest: { id: meta.requestId, method: 'item/fileChange/requestApproval' as const, params: { ...params, ...(changes ? { changes } : {}) } } } : {}),
       });
-      return { decision: decision.decision };
+      return { decision: typeof decision.nativeResponse?.decision === 'string' ? decision.nativeResponse.decision : decision.decision };
     };
 
     function recordFromUnknown(value: unknown): Record<string, unknown> | null {
@@ -9066,6 +9226,7 @@ assertRouteCurrent();
 
     const mcpServerElicitation = async (
       params: McpServerElicitationRequestParams,
+      nativeMeta?: { requestId: string | number },
     ): Promise<McpServerElicitationRequestResponse> => {
       if (reviewMode) return { action: 'decline', content: null, _meta: null };
       // buffered/墓碑 turn 的 elicitation 不得上 UI / auto-approve (codex R12 P1)。
@@ -9157,7 +9318,8 @@ assertRouteCurrent();
       const toolTitle = stringFromMeta(meta, 'tool_title');
       const innerToolName = mcpInnerToolName(params);
       const toolUseId = activeMcpToolUseId(params);
-      const requestId = `mcp-elicitation:${params.serverName}:${params.turnId ?? params.threadId}:${++mcpElicitationSeq}`;
+      let nativeAnswer: McpServerElicitationRequestResponse | undefined;
+      const requestId = nativeMeta ? serverInteractionId(nativeMeta.requestId) : `mcp-elicitation:${params.serverName}:${params.turnId ?? params.threadId}:${++mcpElicitationSeq}`;
       const decision = await awaitApprovalDecision(
         params.threadId,
         params.turnId,
@@ -9191,9 +9353,20 @@ assertRouteCurrent();
             ? { autoReviewAction: { kind: 'other' as const, description: undefined } }
             : {}),
           ...(toolUseId ? { itemId: toolUseId } : {}),
+          ...(nativeMeta ? { nativePrompt: {
+            requestId: nativeMeta.requestId,
+            open: (allowPersistent: boolean, accept: (decision: ApprovalDecision) => void) => {
+              const projected = projectNativeMcpConfirmation(params, allowPersistent && mcpElicitationAllowsSession(params));
+              return nativeApprovals.openInteraction({ id: nativeMeta.requestId, method: 'mcpServer/elicitation/request', params: projected }, {
+                normalize: response => decodeNativeMcpConfirmation(response, projected),
+                accept: answer => { nativeAnswer = answer.response; accept(answer.decision); },
+              });
+            },
+          } } : {}),
         },
       );
 
+      if (nativeAnswer) return nativeAnswer;
       if (decision.decision === 'accept') {
         return { action: 'accept', content: null, _meta: null };
       }
@@ -9210,6 +9383,7 @@ assertRouteCurrent();
 
     const permissionsApproval = async (
       params: PermissionsRequestApprovalParams,
+      nativeMeta?: { requestId: string | number },
     ): Promise<PermissionsRequestApprovalResponse> => {
       if (reviewMode) return { permissions: {}, scope: 'turn' };
       // buffered/墓碑 turn 的审批请求不得上 UI (codex R12 P1) — 孤儿直接拒
@@ -9217,6 +9391,7 @@ assertRouteCurrent();
       const turnGate = gateServerRequestTurn(params.turnId, params.threadId);
       if (turnGate === false) return { permissions: {}, scope: 'turn' };
       if (turnGate instanceof Promise && !(await turnGate)) return { permissions: {}, scope: 'turn' };
+      let nativeAnswer: PermissionsRequestApprovalResponse | undefined;
       const requestId = params.itemId ?? params.turnId;
       // Capability changes share the same decision lifecycle as command approvals.
       // Auto reviews their complete permission payload rather than inventing a command.
@@ -9230,7 +9405,19 @@ assertRouteCurrent();
         description: params.reason ?? undefined,
         suggestions: codexSessionApprovalSuggestions(),
         metadata: params.reason ? { reason: params.reason } : undefined,
-      }, { itemId: params.itemId ?? undefined });
+      }, { itemId: params.itemId ?? undefined,
+        ...(nativeMeta ? { nativePrompt: {
+          requestId: nativeMeta.requestId,
+          open: (allowPersistent: boolean, accept: (decision: ApprovalDecision) => void) => {
+            const prompt = projectNativePermissions(nativeMeta.requestId, params, allowPersistent, this.deps.getCodexNativePermissionCopy?.());
+            return nativeApprovals.openInteraction(prompt.request, {
+              normalize: prompt.decode,
+              accept: answer => { nativeAnswer = answer.response; accept(answer.decision); },
+            });
+          },
+        } } : {}),
+      });
+      if (nativeAnswer) return nativeAnswer;
       if (decision.decision === 'accept') {
         return { permissions: params.permissions as Record<string, unknown>, scope: 'turn' };
       }
@@ -9382,6 +9569,7 @@ assertRouteCurrent();
       isRequestPending: () => boolean = () => true,
       toolUseId?: string,
       delivery?: 'async',
+      nativeRequest?: CodexNativeQuestionRequest,
     ): Promise<ToolRequestUserInputResponse> {
       if (questions.some((q) => q.isSecret)) {
         log.warn('requestUserInput secret question refused', {
@@ -9424,25 +9612,28 @@ assertRouteCurrent();
           turnId,
           questionCount: questions.length,
         });
+        const nativeAlias = nativeRequest ? nativeQuestions.attach(pendingReplay.requestId, nativeRequest) : undefined;
         const joined = await Promise.race([
           pendingReplay.interactionPromise.then((answersByPosition) => ({
             kind: 'answered' as const,
             answersByPosition,
           })),
           pendingReplay.cancelledPromise.then(() => ({ kind: 'cancelled' as const })),
-        ]);
+        ]).finally(() => nativeAlias?.close());
         if (joined.kind === 'cancelled') {
           log.debug('joined duplicate same-turn user input request cancelled', {
             requestId,
             turnId,
           });
           return isRequestPending()
-            ? askUserViaInteraction(requestId, questions, turnId, isRequestPending, toolUseId, delivery)
+            ? askUserViaInteraction(requestId, questions, turnId, isRequestPending, toolUseId, delivery, nativeRequest)
             : emptyUserInputResponse(questions);
         }
         return responseFromUserInputAnswersByPosition(questions, joined.answersByPosition);
       }
 
+      const mirroredQuestion = nativeQuestions.open(requestId, questions,
+        () => !closed && isCurrentHost() && liveAskUserByRequestId.has(requestId) && isRequestPending());
       const interactionPromise = (async (): Promise<UserInputAnswersByPosition> => {
         liveAskUserByRequestId.set(requestId, {
           requestId,
@@ -9459,13 +9650,15 @@ assertRouteCurrent();
           ),
           autoReviewIntent: currentAutoReviewIntent,
         });
-        const decision = await dispatchInteraction({
+        const nativePrompt = nativeRequest ? nativeQuestions.attach(requestId, nativeRequest) : undefined;
+        void dispatchInteraction({
           kind: 'ask_user_question',
           requestId,
           ...(toolUseId ? { toolUseId } : {}),
           ...(delivery ? { delivery } : {}),
           questions: questionsToAskUserItems(questions),
-        });
+        }).then(mirroredQuestion.gui);
+        const decision = await mirroredQuestion.decision.finally(() => nativePrompt?.close());
         if (decision.kind !== 'ask_user_question') {
           log.warn('requestUserInput got mismatched ask decision', { requestId, decKind: decision.kind });
           finishInteractionWithoutFollowUp(requestId);
@@ -9517,6 +9710,7 @@ assertRouteCurrent();
         cancelPendingInteraction = resolve;
       });
       const pendingInteraction: PendingUserInputInteraction = {
+        requestId,
         interactionPromise,
         cancelledPromise,
         cancel: cancelPendingInteraction,
@@ -9554,6 +9748,7 @@ assertRouteCurrent();
         }
         return responseFromUserInputAnswersByPosition(questions, answersByPosition);
       } finally {
+        mirroredQuestion.close();
         liveAskUserByRequestId.delete(requestId);
         const ownedPending = pendingUserInputOwnerByRequestId.get(requestId);
         if (ownedPending?.pendingInteraction === pendingInteraction) {
@@ -9692,6 +9887,8 @@ assertRouteCurrent();
                 params.turnId,
                 () => userInputBroker.has({ connectionId, requestId: meta.requestId }),
                 params.itemId,
+                undefined,
+                { id: meta.requestId, params: { ...params, questions } },
               );
           settle(response);
         },
@@ -9793,16 +9990,16 @@ assertRouteCurrent();
               params.turnId,
               () => dynamicToolBroker.has({ connectionId, requestId: meta.requestId }),
               toolUseId,
+              undefined,
+              { id: meta.requestId, params: { threadId: params.threadId, turnId: params.turnId, itemId: params.callId, questions } },
             );
             settle(dynamicToolResponseFromUserInput(response));
           },
         );
       }
 
-      if (
-        !hostDynamicToolProvider ||
-        !registeredHostDynamicToolKeys.has(dynamicToolCallKey(params))
-      ) {
+      const nativeTool = nativeDynamicTools.supports(params);
+      if (!nativeTool && (!hostDynamicToolProvider || !registeredHostDynamicToolKeys.has(dynamicToolCallKey(params)))) {
         return {
           contentItems: [{ type: 'inputText', text: `Unsupported dynamic tool: ${params.tool}` }],
           success: false,
@@ -9838,6 +10035,7 @@ assertRouteCurrent();
           {
             forcePrompt: approvalPolicy === 'prompt-each-time',
             hostAutoApprove: approvalPolicy === 'auto-approve',
+            ...(nativeTool ? { nativeRequestId: meta.requestId } : {}),
             ...(toolUseId ? { itemId: toolUseId } : {}),
           },
         );
@@ -9849,8 +10047,23 @@ assertRouteCurrent();
         }
       }
 
+      if (nativeTool) {
+        if (resolvedWhileBufferedRequestIds.delete(String(meta.requestId))
+          || nativeApprovalRequests.get(meta.requestId)?.resolved || closed || !isCurrentHost()) {
+          return cancelledDynamicToolResponse('server_request_resolved');
+        }
+        return dynamicToolBroker.track({ kind: 'dynamic_tool', connectionId, requestId: meta.requestId,
+          threadId: params.threadId, turnId: params.turnId, itemId: params.callId }, async settle => {
+          if (!(await gateServerRequestTurn(params.turnId, params.threadId)) || closed || !isCurrentHost()
+            || !dynamicToolBroker.has({ connectionId, requestId: meta.requestId })) {
+            settle(cancelledDynamicToolResponse('turn_not_active'));
+            return;
+          }
+          settle(await nativeDynamicTools.execute(meta.requestId, params));
+        }).finally(() => nativeDynamicTools.cancel(meta.requestId, params.threadId));
+      }
       try {
-        const response = await hostDynamicToolProvider.callTool(params, hostDynamicToolContext);
+        const response = await hostDynamicToolProvider?.callTool(params, hostDynamicToolContext);
         if (response) return response;
         return {
           contentItems: [{ type: 'inputText', text: `Unsupported dynamic tool: ${params.tool}` }],
@@ -9875,7 +10088,10 @@ assertRouteCurrent();
     };
 
     function handleServerRequestResolved(params: ServerRequestResolvedNotification['params']): void {
-      const requestId = String(params.requestId);
+      const nativeOwner = nativeApprovalRequests.get(params.requestId);
+      if (nativeOwner && nativeOwner.threadId !== params.threadId) return;
+      if (nativeOwner) nativeOwner.resolved = true;
+      const requestId = nativeOwner?.requestId ?? String(params.requestId);
       const uiRequestId = serverInteractionId(params.requestId);
       const pendingApproval = pendingApprovals.get(requestId);
       let approvalCancelled = false;
@@ -9889,6 +10105,9 @@ assertRouteCurrent();
       const userInputPending = userInputBroker.has(brokerKey);
       const dynamicPending = dynamicToolBroker.has(brokerKey);
       if (userInputPending || dynamicPending) {
+        nativeQuestions.retireNative(params.requestId);
+        liveAskUserByRequestId.delete(uiRequestId);
+        nativeQuestions.cancel(uiRequestId);
         // Wake joined duplicates before settling the owner's outer broker
         // response. This keeps them on the cancellation/reassignment path even
         // if a resolver starts mirroring broker settlement in the future.
@@ -11901,6 +12120,7 @@ assertRouteCurrent();
       // pending/retry 会话会收不了口（busy 永久卡死）。所以由这里统一收口。
       hostForcedRetire: ({ reason }) => {
         sessionHostForceRetired = true;
+        void nativePresentation?.close().catch(() => log.warn('native Codex frontend close unconfirmed after host retirement'));
         subscriptionInvalidatedByTransport = false;
         resetCodexGenerationTiming(translatorRt);
 
@@ -12252,6 +12472,8 @@ assertRouteCurrent();
         publishTurnDiff(threadId, params.turnId, params.diff);
       },
       turnCompleted: (params) => {
+        // Observe the continuous native stream before product Stop tombstones or buffering.
+        nativeSteerAdmission.consumption.turnCompleted(params.threadId, params.turn.id);
         // buffered turn 的终态同样进队列等对账 (greptile R11 P1 + codex R12 P1):
         // 合法 → 激活后按序重放, handleTurnCompleted 自然收口 send; 孤儿 →
         // 整队丢弃。直接处理会让孤儿 completed 提前收口在飞 send
@@ -12272,6 +12494,7 @@ assertRouteCurrent();
         handleTurnCompleted(params);
       },
       itemStarted: (params) => {
+        nativeSteerAdmission.consumption.itemStarted(params);
         // 血缘不能跟着 turn 对账队列一起迟到:AppServerHost 只为未知 child 缓冲 5s。
         // 卡片/翻译仍在队列内,这里只保留 provisional claim；父 turn 被接受后
         // 重放 item 才 commit root route，孤儿则 discard。
@@ -12640,8 +12863,8 @@ assertRouteCurrent();
         if (mutableModel !== beforeModel) {
           refreshCodexAutoReviewerRoute(params.threadId);
         }
-        // ReasoningEffort 的 'none' 不属于 Effort; 排除后其余值都是合法 Effort, 无需 cast。
-        if (s.effort && s.effort !== 'none') mutableEffort = s.effort;
+        // Keep native fixed reasoning without inventing a product effort level.
+        if (s.effort) mutableEffort = s.effort;
         if (before !== (mutableServiceTier ?? null)) {
           log.debug('thread/settings/updated reconciled serviceTier', {
             threadId: params.threadId,
@@ -12681,6 +12904,7 @@ assertRouteCurrent();
         const isTransportError = params.scope === 'transport';
         if (isTransportError) {
           subscriptionInvalidatedByTransport = true;
+          nativeSteerAdmission.consumption.disconnect();
           // 订阅已作废(app-server 崩了 / IO 断开)→ 后代通知**永远不会再到**,而 tracker 只靠
           // 后代 turn/completed 写终态。不在这里收口,渲染端会一直留着最后一帧 running:进程
           // 早就死了,子代理卡还在原地转圈(review)。这条路径与 close() / cleanup-failure 是
@@ -12956,13 +13180,20 @@ assertRouteCurrent();
           source: 'codex',
         });
       },
-      commandExecutionApproval,
-      fileChangeApproval,
-      mcpServerElicitation,
-      permissionsApproval,
+      commandExecutionApproval: (params, meta) => withNativeApprovalRequest(params, meta, () => commandExecutionApproval(params, meta)),
+      fileChangeApproval: (params, meta) => withNativeApprovalRequest(params, meta, () => fileChangeApproval(params, meta)),
+      mcpServerElicitation: (params, meta) => withNativeApprovalRequest(
+        { threadId: params.threadId, itemId: meta ? serverInteractionId(meta.requestId) : '' }, meta,
+        () => mcpServerElicitation(params, meta)),
+      permissionsApproval: (params, meta) => withNativeApprovalRequest(
+        { threadId: params.threadId, itemId: params.itemId ?? params.turnId }, meta,
+        () => permissionsApproval(params, meta)),
       serverRequestResolved: handleServerRequestResolved,
       requestUserInput,
-      dynamicToolCall,
+      dynamicToolCall: (params, meta) => nativeDynamicTools.supports(params)
+        ? withNativeApprovalRequest({ threadId: params.threadId,
+          itemId: `dynamic-tool:${dynamicToolApprovalIdentity(params).serverName}:${params.turnId}:${params.callId}` },
+        meta, () => dynamicToolCall(params, meta)) : dynamicToolCall(params, meta),
     };
     try {
       assertCurrentHost('thread subscription');
@@ -12983,6 +13214,16 @@ assertRouteCurrent();
     ): Promise<void> {
       if (closed) return;
       closed = true;
+      nativePresentationLifetime?.abort();
+      nativeCreation?.close();
+      const frontendClosed = Promise.all([nativePresentation?.close(), preparedNativeFrontend?.close()]).then(
+        () => ({ ok: true as const }), error => ({ ok: false as const, error }));
+      nativeAdmission?.close();
+      nativeSteerAdmission.close();
+      nativeRuntimeControls.close();
+      nativeStop.retire();
+      nativeApprovals.close();
+      nativeDynamicTools.close();
       await startup.remoteRoute?.release();
       cancelInteractionContinuation('session_closed', true);
       resetCodexGenerationTiming(translatorRt);
@@ -13022,9 +13263,46 @@ assertRouteCurrent();
         retireHostOnFailure: opts.retireHostOnCleanupFailure ?? true,
       });
       try { eventQueue.end(); } catch (e) { log.warn('eventQueue.end threw', { error: String(e) }); }
+      const frontendOutcome = await frontendClosed;
+      if (frontendOutcome && !frontendOutcome.ok) throw frontendOutcome.error;
     }
     // ── AgentSessionHandle ──────────────────────────────────────────────────
-    const handle: AgentSessionHandle = {
+    nativeAdmission = new CodexNativeInputAdmission(
+      () => closed ? '<closed>' : threadId, (message, options) => handle.send(message, options));
+    let nativePresentationActivation: Promise<AgentPresentationInitialization> | undefined;
+    const handle: CodexNativeSessionHandle = {
+      get presentation() { return nativePresentation?.presentation; },
+      activatePresentation: nativePresentation ? owner => activateNativePresentation(owner) : undefined,
+      readNativeRuntimeSnapshot() {
+        assertCurrentHost('native task runtime snapshot');
+        if (closed) throw new Error('Native task runtime is closed');
+        return Object.freeze({ catalogModel: mutableCatalogModel ?? mutableModel, nativeModel: mutableModel,
+          providerId: mutableProviderId ?? null, nativeModelProvider: codexThreadModelProviderId,
+          effort: mutableEffort, fastMode: isFastServiceTier(mutableServiceTier) });
+      },
+      attachNativeApprovalFrontend(receive) { assertCurrentHost("native approval frontend"); return nativeApprovals.attach(receive); },
+      attachNativeToolFrontend(receive) { assertCurrentHost("native tool frontend"); return nativeDynamicTools.attach(receive); },
+      setNativeInputResolver(resolver, media) { nativeAdmission!.bind(resolver, media); nativeSteerAdmission.bind(resolver, media); },
+      setNativeRuntimeResolver(resolver) { nativeRuntimeControls.bind(resolver); },
+      setNativeStopResolver(resolver) { nativeStop.bind(resolver); },
+      async interruptNativeTurn(params, signal) {
+        if (!params || typeof params !== 'object' || Array.isArray(params)) throw new Error('Invalid native stop');
+        const p = params as Record<string, unknown>;
+        if (p.threadId !== threadId || typeof p.turnId !== 'string'
+          || Object.keys(p).some(key => !['threadId', 'turnId'].includes(key))) throw new Error('Invalid native stop');
+        await nativeStop.resolve({ nativeSessionId: threadId, nativeTurnId: p.turnId, signal });
+        return {};
+      },
+      acceptNativeSteer(request) { assertCurrentHost('native turn/steer'); return nativeSteerAdmission.accept(request); },
+      applyNativeRuntimeSettings(params, signal) {
+        assertCurrentHost('native runtime settings');
+        if (reviewMode) throw new Error('Native controls cannot replace a host-owned review policy');
+        return nativeRuntimeControls.apply(params, signal);
+      },
+      acceptNativeTurn(request) {
+        assertCurrentHost('native turn admission');
+        return nativeAdmission!.accept(request);
+      },
       disabledSkillPaths: disabledSkillSnapshot,
       reviewAutoPermissionAction: async (action) => {
         const decision = await reviewAutoAction(action);
@@ -13060,6 +13338,7 @@ assertRouteCurrent();
           return;
         }
         const internalOpts = sendOpts as CodexInternalSendOptions | undefined;
+        const nativeDispatch = internalOpts?.[CODEX_NATIVE_TURN];
         const yieldAttempt = internalOpts?.[CODEX_YIELD_CONTINUATION];
         if (yieldAttempt == null && internalOpts?.[CODEX_INTERNAL_CONTINUATION] !== true) {
           cancelActiveYieldContinuation('new send');
@@ -13179,7 +13458,8 @@ assertRouteCurrent();
         }
         let turnInput: TurnStartParams['input'];
         try {
-          turnInput = await toTurnInput(message.content, sendOpts?.[PINNED_SKILL_INVOCATION]);
+          turnInput = nativeDispatch ? nativeDispatch.input(message)
+            : await toTurnInput(message.content, sendOpts?.[PINNED_SKILL_INVOCATION]);
         } catch (e) {
           isTurnStartPending = false;
           flushDeferredTerminalTurnCompletionsIfIdle();
@@ -13596,9 +13876,10 @@ assertRouteCurrent();
         /** 本次请求是否已被 Stop / 撤单收口过(条目会在 finally 里删掉, 所以先取出来)。 */
         let initialStartSettledByCancel = false;
         try {
-          const resp = await host.request<TurnStartResponse>(Method.TurnStart, turnParams, {
-            timeoutMs: CRITICAL_THREAD_RPC_TIMEOUT_MS,
-          });
+          const resp = nativeDispatch ? await nativeDispatch.start(turnParams)
+            : await host.request<TurnStartResponse>(Method.TurnStart, turnParams, {
+              timeoutMs: CRITICAL_THREAD_RPC_TIMEOUT_MS,
+            });
           markTurnConfigAccepted();
           adoptUnidentifiedDeadTurn(resp, initialStartSeq);
           // yield continuation 带 throwOnStartFailure + AbortSignal: 取消检查会
@@ -13614,7 +13895,7 @@ assertRouteCurrent();
           if (isLocalAcceptBoundaryError(e)) {
             throw e;
           }
-          if (/thread not found/i.test(String(e))) {
+          if (!nativeDispatch && /thread not found/i.test(String(e))) {
             log.info('turn/start hit "thread not found" — daemon likely restarted, attempting thread/resume + retry', {
               threadId,
             });
@@ -13821,7 +14102,8 @@ assertRouteCurrent();
         // Validate content before steering. `toTurnInput` can touch local
         // files/images; if that fails, leaving the current turn untouched is
         // better than sending a broken 插话.
-        const input = await toTurnInput(message.content);
+        const native = (sendOpts as CodexNativeSteerOptions | undefined)?.[CODEX_NATIVE_STEER];
+        const input = native ? native.input(message) : await toTurnInput(message.content);
         rejectIfCancelled(sendOpts, 'steer');
         if (closed) {
           throw new Error('No active Codex turn to steer: session is closed');
@@ -13868,11 +14150,12 @@ assertRouteCurrent();
         );
         let steerRpc: Promise<unknown>;
         try {
-          steerRpc = host.request(Method.TurnSteer, {
+          const params = {
             threadId,
             input,
             expectedTurnId: steeredTurnId,
-          });
+          };
+          steerRpc = native ? native.start(params) : host.request(Method.TurnSteer, params);
         } catch (error) {
           settleCapabilitySteer(false);
           throw error;
@@ -14072,7 +14355,11 @@ assertRouteCurrent();
         }
       },
 
-      async abort() {
+      async abort(options) {
+        if (options) {
+          assertCurrentHost('native turn/interrupt');
+          if (closed || options.signal.aborted || currentTurnId !== options.expectedTurnId) throw new Error('Native stop turn changed');
+        }
         const cancelledInteraction = cancelInteractionContinuation('turn_interrupted', true);
         if (cancelledInteraction) dismissAllPendingUserInput('turn_interrupted');
         const cancelledYield = cancelActiveYieldContinuation('aborted');
@@ -14113,8 +14400,14 @@ assertRouteCurrent();
         resetUpstreamIdleForTurnEnd();
         dismissPendingUserInputForTurn(currentTurnId, 'turn_interrupted');
         try {
-          await host.request(Method.TurnInterrupt, { threadId, turnId: currentTurnId });
+          if (options && (options.signal.aborted || currentTurnId !== options.expectedTurnId)) throw new Error('Native stop turn changed');
+          if (options) await host.request(Method.TurnInterrupt, { threadId, turnId: currentTurnId }, { beforeDispatch: () => {
+            assertCurrentHost('native turn/interrupt');
+            if (closed || options.signal.aborted || currentTurnId !== options.expectedTurnId) throw new Error('Native stop turn changed');
+          } });
+          else await host.request(Method.TurnInterrupt, { threadId, turnId: currentTurnId });
         } catch (e) {
+          if (options) throw e;
           log.warn('turn/interrupt threw', { error: String(e) });
         }
       },
@@ -14193,9 +14486,10 @@ assertRouteCurrent();
         }
         // provider 可能在 model 不变时单独切换(同一 id 换路由), 所以先记 provider 再做 model 去重。
         // 窗口上限按 (provider, model) 解析, 漏掉这一步会让后续 turn 拿新模型去问旧路由。
+        const selectionGeneration = ++modelSelectionGeneration;
         const prevProviderId = mutableProviderId;
         if (setOpts && Object.hasOwn(setOpts, 'providerId')) mutableProviderId = setOpts.providerId;
-        if (newModel === mutableModel) {
+        if (newModel === mutableModel && !settingsQueue.requiresConfirmation) {
           if (mutableProviderId !== prevProviderId) {
             autoReviewDecisionCache.clear();
             autoReviewUnavailableNotice.reset();
@@ -14237,31 +14531,42 @@ assertRouteCurrent();
           // 会把 session 的 provider route 恢复成旧值; 我们这边若留着新值, 下一 turn 就会
           // 走旧路由却按新 (provider, model) 解析窗口上限 —— 两边分叉正是收敛出错的根源。
           //
-          // 当前**走不到这里**: 上面两个调用各自内部都已 catch(registerCodexReviewer…
-          // 落 warn 后保留安全路由; pushThreadSettings 吞掉 RPC 失败, 靠 turn/start 透传
-          // 兜底)。留这层是结构性防御 —— 以后有人往这段加会抛的步骤时, 快照不会悄悄与
-          // 实际路由分叉。也因为当前不可达, 没有对应单测能触发它。
+          // Native settings require a receipt; restore the route on rejection.
+          if (selectionGeneration !== modelSelectionGeneration) throw e;
           mutableProviderId = prevProviderId;
           mutableModel = prevModel;
           mutableCatalogModel = prevCatalogModel;
           modelSwitchRecord = prevSwitchRecord;
+          refreshCodexAutoReviewerRoute(threadId);
           throw e;
         }
       },
 
       async setEffort(newEffort: Effort) {
         if (reviewMode) return;
-        if (newEffort === mutableEffort) return; // 去重: 值没变不重推
+        if (newEffort === mutableEffort && !settingsQueue.requiresConfirmation) return;
+        const previous = mutableEffort, generation = ++effortSelectionGeneration;
         const clamped = clampEffortForCodex(mutableModel, newEffort);
         log.debug('setEffort', { from: mutableEffort, to: newEffort, clamped });
         mutableEffort = newEffort;
         // thread 已启动 → 立即经 thread/settings/update 生效; 未启动由首个 turn/start
         // 携带 (TurnStartParams.effort, v2.rs:5800)。发 clamp 后的值, 与 turn/start 一致。
-        await pushThreadSettings({ effort: clamped });
+        try { await pushThreadSettings({ effort: clamped }); }
+        catch (error) { if (generation === effortSelectionGeneration) mutableEffort = previous; throw error; }
+      },
+
+      async clearEffort() {
+        assertCurrentHost('clear native reasoning');
+        if (closed || reviewMode) throw new Error('Native reasoning cannot change this task');
+        const previous = mutableEffort, generation = ++effortSelectionGeneration;
+        mutableEffort = 'none';
+        const apply = () => pushThreadSettings({ effort: 'none' });
+        try { await (settingsQueue.requiresConfirmation ? apply() : settingsQueue.confirmed(apply)); }
+        catch (error) { if (generation === effortSelectionGeneration) mutableEffort = previous; throw error; }
       },
 
       getEffort() {
-        return mutableEffort;
+        return mutableEffort === 'none' ? null : mutableEffort;
       },
 
       async setPermissionMode(newMode: PermissionMode) {
@@ -14395,11 +14700,20 @@ assertRouteCurrent();
 
       async setPlanMode(enabled: boolean) {
         if (reviewMode) return;
-        if (mutablePlanMode === enabled) return;
+        if (mutablePlanMode === enabled && !settingsQueue.requiresConfirmation) return;
+        const previous = mutablePlanMode, generation = ++planSelectionGeneration;
         mutablePlanMode = enabled;
         log.debug('setPlanMode', { enabled });
-        // 下一 turn 经 turn/start.collaborationMode 生效 (与 permissionMode 同款
-        // "下一 turn 透传"语义); 中途关闭时挂起的 plan_review 由用户自行处理。
+        if (nativePresentation || settingsQueue.requiresConfirmation) {
+          try {
+            await pushThreadSettings({ collaborationMode: {
+              mode: enabled ? 'plan' : 'default',
+              settings: { model: mutableModel, reasoning_effort: clampEffortForCodex(mutableModel, mutableEffort),
+                developer_instructions: null },
+            } });
+          } catch (error) { if (generation === planSelectionGeneration) mutablePlanMode = previous; throw error; }
+        }
+        // The existing next-turn policy still controls the plan cycle and review.
       },
 
       getPlanMode() {
@@ -14411,7 +14725,8 @@ assertRouteCurrent();
         if (reviewMode) return;
         // 去重以"fast 是否开启"为准: undefined(未覆盖) / null / 'default' 都视为未开,
         // 重复关 fast 或重复开 fast 不重推 (renderer 单次切换会全量重调 set*)。
-        if (isFastServiceTier(mutableServiceTier) === enabled) return;
+        if (isFastServiceTier(mutableServiceTier) === enabled && !settingsQueue.requiresConfirmation) return;
+        const previous = mutableServiceTier;
         const next: ServiceTier | null = enabled ? 'fast' : null;
         log.debug('setFastMode', { from: mutableServiceTier ?? null, to: next });
         serviceTierMutationGeneration += 1;
@@ -14420,7 +14735,9 @@ assertRouteCurrent();
         // 'fast'=开 / null=清空 standard); 未启动则由首个 thread/start 携带。server 端
         // 若因模型不支持 fast 而降级, 会经 thread/settings/updated 通知回带, handlers
         // 里把 mutableServiceTier 对齐到权威值。失败时 turn/start 透传仍是兜底。
-        await pushThreadSettings({ serviceTier: next });
+        const generation = serviceTierMutationGeneration;
+        try { await pushThreadSettings({ serviceTier: next }); }
+        catch (error) { if (generation === serviceTierMutationGeneration) mutableServiceTier = previous; throw error; }
       },
 
       async setVendorOptions(patch: Record<string, unknown>) {
@@ -14634,6 +14951,96 @@ assertRouteCurrent();
       },
     };
 
+    // Core returns the handle first. Main binds Session/account/DB/input and all
+    // interaction/control handlers before explicitly activating this frontend.
+    // A view status query can await the receipt, but cannot call this function.
+    const activateNativePresentation = (owner: AgentPresentationOwner): Promise<AgentPresentationInitialization> => {
+      if (nativePresentationActivation) return nativePresentationActivation;
+      const factory = this.deps.createLocalCodexNativePresentation;
+      if (!nativePresentation || !factory) return Promise.resolve({ status: 'unavailable', reason: 'unsupported-service' });
+      const nativeId = handle.id, origin = nativeAttachOrigin;
+      const began = Date.now();
+      const timeout = new AbortController();
+      const timer = setTimeout(() => timeout.abort(), CRITICAL_THREAD_RPC_TIMEOUT_MS);
+      timer.unref?.();
+      const signal = AbortSignal.any([owner.signal, nativePresentationLifetime!.signal, timeout.signal]);
+      let service: CodexNativeServiceBinding | undefined;
+      const current = () => !signal.aborted && !closed && isCurrentHost() && owner.isCurrent()
+        && handle.id === nativeId && threadId === nativeId && nativeAttachOrigin === origin
+        && (!service || (!service.signal.aborted && service.isCurrent()));
+      const check = () => { if (!current()) throw new CodexNativeAttachUnavailable('owner-changed'); };
+      nativePresentationActivation = Promise.resolve().then(async (): Promise<AgentPresentationInitialization> => {
+        check();
+        if (!origin || origin.threadId !== nativeId) throw new CodexNativeAttachUnavailable('invalid-thread-receipt');
+        assertCurrentHost('native frontend startup');
+        service = freshNativeService ?? await waitForCodexNativeAttach(host.getNativeFrontendBinding(), signal);
+        check();
+        if (!service) throw new Error('Native Codex presentation requires its owning native service');
+        if (origin.kind === 'fresh' && (!nativeCreation || !preparedNativeFrontend || nativeCreation.threadId !== nativeId)) {
+          throw new CodexNativeAttachUnavailable('startup-failed');
+        }
+        const resumeRolloutPath = preparedResumePath || sessionRolloutPath;
+        if (origin.kind === 'resumed' && resumeRolloutPath) {
+          // The server owns resumed declarations. Only recover Core's executor
+          // routing from that same thread's metadata;
+          // never inject new dynamicTools into the resume request.
+          const tools = await waitForCodexNativeAttach(readCodexRolloutDynamicTools(resumeRolloutPath, nativeId), signal);
+          check();
+          nativeDynamicTools.register(tools);
+        }
+        const selectedFactory = preparedNativeFrontend ? async (launch: Parameters<typeof factory>[0]) => {
+          const bound = preparedNativeFrontend!.bind(launch);
+          check(); nativeCreation!.releaseAfterBindings();
+          return bound;
+        } : factory;
+        await nativePresentation.start(selectedFactory, {
+          handle, service, cwd: opts.workingDir, ownerSignal: signal, isCurrent: current,
+          routingContext: {
+            control: async (call, scope) => {
+              check();
+              if (scope === 'task' && ['thread/name/set', 'thread/goal/set', 'thread/goal/clear'].includes(call.request.method)) {
+                return call.forward();
+              }
+              throw new Error('Native control requires an admitted task target');
+            },
+            ownsDescendant: id => descendantParentThreadByThreadId.has(id) || descendantMcpThreadIds.has(id),
+            titleContext: async () => {
+              assertCurrentHost('native title context');
+              const capturedThread = threadId;
+              const mcpServers = new Set<string>();
+              let cursor: string | null = null;
+              const seen = new Set<string>();
+              for (let page = 0; page < 10; page++) {
+                const response: CodexMcpServerStatusListResponse = await host.request<CodexMcpServerStatusListResponse>(Method.McpServerStatusList,
+                  { threadId: capturedThread, cursor, limit: 100, detail: 'toolsAndAuthOnly' },
+                  { timeoutMs: CRITICAL_THREAD_RPC_TIMEOUT_MS });
+                assertCurrentHost('native title context receipt');
+                if (closed || threadId !== capturedThread) throw new Error('Native title task changed');
+                for (const server of response.data) mcpServers.add(server.name);
+                cursor = response.nextCursor;
+                if (cursor === null) return { model: mutableModel, modelProvider: codexThreadModelProviderId, mcpServers: [...mcpServers] };
+                if (seen.has(cursor)) break;
+                seen.add(cursor);
+              }
+              throw new Error('Native title task capability list was incomplete');
+            },
+          },
+        });
+        check();
+        log.info('native Codex presentation ready', { durationMs: Date.now() - began, provenance: origin.kind });
+        return { status: 'ready' };
+      }).catch(async error => {
+        // Failed presentation never closes/unsubscribes/replaces the GUI task.
+        const reason: AgentPresentationUnavailableReason = error instanceof CodexNativeAttachUnavailable
+          ? error.reason : !current() ? 'owner-changed' : !service ? 'unsupported-service' : 'startup-failed';
+        await nativePresentation.close().catch(() => log.warn('native Codex frontend close unconfirmed'));
+        nativeCreation?.close();
+        await preparedNativeFrontend?.close().catch(() => log.warn('native prepared frontend close unconfirmed'));
+        log.warn('native Codex presentation unavailable', { reason, durationMs: Date.now() - began });
+        return { status: 'unavailable' as const, reason };
+      }).finally(() => { clearTimeout(timer); });
+      return nativePresentationActivation;
+    };
     return handle;
   }
 
@@ -14713,6 +15120,9 @@ assertRouteCurrent();
     opts: Parameters<BaseAgent['requiresCodexThreadHostTransfer']>[0],
   ): Promise<boolean> {
     if (opts.remoteHostId) return false;
+    const notificationProfile: CodexNotificationProfile = this.deps.createLocalCodexNativePresentation
+      && (this.deps.useLocalCodexNativePresentation?.(opts) ?? true)
+      ? 'native-presentation' : 'legacy';
     const observedHosts = new Set<AppServerHost>();
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const hosts = new Map([...this.hosts].filter(([key]) => key.startsWith('local')));
@@ -14747,7 +15157,7 @@ assertRouteCurrent();
         accountSessionHost: accountProviderId !== undefined || this.deps.isolateCodexAccountSessions === true,
         reviewMode: opts.reviewMode === true,
         customContext: typeof contextWindow === 'number' && Number.isFinite(contextWindow) && contextWindow > 0,
-        storage, policy: selection.policy,
+        storage, policy: selection.policy, notificationProfile,
       });
       if (!selection.isCurrent()) throw new CodexRouteSelectionChangedError();
       for (const [key, host] of hosts) {

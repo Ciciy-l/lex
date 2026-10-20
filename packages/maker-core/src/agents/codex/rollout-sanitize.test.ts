@@ -13,6 +13,8 @@ import {
   measureRolloutLiveTailBytesFromText,
   measureRolloutLiveTailStats,
   measureRolloutLiveTailStatsFromText,
+  readCodexRolloutDynamicTools,
+  readCodexRolloutModelProvider,
   rewriteOversizedToolOutputImages,
   sanitizeCodexForkRollout,
   sanitizeCodexForkRolloutFile,
@@ -26,6 +28,45 @@ function bigPngDataUri(chars = CODEX_INLINE_IMAGE_STRIP_MIN_CHARS): string {
 function compactBoundary(): string {
   return JSON.stringify({ type: 'compacted', payload: { replacement_history: [] } });
 }
+
+describe('readCodexRollout metadata', () => {
+  it('reads the original namespace/schema and provider only from the owning thread metadata', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cindy-rollout-tools-'));
+    const source = path.join(dir, 'rollout.jsonl');
+    const tools = [{ type: 'namespace', name: 'codex_tui', description: 'original tools', tools: [
+      { type: 'function', name: 'read_thread', description: 'read', inputSchema: { type: 'object', required: ['threadId'] } },
+    ] }];
+    const text = JSON.stringify({ type: 'session_meta', payload: { id: 'own-thread', model_provider: 'original-provider', dynamic_tools: tools } })
+      + '\n' + JSON.stringify({ type: 'session_meta', payload: { id: 'foreign-thread', dynamic_tools: [] } }) + '\n';
+    try {
+      await fs.writeFile(source, text);
+      expect(await readCodexRolloutDynamicTools(source, 'own-thread')).toEqual(tools);
+      expect(await readCodexRolloutModelProvider(source, 'own-thread')).toBe('original-provider');
+      await expect(readCodexRolloutDynamicTools(source, 'foreign-thread')).rejects.toThrow('does not match');
+      expect(await fs.readFile(source, 'utf8')).toBe(text);
+    } finally { await fs.rm(dir, { recursive: true, force: true }); }
+  });
+
+  it.each([{ tools: undefined }, { tools: null }, { tools: [] }])('keeps a legacy history with no saved dynamic tools ($tools)', async ({ tools }) => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cindy-rollout-legacy-tools-'));
+    const source = path.join(dir, 'rollout.jsonl');
+    try {
+      await fs.writeFile(source, JSON.stringify({ type: 'session_meta', payload: { id: 'own-thread', dynamic_tools: tools } }) + '\n');
+      expect(await readCodexRolloutDynamicTools(source, 'own-thread')).toEqual([]);
+      expect(await readCodexRolloutModelProvider(source, 'own-thread')).toBeUndefined();
+    } finally { await fs.rm(dir, { recursive: true, force: true }); }
+  });
+
+  it.each(['not-json', '', JSON.stringify({ type: 'session_meta', payload: { id: 'own-thread', dynamic_tools: {} } })])
+    ('rejects missing or invalid saved declarations (%j)', async text => {
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cindy-rollout-invalid-tools-'));
+      const source = path.join(dir, 'rollout.jsonl');
+      try {
+        await fs.writeFile(source, text);
+        await expect(readCodexRolloutDynamicTools(source, 'own-thread')).rejects.toThrow();
+      } finally { await fs.rm(dir, { recursive: true, force: true }); }
+    });
+});
 
 describe('hasUnsafeForkRolloutPayload', () => {
   it('drops reasoning and image generation without id', () => {

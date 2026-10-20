@@ -24,6 +24,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { CodexNativeServiceSlot, type CodexNativeServiceBinding } from '../native-service-slot.js';
 
 import type { Logger } from '../../../interfaces/logger.js';
 import type { CodexSessionMcpConfigInput, CodexSubagentRoutingProfile } from '../../base-agent.js';
@@ -75,8 +76,8 @@ import {
 } from './protocol.js';
 
 /**
- * 我们订阅的 notification 方法集 — 这之外的 (大部分 delta + plan/diff/hook/etc.)
- * 在 initialize 时通过 optOutNotificationMethods 告诉 server 别推, 省 IPC 带宽。
+ * Core 翻译的 notification 方法集。Legacy 连接仍裁剪不用的 delta；
+ * 明确承载 GUI/TUI 的 owning 连接在首次 initialize 前选择完整原通知流。
  *
  * agentMessage 正文订阅专用 delta；item/updated 全量字段保留为兼容兜底与校准来源。
  * reasoning summary 流必须订阅 delta — claude code 等价体验需要逐字出 thinking 文本,
@@ -113,6 +114,19 @@ const NOTIFICATIONS_TO_OPT_OUT = [
 ];
 
 const DEFAULT_THREAD_UNSUBSCRIBE_TIMEOUT_MS = 5_000;
+
+export interface AppServerNotification { readonly method: string; readonly params?: unknown }
+export type CodexNotificationProfile = 'legacy' | 'native-presentation';
+/** Evidence of one actual initialize ACK, not a late capability upgrade. */
+export interface CodexNativeNotificationReceipt {
+  readonly connectionId: string;
+  readonly generation: number;
+  readonly userAgent: string;
+  readonly experimentalApi: true;
+  readonly optOutNotificationMethods: readonly string[];
+  readonly signal: AbortSignal;
+  isCurrent(): boolean;
+}
 
 /** thread/started 之外的 notification 都直接 params.threadId; thread/started 走 params.thread.id。 */
 function extractThreadId(method: string, params: unknown): string | null {
@@ -202,17 +216,21 @@ export interface ThreadEventHandlers {
   /** server 要求审批 shell 命令执行。 */
   commandExecutionApproval?: (
     params: CommandExecutionRequestApprovalParams,
+    meta?: ServerRequestMeta,
   ) => Promise<CommandExecutionRequestApprovalResponse>;
   /** server 要求审批文件改动。 */
   fileChangeApproval?: (
     params: FileChangeRequestApprovalParams,
+    meta?: ServerRequestMeta,
   ) => Promise<FileChangeRequestApprovalResponse>;
   mcpServerElicitation?: (
     params: McpServerElicitationRequestParams,
+    meta?: ServerRequestMeta,
   ) => Promise<McpServerElicitationRequestResponse>;
   /** server 要求审批 MCP 工具等权限请求 (item/permissions/requestApproval)。 */
   permissionsApproval?: (
     params: PermissionsRequestApprovalParams,
+    meta?: ServerRequestMeta,
   ) => Promise<PermissionsRequestApprovalResponse>;
   /** EXPERIMENTAL: model/native tool asks the client to collect user input. */
   requestUserInput?: (
@@ -236,6 +254,10 @@ export interface ThreadSubscription {
 }
 
 export interface AppServerHostOptions {
+  /** Fixed before any RPC can initialize this host. GUI-first tasks which may
+   * later show TUI must select native-presentation at host creation, not switch.
+   * Cache owners must keep profiles distinct; this option never restarts a host. */
+  notificationProfile?: CodexNotificationProfile;
   /** Applied before the host becomes ready, and reapplied after every transport restart. */
   externalAuth?: CodexExternalAuth;
   /** Required for every cross-home runtime, including gateway-only routes. */
@@ -333,12 +355,29 @@ interface BufferedNotification {
 export class CodexNativeInitializationStoppedError extends Error {}
 
 export class AppServerHost {
+  private readonly notificationObservers = new Set<(event: AppServerNotification) => void>();
+  readonly notificationProfile: CodexNotificationProfile;
+  private notificationGeneration = 0;
+  private nativeNotifications?: { receipt: CodexNativeNotificationReceipt; lifetime: AbortController };
+  get hasCompleteNativeNotifications(): boolean {
+    return this.captureNativeNotificationReceipt() !== undefined;
+  }
+  /** Callers keep this exact receipt; a later connection cannot refresh it. */
+  captureNativeNotificationReceipt(): CodexNativeNotificationReceipt | undefined {
+    const receipt = this.nativeNotifications?.receipt;
+    return receipt?.isCurrent() ? receipt : undefined;
+  }
+  private revokeNativeNotifications(): void {
+    const entry = this.nativeNotifications; this.nativeNotifications = undefined;
+    entry?.lifetime.abort();
+  }
   private readonly externalAuth: CodexExternalAuthSession | undefined;
   private readonly connectionId = randomUUID();
   private readonly logger: Logger;
   private readonly bufferTtlMs: number;
   private readonly threadUnsubscribeTimeoutMs: number;
 
+  private readonly nativeService = new CodexNativeServiceSlot();
   private client: AppServerClient | null = null;
   // Negative proof belongs to the exact transport, not readiness or provider.
   // Any application RPC may load a thread (including future protocol methods).
@@ -381,6 +420,7 @@ export class AppServerHost {
   private retirementPromise: Promise<void> | null = null;
 
   constructor(private readonly opts: AppServerHostOptions) {
+    this.notificationProfile = opts.notificationProfile ?? 'legacy';
     this.externalAuth = opts.externalAuth ? new CodexExternalAuthSession(opts.externalAuth) : undefined;
     if (typeof opts.createTransport !== 'function') {
       throw new Error('AppServerHost: createTransport factory is required');
@@ -389,6 +429,17 @@ export class AppServerHost {
     this.bufferTtlMs = opts.notificationBufferTtlMs ?? 5_000;
     this.threadUnsubscribeTimeoutMs =
       opts.threadUnsubscribeTimeoutMs ?? DEFAULT_THREAD_UNSUBSCRIBE_TIMEOUT_MS;
+  }
+
+  /** Captures only an already-running concrete process; never starts a replacement. */
+  async getNativeFrontendBinding(): Promise<CodexNativeServiceBinding | undefined> {
+    if (!this.client || this.shuttingDown || this.retired) return undefined;
+    const client = this.client;
+    const binding = await this.nativeService.capture();
+    if (this.client !== client || this.shuttingDown || this.retired) {
+      throw new Error('Native Codex service changed during frontend attachment');
+    }
+    return binding;
   }
 
   isCodexProxyActive(): boolean {
@@ -651,8 +702,13 @@ export class AppServerHost {
     nativeAttempt = 0,
     nativeEpoch = this.nativeInitializationEpoch,
   ): Promise<InitializeResponse> {
+    const notificationGeneration = ++this.notificationGeneration;
     const client = new AppServerClient({
-      createTransport: this.opts.createTransport,
+      createTransport: () => {
+        const transport = this.opts.createTransport();
+        this.nativeService.bind(transport);
+        return transport;
+      },
       logger: this.opts.logger,
       onTransportError: (err) => {
         // Keep the shared startPromise while recovering this one pre-protocol
@@ -681,6 +737,14 @@ export class AppServerHost {
 
     // 注册 notification handlers BEFORE initialize: server 在握手响应前可能就推了
     // banner / 启动 notification, 漏接就丢。
+    client.observeNotifications((method, params) => {
+      if (this.client !== client || this.shuttingDown || this.retired) return;
+      for (const observer of this.notificationObservers) {
+        try { observer({ method, params }); } catch {
+          this.logger.warn('native notification observer failed', { method });
+        }
+      }
+    });
     for (const method of SUBSCRIBED_METHODS) {
       client.onNotification(method, (params) => {
         if (extractThreadId(method, params)) this.writerCandidates.add(client);
@@ -690,7 +754,7 @@ export class AppServerHost {
 
     // ServerRequest handlers (Phase 2 approval) — 同样在 initialize 前注册,
     // 防 server 在握手过程中就发出 approval (虽然实际不会, 但 defensive)。
-    client.setRequestHandler(Method.CommandExecutionRequestApproval, async (rawParams) => {
+    client.setRequestHandler(Method.CommandExecutionRequestApproval, async (rawParams, meta) => {
       const params = rawParams as CommandExecutionRequestApprovalParams;
       const resolvedHandlers = this.resolveRequestHandlers(params.threadId);
       const handlers = resolvedHandlers instanceof Promise
@@ -704,7 +768,7 @@ export class AppServerHost {
         return { decision: 'decline' };
       }
       try {
-        return await handlers.commandExecutionApproval(params);
+        return await handlers.commandExecutionApproval(params, { requestId: meta.id });
       } catch (e) {
         this.logger.error('commandExecutionApproval handler threw → decline', {
           threadId: params.threadId,
@@ -714,7 +778,7 @@ export class AppServerHost {
       }
     });
 
-    client.setRequestHandler(Method.FileChangeRequestApproval, async (rawParams) => {
+    client.setRequestHandler(Method.FileChangeRequestApproval, async (rawParams, meta) => {
       const params = rawParams as FileChangeRequestApprovalParams;
       const resolvedHandlers = this.resolveRequestHandlers(params.threadId);
       const handlers = resolvedHandlers instanceof Promise
@@ -728,7 +792,7 @@ export class AppServerHost {
         return { decision: 'decline' };
       }
       try {
-        return await handlers.fileChangeApproval(params);
+        return await handlers.fileChangeApproval(params, { requestId: meta.id });
       } catch (e) {
         this.logger.error('fileChangeApproval handler threw → decline', {
           threadId: params.threadId,
@@ -738,7 +802,7 @@ export class AppServerHost {
       }
     });
 
-    client.setRequestHandler(Method.McpServerElicitationRequest, async (rawParams) => {
+    client.setRequestHandler(Method.McpServerElicitationRequest, async (rawParams, meta) => {
       const params = rawParams as McpServerElicitationRequestParams;
       const resolvedHandlers = this.resolveRequestHandlers(params.threadId);
       const handlers = resolvedHandlers instanceof Promise
@@ -752,7 +816,7 @@ export class AppServerHost {
         return { action: 'decline', content: null, _meta: null } satisfies McpServerElicitationRequestResponse;
       }
       try {
-        return await handlers.mcpServerElicitation(params);
+        return await handlers.mcpServerElicitation(params, { requestId: meta.id });
       } catch (e) {
         this.logger.error('mcpServerElicitation handler threw -> decline', {
           threadId: params.threadId,
@@ -763,7 +827,7 @@ export class AppServerHost {
       }
     });
 
-    client.setRequestHandler(Method.PermissionsRequestApproval, async (rawParams) => {
+    client.setRequestHandler(Method.PermissionsRequestApproval, async (rawParams, meta) => {
       const params = rawParams as PermissionsRequestApprovalParams;
       const resolvedHandlers = this.resolveRequestHandlers(params.threadId);
       const handlers = resolvedHandlers instanceof Promise
@@ -776,7 +840,7 @@ export class AppServerHost {
         return { permissions: {}, scope: 'turn' } satisfies PermissionsRequestApprovalResponse;
       }
       try {
-        return await handlers.permissionsApproval(params);
+        return await handlers.permissionsApproval(params, { requestId: meta.id });
       } catch (e) {
         this.logger.error('permissionsApproval handler threw → decline', {
           threadId: params.threadId,
@@ -851,8 +915,9 @@ export class AppServerHost {
 
     const mergedCapabilities: InitializeCapabilities = {
       experimentalApi: true,
-      optOutNotificationMethods: NOTIFICATIONS_TO_OPT_OUT,
       ...capabilities,
+      optOutNotificationMethods: [...(capabilities?.optOutNotificationMethods
+        ?? (this.notificationProfile === 'native-presentation' ? [] : NOTIFICATIONS_TO_OPT_OUT))],
     };
     let resp: InitializeResponse;
     try {
@@ -879,6 +944,23 @@ export class AppServerHost {
       if (this.client !== client || this.shuttingDown || this.retired) {
         throw new Error('Codex account authentication host has retired');
       }
+    }
+    // Bind the actual client and sent capabilities only after its real ACK.
+    // Later ensureStarted(capabilities) calls reuse the first initialization.
+    if (this.client !== client || this.shuttingDown || this.retired) {
+      throw new Error('Codex notification connection retired during initialization');
+    }
+    if (mergedCapabilities.experimentalApi === true && mergedCapabilities.optOutNotificationMethods?.length === 0) {
+      const lifetime = new AbortController();
+      const receipt: CodexNativeNotificationReceipt = Object.freeze({
+        connectionId: this.connectionId, generation: notificationGeneration, userAgent: resp.userAgent, experimentalApi: true,
+        optOutNotificationMethods: Object.freeze([...mergedCapabilities.optOutNotificationMethods]),
+        signal: lifetime.signal,
+        isCurrent: () => this.nativeNotifications?.receipt === receipt && this.client === client
+          && this.notificationGeneration === notificationGeneration && !lifetime.signal.aborted
+          && !this.shuttingDown && !this.retired,
+      });
+      this.nativeNotifications = { receipt, lifetime };
     }
     this.logger.info('shared app-server up', {
       userAgent: resp.userAgent,
@@ -946,6 +1028,14 @@ export class AppServerHost {
     return this.client.request<R>(method, params, opts);
   }
 
+  /** Core-internal observation only. The creating host.request establishes the
+   * official upstream listener; this hook does not adopt or subscribe a thread.
+   * Its consumer must fence ownership and scope before exposing any event. */
+  observeNotifications(observer: (event: AppServerNotification) => void): () => void {
+    this.notificationObservers.add(observer);
+    return () => { this.notificationObservers.delete(observer); };
+  }
+
   /** Release one thread's live runtime without archiving or deleting its history. */
   async unsubscribeThread(threadId: string): Promise<void> {
     const client = this.client;
@@ -970,8 +1060,10 @@ export class AppServerHost {
     opts?: { throwOnTransportError?: boolean },
   ): Promise<void> {
     this.nativeInitializationEpoch++;
+    this.revokeNativeNotifications();
     if (!this.shutdownPromise) {
       this.shuttingDown = true;
+      this.nativeService.clear();
       const client = this.client;
       const shutdownPromise = Promise.resolve().then(async () => {
         await client?.close({ reason, throwOnTransportError: true });

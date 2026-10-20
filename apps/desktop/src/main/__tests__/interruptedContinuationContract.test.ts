@@ -86,10 +86,19 @@ describe('interrupted continuation enqueue contract', () => {
       'await this.deps.onDispatchedUserTurn?.(sessionId, head, preVendorDispatchAt)',
     );
     expect(dispatchedCall).toBeGreaterThan(-1);
-    const windowStart = Math.max(0, dispatchedCall - 500);
-    const window = coordinatorSource.slice(windowStart, dispatchedCall);
-    const dispatchedCheck = window.lastIndexOf('if (!isSendDispatched(result))');
-    expect(dispatchedCheck).toBeGreaterThan(-1);
+    const dispatchStart = coordinatorSource.indexOf('private async dispatchInput(');
+    expect(dispatchStart).toBeGreaterThan(-1);
+    expect(dispatchedCall).toBeGreaterThan(dispatchStart);
+    const beforeAcknowledgement = coordinatorSource.slice(dispatchStart, dispatchedCall);
+    // Bound to the shared dispatch method, not a character budget that changes
+    // with comments or the native admission guard. Rejection must return first.
+    const rejectedStart = beforeAcknowledgement.lastIndexOf('if (!isSendDispatched(result)) {');
+    const rejectedEnd = beforeAcknowledgement.indexOf('}', rejectedStart);
+    expect(rejectedStart).toBeGreaterThan(-1);
+    expect(rejectedEnd).toBeGreaterThan(rejectedStart);
+    const rejectedBranch = beforeAcknowledgement.slice(rejectedStart, rejectedEnd).trim();
+    expect(rejectedBranch).toContain('this.handleSendNotDispatched(sessionId, active, head, result);');
+    expect(rejectedBranch.endsWith('return;')).toBe(true);
   });
 
   it('keeps a scheduler auto-resume owned until dispatch and fails it when discarded', () => {

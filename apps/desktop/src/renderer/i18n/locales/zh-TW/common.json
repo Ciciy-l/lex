@@ -9373,6 +9373,12 @@
       "attachmentSourceMissing": "無法儲存附件：原始檔已不存在",
       "attachmentSaveFailed": "無法儲存附件，請檢查目標目錄權限後重試",
       "automationSent": "由自動化傳送",
+      "nativeInput": {
+        "pending": "等待引擎處理",
+        "unconsumed": "引擎尚未處理此訊息",
+        "unknown": "訊息處理狀態待確認"
+      },
+      "nativePluginSource": "插件：{{name}}",
       "automationSentNamed": "由自動化「{{name}}」傳送",
       "automationViewTask": "檢視自動化",
       "orcaFromLead": "來自 Lead 的訊息",
@@ -9589,6 +9595,43 @@
     "sessionLoading": "載入任務中"
   },
   "ccAgent": {
+    "presentation": {
+      "startupUnavailable": {
+        "label": "TUI 暫時無法使用",
+        "startup": "TUI 未能連線至此任務，可繼續使用 GUI"
+      },
+      "nativeFileApproval": {
+        "header": "檔案修改",
+        "confirmation": "這些修改需要你確認。",
+        "once": "僅允許本次修改",
+        "onceDescription": "僅套用這些修改，不授予後續存取權限。",
+        "cancel": "取消這些修改",
+        "cancelDescription": "不套用這些修改。"
+      },
+      "nativePermissions": {
+        "header": "權限",
+        "confirmation": "此操作需要你確認。",
+        "once": "允許本輪使用",
+        "onceDescription": "僅在本輪授予這些權限。",
+        "strict": "允許並逐條審查",
+        "strictDescription": "本輪授予權限，並審查後續每條命令。",
+        "deny": "不授予權限並繼續",
+        "denyDescription": "不授予額外權限。"
+      },
+      "retry": "重新連線",
+      "label": "顯示方式",
+      "gui": "GUI",
+      "tui": "TUI",
+      "guiDescription": "圖形介面",
+      "tuiDescription": "原生終端介面",
+      "connecting": "正在連線至終端…",
+      "viewing": "僅檢視，其他位置可能正在輸入",
+      "controlling": "可以輸入",
+      "exited": "此原生程序已結束",
+      "unavailable": "終端連線中斷，可切回 GUI 繼續檢視",
+      "gap": "終端畫面需要重新同步，可切回 GUI 查看進度",
+      "takeControl": "接管輸入"
+    },
     "agentStatus": {
       "thinking": "正在思考…",
       "generating": "正在生成…",

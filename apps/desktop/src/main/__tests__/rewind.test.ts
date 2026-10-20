@@ -341,6 +341,12 @@ async function writeClaudeJsonl(
 // ── tests ──────────────────────────────────────────────────────────────────
 
 describe('commitRewindAtMessage', () => {
+  it.each(['pending', 'unconsumed', 'unknown'])('refuses %s native input before SDK or database rewind', async status => {
+    selectQueue.push([makeUserMessageRow({ agentMeta: JSON.stringify({ uuid: 'native', sdkSessionId: 'thread',
+      nativeConsumption: { version: 1, engine: 'codex', sessionId: 'thread', turnId: 'turn', messageId: 'native', status } }) })]);
+    await expect(commitRewindAtMessage('sess-1', 'client-id')).rejects.toMatchObject({ code: 'REWIND_UNSUPPORTED_HISTORY' });
+    expect(commitRewindFilesMock).not.toHaveBeenCalled();
+  });
   it('happy path: calls maker session.commitRewindFiles(userUuid, priorAsstUuid) + soft-delete + reset', async () => {
     selectQueue.push([makeUserMessageRow()]);                  // target user msg
     selectQueue.push([]); // agent_switch 边界守卫:无边界

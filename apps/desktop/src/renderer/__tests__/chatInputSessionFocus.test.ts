@@ -77,17 +77,18 @@ describe('ChatInput session switch focus contract', () => {
     expect(firstMountHydrationBlock).toContain("editor.commands.focus('end');");
   });
 
-  it('enables storageKey refocus for routed session and new-draft views', () => {
+  it('enables routed GUI focus and hardware input without stealing them from native TUI', () => {
     expect(sessionViewSource).toContain(
       'const ownsRoute = routeOwner ?? (!sessionIdProp && !isCompactRail && !isOrcaMode);',
     );
-    expect(sessionViewSource).toContain('focusOnStorageKeyChange={ownsRoute}');
+    expect(sessionViewSource).toContain("focusOnStorageKeyChange={ownsRoute && presentation.mode === 'gui'}");
+    expect(sessionViewSource).toContain("disableAutofocus={isCompactRail || disableAutofocus || presentation.mode === 'tui'}");
     expect(sessionViewSource).toContain(
-      'ownsHardwareComposerActions={ownsHardwareTaskActions}',
+      "ownsHardwareComposerActions={ownsHardwareTaskActions && presentation.mode === 'gui'}",
     );
     expect(chatInputSource).toContain('workLouderVoiceGestureRef.current?.cancelHeldPress();');
     expect(sessionViewSource).toContain(
-      'ownsHardwareScrollActions={ownsHardwareTaskActions}',
+      "ownsHardwareScrollActions={ownsHardwareTaskActions && presentation.mode === 'gui'}",
     );
     expect(sessionViewSource).toContain("navigationMode !== 'split-pane'");
     expect(sessionViewSource).toContain("action.commandId === 'toggleTaskPin'");

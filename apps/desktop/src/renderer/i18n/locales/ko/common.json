@@ -9374,6 +9374,12 @@
       "attachmentSourceMissing": "원본 파일이 더 이상 존재하지 않아 첨부 파일을 저장할 수 없습니다",
       "attachmentSaveFailed": "첨부 파일을 저장할 수 없습니다. 대상 폴더 권한을 확인한 후 다시 시도하세요",
       "automationSent": "자동화 작업에서 보냄",
+      "nativeInput": {
+        "pending": "엔진 처리 대기 중",
+        "unconsumed": "엔진이 처리하지 않은 메시지",
+        "unknown": "메시지 처리 상태 미확인"
+      },
+      "nativePluginSource": "플러그인: {{name}}",
       "automationSentNamed": "자동화 작업 \"{{name}}\"에서 보냄",
       "automationViewTask": "자동화 작업 보기",
       "orcaFromLead": "Lead에서 온 메시지",
@@ -9589,6 +9595,43 @@
     }
   },
   "ccAgent": {
+    "presentation": {
+      "startupUnavailable": {
+        "label": "TUI 사용 불가",
+        "startup": "TUI를 이 작업에 연결하지 못했습니다. GUI를 계속 사용할 수 있습니다."
+      },
+      "nativeFileApproval": {
+        "header": "파일 변경",
+        "confirmation": "이 변경에는 확인이 필요합니다.",
+        "once": "이번 변경만 적용",
+        "onceDescription": "이번 변경만 적용하며 이후 접근 권한은 부여하지 않습니다.",
+        "cancel": "이 변경 취소",
+        "cancelDescription": "이 변경을 적용하지 않습니다."
+      },
+      "nativePermissions": {
+        "header": "권한",
+        "confirmation": "이 작업에는 확인이 필요합니다.",
+        "once": "이번 턴에만 허용",
+        "onceDescription": "이번 턴에만 해당 권한을 부여합니다.",
+        "strict": "허용 후 엄격히 검토",
+        "strictDescription": "이번 턴에 권한을 부여하고 이후 모든 명령을 검토합니다.",
+        "deny": "권한 부여 없이 계속",
+        "denyDescription": "추가 권한을 부여하지 않습니다."
+      },
+      "retry": "다시 연결",
+      "label": "표시 모드",
+      "gui": "GUI",
+      "tui": "TUI",
+      "guiDescription": "그래픽 인터페이스",
+      "tuiDescription": "네이티브 터미널 인터페이스",
+      "connecting": "터미널에 연결 중…",
+      "viewing": "보기 전용입니다. 다른 화면에서 입력 중일 수 있습니다",
+      "controlling": "입력 가능",
+      "exited": "네이티브 프로세스가 종료되었습니다",
+      "unavailable": "터미널 연결이 끊겼습니다. GUI로 전환해 계속 확인할 수 있습니다.",
+      "gap": "터미널 화면을 다시 동기화해야 합니다. GUI에서 진행 상황을 확인할 수 있습니다.",
+      "takeControl": "입력 제어 가져오기"
+    },
     "agentStatus": {
       "thinking": "생각 중…",
       "generating": "생성 중…",

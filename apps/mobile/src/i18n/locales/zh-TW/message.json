@@ -30,6 +30,12 @@
     "expand": "展開",
     "automationOriginNamed": "由自動化「{{name}}」傳送",
     "automationOrigin": "由自動化傳送",
+    "nativeInput": {
+      "pending": "等待引擎處理",
+      "unconsumed": "引擎尚未處理此訊息",
+      "unknown": "訊息處理狀態待確認"
+    },
+    "nativePluginSource": "插件：{{name}}",
     "modelMismatch": "本輪由 {{actual}} 響應，而非所選的 {{selected}}（服務端臨時降級）",
     "copyStateCopying": "複製中",
     "copyStateCopied": "已複製",

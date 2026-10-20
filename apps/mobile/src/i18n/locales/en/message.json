@@ -30,6 +30,12 @@
     "expand": "Expand",
     "automationOriginNamed": "Sent by automation task “{{name}}”",
     "automationOrigin": "Sent by an automation task",
+    "nativeInput": {
+      "pending": "Waiting for the engine",
+      "unconsumed": "Not processed by the engine",
+      "unknown": "Message processing status unknown"
+    },
+    "nativePluginSource": "Plugin: {{name}}",
     "modelMismatch": "This turn was answered by {{actual}} instead of the selected {{selected}} (temporary server-side downgrade)",
     "copyStateCopying": "Copying",
     "copyStateCopied": "Copied",

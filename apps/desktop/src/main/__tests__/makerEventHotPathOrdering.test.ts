@@ -84,6 +84,10 @@ describe('maker:event hot path ordering', () => {
       'sessionBindings.attachStatusListener(registration);',
       'installDesktopInteractionListener(session);',
     );
+    for (const owner of ['bindNativeSessionInput(', 'bindNativeSessionStop(', 'bindNativeSessionRuntime(',
+      'installDesktopInteractionListener(session);', 'installInteractionLifecycleObserver(session, {']) {
+      expectOrder(wireSessionSource, owner, 'session.activatePresentation(');
+    }
     // #1286:拆线(实例替换 / 会话关闭)必须给插件补 did-turn-end,否则订阅方的
     // 「AI 在忙」外层状态永久卡在 working,除重启没有自愈手段。同一个 disposer 里
     // 摘 interaction observer(#1283),不摘会让 activity 的审批边界发给已拆线的 tap。
@@ -165,7 +169,7 @@ describe('maker:event hot path ordering', () => {
     const reconcileStart = source.indexOf('const sealLostTerminalPersistState =');
     const reconcileEnd = source.indexOf('\n\n  const readDirectAbortTurnId =', reconcileStart);
     const reconcileSource = source.slice(reconcileStart, reconcileEnd);
-    const directAbortStart = source.indexOf('ipcMain.handle(MAKER_INVOKE.ABORT_SESSION');
+    const directAbortStart = source.indexOf('async function abortSessionFromProduct(');
     const directAbortEnd = source.indexOf(
       '\n  ipcMain.handle(MAKER_INVOKE.CLOSE_SESSION',
       directAbortStart,
@@ -503,7 +507,7 @@ describe('maker:event hot path ordering', () => {
     const coordinatorAbortStart = source.indexOf('abortSession: async (sessionId) => {');
     const coordinatorAbortEnd = source.indexOf('\n    isTurnRunning:', coordinatorAbortStart);
     const coordinatorAbortSource = source.slice(coordinatorAbortStart, coordinatorAbortEnd);
-    const directAbortStart = source.indexOf('ipcMain.handle(MAKER_INVOKE.ABORT_SESSION');
+    const directAbortStart = source.indexOf('async function abortSessionFromProduct(');
     const directAbortEnd = source.indexOf(
       '\n  ipcMain.handle(MAKER_INVOKE.CLOSE_SESSION',
       directAbortStart,
@@ -595,7 +599,7 @@ describe('maker:event hot path ordering', () => {
       inputStopStart,
     );
     const inputStopSource = source.slice(inputStopStart, inputStopEnd);
-    const directAbortStart = source.indexOf('ipcMain.handle(MAKER_INVOKE.ABORT_SESSION');
+    const directAbortStart = source.indexOf('async function abortSessionFromProduct(');
     const directAbortEnd = source.indexOf(
       '\n  ipcMain.handle(MAKER_INVOKE.CLOSE_SESSION',
       directAbortStart,

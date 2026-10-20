@@ -19,6 +19,68 @@ import {
   type PresentationLocalizer,
 } from './presentationLocalization';
 
+/** Host-authored evidence for accepted native input; RPC acceptance is not consumption. */
+export interface NativeMessageConsumption {
+  readonly version: 1;
+  readonly engine: 'codex';
+  readonly sessionId: string;
+  readonly turnId: string;
+  readonly messageId: string;
+  readonly status: 'pending' | 'consumed' | 'unconsumed' | 'unknown';
+  readonly itemId?: string;
+}
+
+/** Projection of a host-authored record bound to the exact persisted native user row. */
+export function nativeMessageConsumptionStatus(meta: unknown): NativeMessageConsumption['status'] | undefined {
+  if (typeof meta === 'string') {
+    try { meta = JSON.parse(meta); } catch { return undefined; }
+  }
+  if (!meta || typeof meta !== 'object') return undefined;
+  const value = meta as { uuid?: unknown; sdkSessionId?: unknown; nativeConsumption?: Partial<NativeMessageConsumption> };
+  const record = value.nativeConsumption;
+  if (!record || record.version !== 1 || record.engine !== 'codex'
+    || typeof record.sessionId !== 'string' || !record.sessionId || record.sessionId !== value.sdkSessionId
+    || typeof record.turnId !== 'string' || !record.turnId
+    || typeof record.messageId !== 'string' || !record.messageId || record.messageId !== value.uuid
+    || !['pending', 'consumed', 'unconsumed', 'unknown'].includes(record.status ?? '')
+    || (record.status === 'consumed' && (typeof record.itemId !== 'string' || !record.itemId))) return undefined;
+  return record.status;
+}
+
+/** A stale pending row after shutdown cannot promise that the engine is still waiting. */
+export function nativeMessageConsumptionLabel(status: NativeMessageConsumption['status'] | undefined,
+  running: boolean): 'pending' | 'unconsumed' | 'unknown' | undefined {
+  if (status === 'pending') return running ? 'pending' : 'unknown';
+  return status === 'unconsumed' || status === 'unknown' ? status : undefined;
+}
+
+
+/** Host-authored provenance of one accepted native input, persisted with its GUI row. */
+export interface NativeMessageSource {
+  version: 1;
+  engine: 'claude-code';
+  sessionId: string;
+  messageId: string;
+  origin: { kind: string; name?: string };
+  /** Only the authenticated built-in bridge may mint this exact-row association. */
+  bridge?: { sessionId: string; messageId: string; submissionId: string; pluginName: string };
+}
+
+/** Display only. The host must strip this metadata from all client write paths. */
+export function nativeMessagePluginSource(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const source = value as Partial<NativeMessageSource>;
+  const name = source.origin?.name;
+  if (source.version !== 1 || source.engine !== 'claude-code' || source.origin?.kind !== 'plugin'
+    || typeof name !== 'string' || !name || name.length > 512 || /[\u0000-\u001f\u007f]/.test(name)) return undefined;
+  const bridge = source.bridge;
+  if (name === 'lex-native-bridge' && bridge?.pluginName === name
+    && typeof source.sessionId === 'string' && source.sessionId.length > 0 && bridge.sessionId === source.sessionId
+    && typeof source.messageId === 'string' && source.messageId.length > 0 && bridge.messageId === source.messageId
+    && typeof bridge.submissionId === 'string' && bridge.submissionId.length > 0) return undefined;
+  return name;
+}
+
 export type MessageFoldHeaderChevronPosition = 'leading' | 'trailing';
 
 export type MessageFoldHeaderVariant = 'card' | 'plain';

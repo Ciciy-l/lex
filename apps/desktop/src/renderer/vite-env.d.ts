@@ -5089,6 +5089,7 @@ interface ElectronAPI {
    * apps/desktop/src/main/maker-ipc/ 的 handlers + apps/desktop/src/main/maker-host/。
    */
   maker: {
+    presentation: (request: import('../shared/agentPresentation').AgentPresentationRequest) => Promise<unknown>;
     listAvailableAgents: () => Promise<Array<'claude-code' | 'codex' | 'pi' | 'omp'>>;
     onAgentsChanged: (cb: () => void) => () => void;
     getCapabilities: (agentKind: 'claude-code' | 'codex' | 'pi' | 'omp') => Promise<unknown>;

@@ -1,4 +1,9 @@
+import type { AgentNativeInputRequest } from '@cindy/maker-core';
+import { createCodexNativeMediaImporter } from '../maker-host/codexNativeMedia.js';
+import { bindNativeSessionRuntime, type NativeRuntimeBindingDeps } from './nativeRuntimeBinding.js';
+import { bindNativeSessionStop, type NativeStopBindingDeps } from './nativeStopBinding.js';
 import { assertNotRetiredCompanionSession } from '../localDb/retiredCompanions.js';
+import { createAgentPresentationHandler, AGENT_PRESENTATION_CHANNEL } from './agentPresentationHandlers.js';
 import { resolveSafe as resolveCindyMediaUrl } from '../cindy-media/blobStore.js';
 import { getSessionFsSnapshot } from '../localDb/ipc/sessions.js';
 import { isModelSelectableForNewRoute } from '@cindy/model-providers';
@@ -69,6 +74,7 @@ import { AUTO_REVIEW_SOURCE_CONTENT, AUTO_REVIEW_USER_INTENT, INHERITED_CAPABILI
 import { AUTO_REVIEW_DELEGATED_CONTINUATION, readAutoReviewUserText, restoreAutoReviewSteerIntent, restoreAutoReviewUserIntent } from './autoReviewUserIntent.js';
 import type {
   AgentEvent,
+  AgentPresentationInitialization,
   AgentKind,
   Effort,
   ContextUsageData,
@@ -293,6 +299,8 @@ import {
   listMessagesForAgentHandoff,
   findLatestUserMessageForRebuild,
   patchMessageAgentMeta,
+  captureNativeUserMessageLink,
+  captureNativeInputConsumption,
   supersedeRetriedUserTurn,
   updateMessageContent,
 } from '../localDb/ipc/messages.js';
@@ -1162,6 +1170,8 @@ import { normalizeWorkingDirForStorage } from '../../shared/workingDir.js';
 import { openMainWindowSession } from '../deepLink.js';
 import { handleSessionEvent, type SessionEventDependencies } from './sessionEventPipeline.js';
 import { installSessionTurnObserver } from './sessionTurnObserver.js';
+import { bindNativeSessionInput, type NativeInputBindingDeps } from './nativeInputBinding.js';
+import { createClaudeNativeMediaImporter } from '../maker-host/claudeNativeMedia.js';
 
 const log = createLogger('maker-ipc');
 const sshCodexCreationScopeKeys = new WeakMap<object, { identity: string; token: object }>();
@@ -2687,14 +2697,22 @@ function resolvePendingInteraction(requestId: string, decision: InteractionDecis
     decision.kind === 'ask_user_question' &&
     goalAskAnswerObserver
   ) {
-    try {
-      const questions = (resolver.request as { questions?: AskUserQuestions }).questions ?? [];
-      goalAskAnswerObserver(resolver.sessionId, decision.answers ?? {}, questions);
-    } catch (e) {
-      log.warn('goalAskAnswerObserver threw', { sessionId: resolver.sessionId, error: String(e) });
-    }
+    notifyQuestionAnswered(resolver.sessionId, resolver.request, decision);
   }
   return true;
+}
+
+function notifyQuestionAnswered(
+  sessionId: string,
+  request: RecoverableInteractionSnapshot,
+  decision: Extract<InteractionDecision, { kind: 'ask_user_question' }>,
+): void {
+  try {
+    const questions = (request as { questions?: AskUserQuestions }).questions ?? [];
+    goalAskAnswerObserver?.(sessionId, decision.answers ?? {}, questions);
+  } catch (e) {
+    log.warn('goalAskAnswerObserver threw', { sessionId, error: String(e) });
+  }
 }
 
 function resolvePendingPermissionFromAgentIsland(
@@ -3200,6 +3218,9 @@ async function syncLibraryReadonlyExtraDir(
 }
 
 let agentInputCoordinatorHolder: AgentInputCoordinator | null = null;
+let nativeInputBindingDepsHolder: Omit<NativeInputBindingDeps, 'isCurrent'> | null = null;
+let nativeRuntimeBindingDepsHolder: Omit<NativeRuntimeBindingDeps, 'isCurrent'> | null = null;
+let nativeStopBindingDepsHolder: Omit<NativeStopBindingDeps, 'isCurrent'> | null = null;
 let contextOverflowRolloverHolder: ReturnType<typeof createContextOverflowRollover> | null = null;
 const overflowSuppressedBroadcasts = new Map<
   string,
@@ -4545,6 +4566,9 @@ const sessionEventDependencies: SessionEventDependencies = {
   get persistInteractionDecision() {
     return persistInteractionDecision;
   },
+  get onQuestionAnswered() {
+    return notifyQuestionAnswered;
+  },
   get broadcastToAllWindows() {
     return broadcastToAllWindows;
   },
@@ -4653,7 +4677,10 @@ const sessionTurnObserverDependencies = {
   log,
 };
 
-export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void {
+export function wireSessionToIpc(
+  session: ReturnType<Maker['getSession']>,
+  presentationStartup?: Promise<AgentPresentationInitialization>,
+): void {
   if (!session) return;
   const registration = sessionBindings.beginBinding(session);
   if (!registration) return;
@@ -4726,6 +4753,46 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
     handleSessionEvent(ownerEventDependencies, session, event);
   };
   const ownerDb = getCurrentDbClientSnapshot();
+  const presentationOwnerGeneration = getActiveAppSession().generation;
+  if (nativeInputBindingDepsHolder && typeof session.onNativeInput === 'function') {
+    const nativeDeps = nativeInputBindingDepsHolder;
+    const isCurrent = (current: typeof session) => Boolean(ownerDb && ownerDb === getCurrentDbClientSnapshot()
+      && nativeInputBindingDepsHolder === nativeDeps && sessionBindings.getSession(current.id) === current);
+    let importMedia: NativeInputBindingDeps['importMedia'];
+    registration.disposers.push(bindNativeSessionInput(session, {
+      ...nativeDeps,
+      isCurrent,
+      captureConsumption: (current, input) => captureNativeInputConsumption({
+        sessionId: current.id, clientId: input.nativeMessageId,
+        nativeSessionId: input.nativeSessionId, nativeTurnId: input.nativeTurnId!,
+        isCurrent: () => isCurrent(current) && current.sdkSessionId === input.nativeSessionId,
+      }),
+      importMedia: async input => {
+        if (!isCurrent(session) || !['claude-code', 'codex'].includes(session.agentKind) || input.sessionId !== session.sdkSessionId) {
+          throwIpcError('PRECONDITION_FAILED', 'Native attachment no longer belongs to this task');
+        }
+        importMedia ??= (session.agentKind === 'codex' ? createCodexNativeMediaImporter : createClaudeNativeMediaImporter)({ sessionId: session.id, nativeSessionId: input.sessionId,
+          isCurrent: () => isCurrent(session) && session.sdkSessionId === input.sessionId });
+        return importMedia(input);
+      },
+    }));
+  }
+  if (nativeStopBindingDepsHolder && typeof session.onNativeStop === 'function') {
+    const stopDeps = nativeStopBindingDepsHolder;
+    registration.disposers.push(bindNativeSessionStop(session, {
+      ...stopDeps,
+      isCurrent: current => Boolean(ownerDb && ownerDb === getCurrentDbClientSnapshot()
+        && nativeStopBindingDepsHolder === stopDeps && sessionBindings.getSession(current.id) === current),
+    }));
+  }
+  if (nativeRuntimeBindingDepsHolder && typeof session.onNativeRuntimeSelection === 'function') {
+    const runtimeDeps = nativeRuntimeBindingDepsHolder;
+    registration.disposers.push(bindNativeSessionRuntime(session, {
+      ...runtimeDeps,
+      isCurrent: current => Boolean(ownerDb && ownerDb === getCurrentDbClientSnapshot()
+        && nativeRuntimeBindingDepsHolder === runtimeDeps && sessionBindings.getSession(current.id) === current),
+    }));
+  }
   const ownerEventDependencies = Object.create(sessionEventDependencies) as SessionEventDependencies;
   Object.defineProperty(ownerEventDependencies, 'onPluginTaskTerminal', {
     value: (...args: Parameters<NonNullable<SessionEventDependencies['onPluginTaskTerminal']>>) => {
@@ -4747,6 +4814,18 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
       ghostSessionTap.interactionObserver.onEnd(request, route);
     },
   });
+  // Input owners exist now, but the create/resume funnel may still be hydrating
+  // its provider/effort/fast stores. Only the native frontend awaits that receipt.
+  // Direct headless creators already freeze their selected runtime before wiring;
+  // they retain that path without adding a wait to ordinary GUI sends.
+  const inputOwner = nativeInputBindingDepsHolder, stopOwner = nativeStopBindingDepsHolder, runtimeOwner = nativeRuntimeBindingDepsHolder;
+  registration.disposers.push(session.activatePresentation(() => Boolean(ownerDb
+    && ownerDb === getCurrentDbClientSnapshot() && !isAppSessionBoundaryPending()
+    && getActiveAppSession().generation === presentationOwnerGeneration
+    && inputOwner && inputOwner === nativeInputBindingDepsHolder
+    && stopOwner && stopOwner === nativeStopBindingDepsHolder
+    && runtimeOwner && runtimeOwner === nativeRuntimeBindingDepsHolder
+    && sessionBindings.getSession(session.id) === session), presentationStartup));
 }
 
 /**
@@ -4805,6 +4884,7 @@ export interface RegisterMakerIpcOptions {
 }
 
 let disposePiPackagesChangedBroadcast: (() => void) | null = null;
+let presentationHandler: ReturnType<typeof createAgentPresentationHandler> | undefined;
 
 /**
  * Register before the first BrowserWindow: modelVisibilityPrefs mirrors its initial snapshot as
@@ -4846,6 +4926,15 @@ export function registerModelVisibilitySyncIpc(): void {
 }
 
 export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions): void {
+  presentationHandler?.close();
+  presentationHandler = createAgentPresentationHandler((sessionId) => maker.getSession(sessionId)?.presentation, sessionId => {
+    const session = maker.getSession(sessionId), settled = session?.presentationInitialization;
+    if (!session || !settled) return undefined;
+    const nativeId = session.sdkSessionId;
+    return { settled, isCurrent: () => maker.getSession(sessionId) === session && session.sdkSessionId === nativeId };
+  });
+  ipcMain.removeHandler(AGENT_PRESENTATION_CHANNEL);
+  ipcMain.handle(AGENT_PRESENTATION_CHANNEL, presentationHandler.handle);
   // Catalog updates and explicit budget edits share one serial refresh boundary.
   let contextRefresh = Promise.resolve();
   let applyPiModelSettingsRefresh: (sessionId: string, model: string, providerId: string | null) => Promise<void> =
@@ -6722,6 +6811,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     didInjectOrcaInstructions: boolean;
     didInjectProjectContext: boolean;
   }> {
+    const presentationOwnerDb = getCurrentDbClientSnapshot();
+    const presentationOwnerGeneration = getActiveAppSession().generation;
     const sshCodexOwnerGeneration = o.agentKind === 'codex' && o.remoteHostId
       ? getActiveAppSession().generation
       : null;
@@ -6883,6 +6974,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (snapshot.status !== 'ready') sshCodexHostConnectionChanged = true;
     }) ?? (() => undefined);
     const sessionBeforeCreate = o.id ? maker.getSession(o.id) : undefined;
+    // All ordinary local GUI-first/TUI-first starts reserve the same capable
+    // host before cache lookup. Utility, Review, Orca and SSH keep legacy hosts.
+    o.nativePresentation = o.agentKind === 'codex' && !o.remoteHostId && !o.reviewMode && !o.orcaRole;
     let session: Awaited<ReturnType<typeof maker.createSession>> | undefined;
     try {
       assertSshCodexOwnerCurrent();
@@ -6931,98 +7025,117 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     }
     if (!session) throw new Error('Maker did not return the created session');
     await markProjectContextIfNeeded(session.id, didInjectProjectContext);
-    wireSessionToIpc(session);
-    markOrcaMcpHydratedIfNeeded(session.id, o);
-
-    // per-session 供应商:从 DB(sessions.provider_id)回填路由 store —— 跨重启恢复会话显式选定的
-    // 供应商,让首个请求就按所选来源路由;无值则保持未设(→ 默认路由,行为不变)。hydrate 不覆盖
-    // 运行中已有的选择。读失败不致命(回落默认路由)。所有 create/resume 路径都经本funnel,单点覆盖。
-    //
-    // device-link 远程 create(P2):DesktopSessionStorage.create 从 maker-core SessionMeta 建行,
-    // SessionMeta 不含 providerId → 远程新建行 provider_id 恒 NULL。这里在 hydrate 前用 create opts
-    // 的 providerId 补写 DB。providerId=null 是显式清除来源,也必须写库覆盖旧值;只有
-    // providerId=undefined 才表示调用方没有携带来源选择。懒启动路径会在 maker.createSession
-    // 前从 DB 预补 o.providerId,所以下面同时承担「新建落库」和「恢复路由 store」两件事。
+    let completePresentationStartup!: (result: AgentPresentationInitialization) => void;
+    const presentationStartup = new Promise<AgentPresentationInitialization>(resolve => {
+      completePresentationStartup = resolve;
+    });
+    let presentationStartupResult: AgentPresentationInitialization = { status: 'unavailable', reason: 'startup-failed' };
     try {
-      const db = getDbClient().drizzle;
-      await persistAndHydrateSessionProvider({
-        sessionId: session.id,
-        providerId: runtimeOverride ? undefined : o.providerId,
-        updateProviderId: async (targetSessionId, providerId) => {
-          await db.update(sessions).set({ providerId }).where(eq(sessions.id, targetSessionId));
-        },
-        readProviderId: async (targetSessionId) => {
-          const [pRow] = await db
-            .select({ providerId: sessions.providerId })
-            .from(sessions)
-            .where(eq(sessions.id, targetSessionId))
-            .limit(1);
-          return pRow?.providerId;
-        },
-        hydrateSessionProvider,
-      });
-      // bridge 会话态(effort / fast)同点 hydrate:让 resume / 重启后的首个 bridge 请求就带上
-      // 用户上次选定的思维深度与 Fast(否则要等用户再点一次开关才写进内存 store)。
-      const [efRow] = await db
-        .select({ effort: sessions.effort, fastMode: sessions.fastMode })
-        .from(sessions)
-        .where(eq(sessions.id, session.id))
-        .limit(1);
-      if (runtimeOverride) {
-        setSessionEffort(session.id, runtimeOverride.effort);
-        setSessionFastMode(session.id, runtimeOverride.fastMode);
-      } else {
-        // DB 行里的 effort 是历史合法值(固定 effort 模型切换时省略了字段),
-        // hydrate 时必须按**当前模型能力**归一化:固定 effort 模型 → null,
-        // 可调模型 → 兼容档位。直接回灌旧值会把不支持 reasoningEffort 的模型
-        // 请求打给 provider 被拒(issue #3691 / PR #3727 Greptile P1)。
-        const hydrateProviderId = getSessionProvider(session.id) ?? o.providerId ?? null;
-        const hydrateProvider = getActiveCatalog().providers.find(
-          (candidate) => candidate.id === hydrateProviderId,
-        );
-        const hydrateModel = findCatalogModel(
-          hydrateProvider,
-          session.model,
-          o.agentKind,
-        );
-        setSessionEffort(
-          session.id,
-          hydrateModel
-            ? resolveCompatibleSessionRuntimeEffort(hydrateModel, efRow?.effort ?? null)
-            : efRow?.effort,
-        );
-        setSessionFastMode(session.id, !!efRow?.fastMode);
-      }
-    } catch (err) {
-      // 来源没能落库 → 所选来源在下次冷启动后消失(本次路由已在启动边界冻结)。
-      log.warn('hydrate session provider failed (non-fatal)', {
-        sessionId: session.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+      wireSessionToIpc(session, presentationStartup);
+      markOrcaMcpHydratedIfNeeded(session.id, o);
 
-    // 预建 worktree 补快照:send_to_session / hook-control / device-link 远程 create 都是
-    // 「先 worktree:create(worktreeStore 绑定)后建会话」—— 绑定写入时 session 行还不
-    // 存在,worktreeStore.set 的 sessions.worktree_path 同步落空(仅 warn)。此处行已建,
-    // 统一补一次反范式快照(幂等;本地"先会话后 worktree"路径此时无绑定,天然跳过)。
-    // 失败非致命 —— 徽标与回收都以 worktreeStore 为准。
-    try {
-      const wtMeta = worktreeStore.get(session.id);
-      if (wtMeta?.path) {
+      // per-session 供应商:从 DB(sessions.provider_id)回填路由 store —— 跨重启恢复会话显式选定的
+      // 供应商,让首个请求就按所选来源路由;无值则保持未设(→ 默认路由,行为不变)。hydrate 不覆盖
+      // 运行中已有的选择。读失败不致命(回落默认路由)。所有 create/resume 路径都经本funnel,单点覆盖。
+      //
+      // device-link 远程 create(P2):DesktopSessionStorage.create 从 maker-core SessionMeta 建行,
+      // SessionMeta 不含 providerId → 远程新建行 provider_id 恒 NULL。这里在 hydrate 前用 create opts
+      // 的 providerId 补写 DB。providerId=null 是显式清除来源,也必须写库覆盖旧值;只有
+      // providerId=undefined 才表示调用方没有携带来源选择。懒启动路径会在 maker.createSession
+      // 前从 DB 预补 o.providerId,所以下面同时承担「新建落库」和「恢复路由 store」两件事。
+      try {
         const db = getDbClient().drizzle;
-        await db
-          .update(sessions)
-          .set({ worktreePath: wtMeta.path })
-          .where(eq(sessions.id, session.id));
+        await persistAndHydrateSessionProvider({
+          sessionId: session.id,
+          providerId: runtimeOverride ? undefined : o.providerId,
+          updateProviderId: async (targetSessionId, providerId) => {
+            await db.update(sessions).set({ providerId }).where(eq(sessions.id, targetSessionId));
+          },
+          readProviderId: async (targetSessionId) => {
+            const [pRow] = await db
+              .select({ providerId: sessions.providerId })
+              .from(sessions)
+              .where(eq(sessions.id, targetSessionId))
+              .limit(1);
+            return pRow?.providerId;
+          },
+          hydrateSessionProvider,
+        });
+        // bridge 会话态(effort / fast)同点 hydrate:让 resume / 重启后的首个 bridge 请求就带上
+        // 用户上次选定的思维深度与 Fast(否则要等用户再点一次开关才写进内存 store)。
+        const [efRow] = await db
+          .select({ effort: sessions.effort, fastMode: sessions.fastMode })
+          .from(sessions)
+          .where(eq(sessions.id, session.id))
+          .limit(1);
+        if (runtimeOverride) {
+          setSessionEffort(session.id, runtimeOverride.effort);
+          setSessionFastMode(session.id, runtimeOverride.fastMode);
+        } else {
+          // DB 行里的 effort 是历史合法值(固定 effort 模型切换时省略了字段),
+          // hydrate 时必须按**当前模型能力**归一化:固定 effort 模型 → null,
+          // 可调模型 → 兼容档位。直接回灌旧值会把不支持 reasoningEffort 的模型
+          // 请求打给 provider 被拒(issue #3691 / PR #3727 Greptile P1)。
+          const hydrateProviderId = getSessionProvider(session.id) ?? o.providerId ?? null;
+          const hydrateProvider = getActiveCatalog().providers.find(
+            (candidate) => candidate.id === hydrateProviderId,
+          );
+          const hydrateModel = findCatalogModel(
+            hydrateProvider,
+            session.model,
+            o.agentKind,
+          );
+          setSessionEffort(
+            session.id,
+            hydrateModel
+              ? resolveCompatibleSessionRuntimeEffort(hydrateModel, efRow?.effort ?? null)
+              : efRow?.effort,
+          );
+          setSessionFastMode(session.id, !!efRow?.fastMode);
+        }
+        presentationStartupResult = { status: 'ready' };
+      } catch (err) {
+        // 来源没能落库 → 所选来源在下次冷启动后消失(本次路由已在启动边界冻结)。
+        log.warn('hydrate session provider failed (non-fatal)', {
+          sessionId: session.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
-    } catch (err) {
-      log.debug('backfill worktree_path failed (non-fatal)', {
-        sessionId: session.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
 
-    return { session, didInjectOrcaInstructions, didInjectProjectContext };
+      // 预建 worktree 补快照:send_to_session / hook-control / device-link 远程 create 都是
+      // 「先 worktree:create(worktreeStore 绑定)后建会话」—— 绑定写入时 session 行还不
+      // 存在,worktreeStore.set 的 sessions.worktree_path 同步落空(仅 warn)。此处行已建,
+      // 统一补一次反范式快照(幂等;本地"先会话后 worktree"路径此时无绑定,天然跳过)。
+      // 失败非致命 —— 徽标与回收都以 worktreeStore 为准。
+      try {
+        const wtMeta = worktreeStore.get(session.id);
+        if (wtMeta?.path) {
+          const db = getDbClient().drizzle;
+          await db
+            .update(sessions)
+            .set({ worktreePath: wtMeta.path })
+            .where(eq(sessions.id, session.id));
+        }
+      } catch (err) {
+        log.debug('backfill worktree_path failed (non-fatal)', {
+          sessionId: session.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+
+      return { session, didInjectOrcaInstructions, didInjectProjectContext };
+    } finally {
+      // Hydration failure stays non-fatal for the original GUI task. It must not
+      // release a native first input using defaults or another account's stores.
+      completePresentationStartup(
+        presentationOwnerDb && presentationOwnerDb === getCurrentDbClientSnapshot()
+          && !isAppSessionBoundaryPending()
+          && getActiveAppSession().generation === presentationOwnerGeneration
+          && maker.getSession(session.id) === session
+          ? presentationStartupResult
+          : { status: 'unavailable', reason: 'owner-changed' },
+      );
+    }
   }
 
   // switchFocus 和 sendToWorker 都可能唤醒 idle worker；统一走这里才能保留 extraDirs。
@@ -11378,6 +11491,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     /** Internal calls from the send / switch transaction already own the route lock. */
     sessionLockHeld?: boolean;
     applyingUserSelectionOnSend?: boolean;
+    /** Original TUI expects an immediate receipt on this existing native task. */
+    nativeImmediateSelection?: boolean;
     /** Reassess the current Pi route after its catalog descriptor or budget changed. */
     refreshPiConfiguration?: boolean;
     /** The pending service owns removal and queue release after this apply commits. */
@@ -12480,7 +12595,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     };
   }));
 
-  const { sendToAgentAccepted: sendToAgentAcceptedUnlocked } = createMakerSendTransaction({
+  const { sendToAgentAccepted: sendToAgentAcceptedUnlocked, acceptNativeInput } = createMakerSendTransaction({
     readAutoReviewHistory,
     readScheduledPermissions: getSessionFsSnapshot,
     getSession: (sessionId) => maker.getSession(sessionId),
@@ -12613,6 +12728,22 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       enqueueDurableWrite(`pi-entry-link:${sessionId}:${clientId}`, () =>
         patchMessageAgentMeta(sessionId, clientId, { piEntryId }),
       ),
+    captureNativeUserMessageLink: ({ session, clientId, expectedUuid, expectedClearBoundaryMs }) => {
+      const coordinator = agentInputCoordinatorHolder;
+      const generation = coordinator?.getGeneration(session.id);
+      const nativeSessionId = session.sdkSessionId;
+      if (!nativeSessionId || nativeSessionId === '<pending>') return async () => false;
+      const link = captureNativeUserMessageLink({ sessionId: session.id, clientId, expectedUuid, nativeSessionId,
+        expectedClearBoundaryMs, isCurrent: () => maker.getSession(session.id) === session
+          && session.sdkSessionId === nativeSessionId && session.getStatus?.() === 'active'
+          && agentInputCoordinatorHolder === coordinator
+          && (!coordinator || (generation !== undefined && coordinator.isGenerationCurrent(session.id, generation))),
+      });
+      return source => {
+        const receipt = structuredClone(source);
+        return enqueueDurableWrite(`native-entry-link:${session.id}:${clientId}`, () => link(receipt));
+      };
+    },
     beforeDispatchDirectUserTurn: (sessionId) => gitSnapshotCoordinator?.onTurnStart(sessionId),
     assertBeforeVendorDispatch: (sessionId, sendOpts) => {
       const remote = isDeviceLinkInvoke();
@@ -13037,6 +13168,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     sessionId: unknown,
     message: unknown,
     sendOpts?: unknown,
+    native?: { session: Session; input: AgentNativeInputRequest },
   ): Promise<void> => {
     if (typeof sessionId !== 'string') throwIpcError('INVALID_PARAMS', 'sessionId required');
     await assertReviewExternalInputAllowed(sessionId);
@@ -13061,6 +13193,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (!current) {
         log.warn('steer: session not running', { sessionId });
         throwIpcError('NO_ACTIVE_TURN', `Session ${sessionId} is not running`);
+      }
+      if (native && (current !== native.session || native.input.signal.aborted
+        || current.sdkSessionId !== native.input.nativeSessionId || current.getCurrentTurnId() !== native.input.nativeTurnId)) {
+        throw new Error('[STALE_TURN] Native steering owner changed');
       }
       if (
         (so.expectedTurnSession !== undefined && current !== so.expectedTurnSession) ||
@@ -13090,7 +13226,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
 
     let normalized: IpcUserMessage;
     try {
-      normalized = await prepareUserMessageForAgent(sessionId, message, 'steer');
+      // Native images were already imported by the task-owned media resolver.
+      // Re-normalizing their paths drops the managed identity needed to preserve
+      // original native bytes through the same vision/policy preparation below.
+      normalized = native ? native.input.message : await prepareUserMessageForAgent(sessionId, message, 'steer');
     } catch (err) {
       const messageText = err instanceof Error ? err.message : String(err);
       log.warn('steer: normalize message failed', {
@@ -13147,7 +13286,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       // 同轮插话也属于新输入。必须在 vendor await 前通知，旧轮可能先于 steer ack 结束。
       // 共用入口同时覆盖 INPUT_STEER、队列提升和旧 STEER IPC。
       publishUiSessionIntervention(sessionId);
-      await sess.steer(steerPayload as never, {
+      const dispatch = native
+        ? (payload: unknown, options: Parameters<Session['steer']>[1]) => sess.acceptNativeSteer({ ...native.input, message: payload as UserMessage }, options)
+        : sess.steer.bind(sess);
+      await dispatch(steerPayload as never, {
         logTitle: meta?.title,
         messageUuid: so.messageUuid,
         userName: so.userName,
@@ -14381,6 +14523,31 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     getPersistedClientIds: getPersistedInputClientIds,
   });
   agentInputCoordinatorHolder = inputCoordinator;
+  nativeInputBindingDepsHolder = {
+    coordinator: inputCoordinator, accept: acceptNativeInput,
+    steer: (session, input, options) => steerToAgentAccepted(session.id, input.message, options, { session, input }),
+    assertAllowed: async sessionId => {
+      await assertReviewExternalInputAllowed(sessionId);
+      await assertNotRetiredCompanionSession(sessionId);
+    },
+    readCreateOpts: async session => {
+      const meta = await maker.getSessionMeta(session.id);
+      if (!meta) throwIpcError('NOT_FOUND', 'Native input task no longer exists');
+      const configured = await buildCreateOptsForQueuedSession(session.id, meta);
+      // This input is already owned by the running adapter. A deferred route or
+      // engine selection must not replace it while accepting terminal input.
+      return { ...configured, agentKind: session.agentKind, workingDir: session.workDir,
+        model: session.model, effort: session.getEffort() ?? undefined,
+        permissionMode: session.stablePermissionModeState?.mode ?? undefined,
+        remoteHostId: session.remoteHostId ?? undefined };
+    },
+    withIdleSendLock: (sessionId, run) => {
+      if (hasSendToSessionLock(sessionId)) {
+        throwIpcError('PRECONDITION_FAILED', 'A task input or runtime change is already in progress');
+      }
+      return withSendToSessionLock(sessionId, run);
+    },
+  };
   setSharedTaskQueueReader((sessionId, clientId) => {
     const item = inputCoordinator.getProjection(sessionId).pendingQueue.find(
       (pending) => pending.clientId === clientId,
@@ -16049,8 +16216,16 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     },
   );
 
-  ipcMain.handle(MAKER_INVOKE.ABORT_SESSION, async (_e, sessionId: unknown) => {
-    if (typeof sessionId !== 'string') throwIpcError('INVALID_PARAMS', 'sessionId required');
+  async function abortSessionFromProduct(sessionId: string, nativeOwner?: {
+    session: Session; turnId: string; signal: AbortSignal; assertCurrent(): void;
+  }): Promise<void> {
+    const nativeOwnerDb = nativeOwner ? getCurrentDbClientSnapshot() : null;
+    const nativeGeneration = nativeOwner?.session.getTurnGeneration();
+    if (nativeOwner) {
+      nativeOwner.assertCurrent();
+      if (getStableSessionForTurnBoundary(sessionId) !== nativeOwner.session
+        || nativeOwner.session.getCurrentTurnId() !== nativeOwner.turnId) throwIpcError('PRECONDITION_FAILED', 'Native stop turn changed');
+    }
     markWorkerManualInterruptIfKnown(sessionId, 'abort_session');
     resetAutomaticRecoveryForExplicitStop(sessionId);
     // 调用本身先同步撤销 Goal 续跑资格；paused 落库与 vendor abort 并行。
@@ -16071,7 +16246,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     let abortFailed = false;
     let abortError: unknown;
     try {
-      await sess.abort();
+      if (nativeOwner) {
+        nativeOwner.assertCurrent();
+        if (sess !== nativeOwner.session) throwIpcError('PRECONDITION_FAILED', 'Native stop owner changed');
+        await sess.abort({ expectedTurnId: nativeOwner.turnId, signal: nativeOwner.signal });
+      } else await sess.abort();
     } catch (error) {
       abortFailed = true;
       abortError = error;
@@ -16082,7 +16261,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       try {
         reconcileDirectAbortBoundary(sessionId, directAbortBoundary, 'direct-abort');
       } finally {
-        cleanupPendingInteractionsForSession(sessionId, 'session_aborted');
+        if (!nativeOwner || (nativeOwnerDb === getCurrentDbClientSnapshot()
+          && getStableSessionForTurnBoundary(sessionId) === nativeOwner.session
+          && nativeOwner.session.getTurnGeneration() === nativeGeneration)) {
+          cleanupPendingInteractionsForSession(sessionId, 'session_aborted');
+        }
       }
     }
     const settledGoalPause = await goalPauseResult;
@@ -16099,6 +16282,15 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       throw abortError;
     }
     if (!settledGoalPause.ok) throw settledGoalPause.error;
+  }
+  nativeStopBindingDepsHolder = {
+    stop: (session, request, assertCurrent) => abortSessionFromProduct(session.id, {
+      session, turnId: request.nativeTurnId, signal: request.signal, assertCurrent,
+    }),
+  };
+  ipcMain.handle(MAKER_INVOKE.ABORT_SESSION, async (_e, sessionId: unknown) => {
+    if (typeof sessionId !== 'string') throwIpcError('INVALID_PARAMS', 'sessionId required');
+    await abortSessionFromProduct(sessionId);
   });
 
   ipcMain.handle(MAKER_INVOKE.CLOSE_SESSION, async (_e, sessionId: unknown, opts?: unknown) => {
@@ -16533,7 +16725,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       }
       // A picker click records intent only. Keep the persisted route and native binding
       // authoritative until a real send holds this same lock and consumes the final choice.
-      if (internalOptions.source === 'user' && !internalOptions.applyingUserSelectionOnSend &&
+      if (internalOptions.source === 'user' && !internalOptions.applyingUserSelectionOnSend && !internalOptions.nativeImmediateSelection &&
           !runtimeStatus.remoteHostId && !runtimeStatus.orcaRole) {
         assertRuntimeOwnerCurrent();
         clearPendingCredentialSwitchForSession(sessionId, { wake: false });
@@ -16554,6 +16746,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         if (isDeviceLinkInvoke()) markRemoteSettingPersistedInsideHandler(response);
         return response;
       }
+      if (internalOptions.nativeImmediateSelection && effectiveProviderId !== undefined
+        && (normalizeSessionProviderId(effectiveProviderId) ?? null) !== (currentProviderId ?? null)) {
+        throwIpcError('PRECONDITION_FAILED', 'Native model selection cannot replace the task provider');
+      }
       const axisPatch: SessionRuntimeAxisPatch = {
         ...(internalOptions.effortExplicit === true && atomicSelection
           ? { effort: atomicSelection.effort }
@@ -16566,6 +16762,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         ? axisPatch
         : await resolvePendingRuntimeAxisPatch(sessionId, axisPatch);
       const deferLockedSelection = async () => {
+        if (internalOptions.nativeImmediateSelection) {
+          throwIpcError('PRECONDITION_FAILED', 'This native menu change cannot be applied while the task is busy');
+        }
         const meta = await maker.getSessionMeta(sessionId);
         if (!meta) return { deferred: false, superseded: true };
         if (supersededByOwnerBoundary()) {
@@ -16932,6 +17131,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               },
               assertCanCommit: assertRuntimeOwnerCurrent,
               beforeClose: () => {
+                if (internalOptions.nativeImmediateSelection) {
+                  throwIpcError('PRECONDITION_FAILED', 'Native model selection cannot replace this running task');
+                }
                 if (!internalOptions.applyingPiCredentialPending) {
                   clearPendingCredentialSwitchForSession(sessionId, { wake: false });
                   pendingClearedForWindowRebuild = true;
@@ -17120,6 +17322,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         const transferMeta = runtimeAgentKind === 'codex' ? await maker.getSessionMeta(sessionId) : null;
         const transferTarget = {
           sessionId,
+          nativePresentation: !transferStatus.remoteHostId && !transferMeta?.reviewMode && !transferStatus.orcaRole,
           model,
           providerId: targetRouteProviderId,
           remoteHostId: transferStatus.remoteHostId ?? undefined,
@@ -17223,9 +17426,15 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
                       'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra',
                   }
                 : {}),
+              ...(internalOptions.nativeImmediateSelection ? {
+                assertSessionCloseSupported: () => {
+                  throwIpcError('PRECONDITION_FAILED', 'Native model selection requires an explicit task restart');
+                },
+              } : {}),
               forceSessionRebuild:
                 rebuildLiveOrcaWorker ||
-                (atomicSelection?.effort === null && runtimeAgentKind !== 'pi'),
+                (atomicSelection?.effort === null && runtimeAgentKind !== 'pi'
+                  && !(internalOptions.nativeImmediateSelection && maker.getSession(sessionId)?.canClearEffort())),
               isSessionInTurn,
               registerPendingCredentialSwitch: registerPendingCredentialSwitchForSession,
               clearPendingCredentialSwitch: internalOptions.applyingPiCredentialPending
@@ -17386,6 +17595,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
                 runtimeAgentKind !== 'pi' &&
                 (routeExplicit || internalOptions.effortExplicit === true),
               applyFastMode: routeExplicit || internalOptions.fastExplicit === true,
+              ...(internalOptions.nativeImmediateSelection && sess.canClearEffort()
+                ? { clearFixedEffort: () => sess.clearEffort() } : {}),
               assertCanCommit: assertRuntimeOwnerCurrent,
               commitControlStores,
               restoreControlStores,
@@ -17687,6 +17898,43 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   };
   applySessionRuntimeSelection = (sessionId, model, providerId, selection, options) =>
     handleSetModel(sessionId, model, providerId, undefined, selection, options);
+  nativeRuntimeBindingDepsHolder = {
+    assertAllowed: async id => {
+      await assertReviewSettingsUnlocked(id);
+      await assertNotRetiredCompanionSession(id);
+    },
+    withChangeLock: (id, run) => withSessionPermissionChange(id, () => {
+      if (hasSendToSessionLock(id)) {
+        throwIpcError('PRECONDITION_FAILED', 'A task input or runtime change is already in progress');
+      }
+      return withSendToSessionLock(id, run);
+    }),
+    apply: async (session, request, assertCurrent) => {
+      assertCurrent();
+      const patch = request.patch;
+      if (patch.model !== undefined || patch.effort !== undefined || patch.fastMode !== undefined) {
+        const profiles = await readSessionRuntimeProfiles(session.id);
+        assertCurrent();
+        if (!profiles) throwIpcError('NOT_FOUND', 'Native settings task no longer exists');
+        const current = profiles.effective;
+        const result = await applySessionRuntimeSelection(session.id,
+          patch.model ?? current.model, current.providerId,
+          { effort: patch.effort !== undefined ? patch.effort : current.effort, fastMode: patch.fastMode ?? current.fastMode },
+          { source: 'user', sessionLockHeld: true, nativeImmediateSelection: true,
+            assertSelectionCurrent: assertCurrent, effectiveProfile: current,
+            routeExplicit: patch.model !== undefined,
+            effortExplicit: patch.effort !== undefined, fastExplicit: patch.fastMode !== undefined });
+        assertCurrent();
+        if (result.superseded || result.deferred || runtimeSelectionRequiresModelWindowConfirmation(result)) {
+          throwIpcError('PRECONDITION_FAILED', 'Native model selection was not applied; task confirmation is required');
+        }
+      }
+      if (patch.planMode !== undefined && session.getPlanMode() !== patch.planMode) {
+        await handleSetPlanMode(session.id, patch.planMode, { permissionLockHeld: true, assertCurrent });
+        assertCurrent();
+      }
+    },
+  };
   registerSessionSetModelHandler(makerSessionRegistry, {
     isDeviceLinkInvoke,
     assertTrustedSender: (event) => assertTrustedAppRendererEvent(
@@ -17945,23 +18193,16 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     },
   );
 
-  ipcMain.handle(
-    MAKER_INVOKE.SET_PLAN_MODE,
-    async (event, sessionId: unknown, enabled: unknown) => {
-      // 轮 24-I3 HIGH:会话变更型 IPC 统一 sender 校验(对齐 SET_PERMISSION_MODE)。
-      if (!isDeviceLinkInvoke()) {
-        assertTrustedAppRendererEvent(event as Parameters<typeof assertTrustedAppRendererEvent>[0]);
-      }
-      if (typeof sessionId !== 'string' || typeof enabled !== 'boolean') {
-        throwIpcError('INVALID_PARAMS', 'sessionId + enabled required');
-      }
+  const handleSetPlanMode = async (sessionId: string, enabled: boolean,
+    options?: { permissionLockHeld?: boolean; assertCurrent?: () => void }) => {
       const snapshot = getCurrentDbClientSnapshot();
       const remote = isDeviceLinkInvoke();
       const assertOwnerCurrent = () => {
+        options?.assertCurrent?.();
         if (!snapshot || snapshot !== getCurrentDbClientSnapshot())
           throwIpcError('PRECONDITION_FAILED', 'Account changed during Plan update');
       };
-      return withSessionPermissionChange(sessionId, async () => {
+      const apply = async () => {
         assertOwnerCurrent();
         await assertReviewSettingsUnlocked(sessionId);
         assertOwnerCurrent();
@@ -17991,7 +18232,21 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           markRemoteSettingPersistedInsideHandler(result);
           return result;
         }
-      });
+      };
+      return options?.permissionLockHeld ? apply() : withSessionPermissionChange(sessionId, apply);
+  };
+
+  ipcMain.handle(
+    MAKER_INVOKE.SET_PLAN_MODE,
+    async (event, sessionId: unknown, enabled: unknown) => {
+      // 轮 24-I3 HIGH:会话变更型 IPC 统一 sender 校验(对齐 SET_PERMISSION_MODE)。
+      if (!isDeviceLinkInvoke()) {
+        assertTrustedAppRendererEvent(event as Parameters<typeof assertTrustedAppRendererEvent>[0]);
+      }
+      if (typeof sessionId !== 'string' || typeof enabled !== 'boolean') {
+        throwIpcError('INVALID_PARAMS', 'sessionId + enabled required');
+      }
+      return handleSetPlanMode(sessionId, enabled);
     },
   );
 

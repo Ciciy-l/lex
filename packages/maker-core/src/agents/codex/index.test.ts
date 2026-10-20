@@ -1,3 +1,5 @@
+import type { CodexNativeSessionHandle } from './native-input.js';
+import { TurnDispatchUnconfirmedError } from '../base-agent.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import path from 'node:path';
 import os from 'node:os';
@@ -4912,6 +4914,386 @@ describe('CodexAgent.refreshLocalModels', () => {
     await expect(request).rejects.toThrow('connection changed');
     hosts.clear();
     await agent.dispose();
+  });
+
+  it('admits a native turn through existing Codex policy without a second turn/start', async () => {
+    const agent = new CodexAgent(createDeps());
+    try {
+      const handle = await agent.startSession({ sessionId: 'native-admission', model: 'gpt-5.4', workingDir: '/repo', permissionMode: 'ask' }) as CodexNativeSessionHandle;
+      const owner = vi.fn(async (input: import('../native-input.js').AgentNativeInputRequest) => input.accept({ type: 'user', content: 'host prepared' }, {}));
+      handle.setNativeInputResolver!(owner);
+      const dispatch = vi.fn(async (_params: import('./app-server/protocol.js').TurnStartParams) => ({ turn: { id: 'native-turn' } }));
+      const result = await handle.acceptNativeTurn({ signal: new AbortController().signal, dispatch, params: {
+        threadId: handle.id, clientUserMessageId: '676c9703-2253-4dc2-8b4b-9fe8832d9810',
+        input: [{ type: 'text', text: 'native input' }], model: 'other-model', approvalPolicy: 'never',
+      } });
+      expect(result.turn.id).toBe('native-turn');
+      expect(owner).toHaveBeenCalledOnce(); expect(dispatch).toHaveBeenCalledOnce();
+      expect(dispatch.mock.calls[0]![0]).toMatchObject({ threadId: handle.id, model: 'gpt-5.4', approvalPolicy: 'on-request',
+        input: [{ type: 'text', text: 'host prepared' }], clientUserMessageId: '676c9703-2253-4dc2-8b4b-9fe8832d9810' });
+      expect(createdTransports.flatMap(t => t.lines).map(line => JSON.parse(line)).filter(v => v.method === 'turn/start')).toEqual([]);
+      expect(handle.getCurrentTurnId!()).toBe('native-turn');
+      await handle.close();
+    } finally { await agent.dispose(); }
+  });
+
+  it('does not replay a native turn after an unconfirmed gateway receipt', async () => {
+    const agent = new CodexAgent(createDeps());
+    try {
+      const handle = await agent.startSession({ sessionId: 'native-lost-receipt', model: 'gpt-5.4', workingDir: '/repo' }) as CodexNativeSessionHandle;
+      handle.setNativeInputResolver!(async input => input.accept(input.message, {}));
+      const dispatch = vi.fn(async () => { throw new Error('thread not found: connection receipt unavailable'); });
+      await expect(handle.acceptNativeTurn({ signal: new AbortController().signal, dispatch, params: { threadId: handle.id,
+        clientUserMessageId: '676c9703-2253-4dc2-8b4b-9fe8832d9810', input: [{ type: 'text', text: 'native input' }] } }))
+        .rejects.toBeInstanceOf(TurnDispatchUnconfirmedError);
+      expect(dispatch).toHaveBeenCalledOnce();
+      expect(createdTransports.flatMap(t => t.lines).map(line => JSON.parse(line)).filter(v => v.method === 'turn/start' || v.method === 'thread/resume')).toEqual([]);
+      await handle.close();
+    } finally { await agent.dispose(); }
+  });
+
+  const presentationThread = '0199ae4e-d6b0-7755-a755-66754cd7a847';
+  function presentationTransport(thread = { id: presentationThread, historyMode: 'paginated', ephemeral: false }) {
+    MockCodexTransport.userAgent = 'codex_cli_rs/0.162.1 (fixture)';
+    const native = new MockCodexTransport();
+    native.setMockResponse('thread/start', { result: { thread, model: 'gpt-5.4', modelProvider: 'openai', cwd: '/repo' } });
+    return native;
+  }
+  const presentationOwner = () => ({ signal: new AbortController().signal, isCurrent: () => true });
+  function freshPresentationFixture(nativeParams: Record<string, unknown> = {}, deps: Partial<AgentDeps> = {}) {
+    const native = presentationTransport();
+    const service = Object.assign(native, { endpoint: Promise.resolve({ url: 'ws://127.0.0.1:31415', token: 'fixture-only' }) });
+    const delivered: unknown[] = [], close = vi.fn(async () => {});
+    let pending: Promise<unknown> | undefined;
+    const fresh: NonNullable<AgentDeps['prepareLocalCodexNativePresentation']> = vi.fn(async (launch: Parameters<NonNullable<AgentDeps['prepareLocalCodexNativePresentation']>>[0]) => {
+      launch.creation.subscribe(async event => { delivered.push(event); });
+      const request = { id: 'native-fresh', method: 'thread/start', params: {} };
+      pending = launch.creation.start({ request, signal: launch.signal, owningHost: launch.host,
+        forward: async () => { throw new Error('root must use owning host'); },
+        dispatchToHost: (params, beforeDispatch) => launch.host.request('thread/start', params, { beforeDispatch }),
+      }, () => launch.prepareStart({ model: 'ignored-ui-default', cwd: '/wrong-ui-default', ...nativeParams })).then(value => {
+        delivered.push(value); launch.creation.responseDelivered(request, value); return value;
+      });
+      void pending.catch(() => {});
+      return { close, bind: vi.fn(bound => {
+        expect(bound.handle.id).toBe(presentationThread);
+        return { presentation: {} as never, ready: launch.creation.ready, close };
+      }) };
+    });
+    const resume = vi.fn(async () => ({ presentation: {} as never, ready: Promise.resolve(), close }));
+    const agent = new CodexAgent(createDeps({}, { createLocalCodexNativeService: () => service,
+      createLocalCodexNativePresentation: resume, prepareLocalCodexNativePresentation: fresh, disableCodexPluginRuntime: true, ...deps }));
+    return { agent, native, fresh, resume, close, delivered, pending: () => pending,
+      start: () => agent.startSession({ sessionId: 'native-presentation', model: 'gpt-5.4', workingDir: '/repo' }) };
+  }
+
+  it('returns the fresh handle at the owning-host ACK before Main releases the original TUI ACK', async () => {
+    const f = freshPresentationFixture();
+    try {
+      const handle = await f.start();
+      expect(handle.id).toBe(presentationThread); expect(handle.presentation).toBeUndefined();
+      expect(f.fresh).toHaveBeenCalledOnce(); expect(f.resume).not.toHaveBeenCalled(); expect(f.delivered).toEqual([]);
+      const starts = f.native.lines.map(line => JSON.parse(line)).filter(v => v.method === 'thread/start');
+      expect(starts).toHaveLength(1); expect(starts[0].params).toMatchObject({ model: 'gpt-5.4', cwd: '/repo' });
+      expect(f.native.lines.map(line => JSON.parse(line)).filter(v => v.method === 'thread/read' || v.method === 'thread/resume' || v.method === 'turn/start')).toEqual([]);
+      const activation = handle.activatePresentation!(presentationOwner());
+      expect(handle.activatePresentation!(presentationOwner())).toBe(activation);
+      expect(await activation).toEqual({ status: 'ready' });
+      expect(handle.presentation).toBeDefined(); expect(f.delivered).toHaveLength(1);
+      await handle.close(); expect(f.close).toHaveBeenCalled();
+    } finally { await f.agent.dispose(); }
+  });
+
+  it('executes declared native dynamic tools through Core approval and the original frontend, preserving cancellation', async () => {
+    const f = freshPresentationFixture({ dynamicTools: [{ type: 'namespace', name: 'codex_tui', description: 'original task tools',
+      tools: [{ type: 'function', name: 'read_thread', description: 'read', inputSchema: { type: 'object' } }] }] },
+    { getMcpToolApprovalPolicy: () => 'prompt-each-time' });
+    try {
+      const handle = await f.start() as CodexNativeSessionHandle;
+      await handle.activatePresentation!(presentationOwner());
+      const received: Array<{ kind: string; request?: { id: string | number; params: unknown }; id?: string | number }> = [];
+      const frontend = handle.attachNativeToolFrontend!(async event => { received.push(event); return true; }); frontend.ready();
+      let allow = false;
+      handle.setInteractionResolver(async request => {
+        expect(request).toMatchObject({ kind: 'permission', toolName: 'dynamic:codex_tui:read_thread' });
+        return { kind: 'permission', behavior: allow ? 'allow' : 'deny' };
+      });
+      f.native.setMockResponse('turn/start', { result: { turn: { id: 'native-tool-turn', status: 'inProgress', items: [] } } });
+      await handle.send({ type: 'user', content: 'inspect task' });
+      const params = { threadId: handle.id, turnId: 'native-tool-turn', callId: 'actual-native-call', namespace: 'codex_tui',
+        tool: 'read_thread', arguments: { threadId: handle.id } };
+      const responseFor = (id: string) => f.native.lines.map(line => JSON.parse(line)).find(value => value.id === id && 'result' in value)?.result;
+      f.native.emitMockLine({ id: 'native-denied', method: 'item/tool/call', params });
+      await vi.waitFor(() => expect(responseFor('native-denied')).toMatchObject({ success: false }));
+      expect(received).toEqual([]);
+      allow = true;
+      f.native.emitMockLine({ id: 'native-execution', method: 'item/tool/call', params });
+      await vi.waitFor(() => expect(received).toEqual([{ kind: 'request', request: { id: 'native-execution', method: 'item/tool/call', params } }]));
+      const result = { success: true, contentItems: [{ type: 'inputText' as const, text: 'original native tool output' }] };
+      expect(frontend.answer('native-execution', result)).toBe(true);
+      await vi.waitFor(() => expect(responseFor('native-execution')).toEqual(result));
+      f.native.emitMockLine({ id: 'native-cancel', method: 'item/tool/call', params: { ...params, callId: 'second-native-call' } });
+      await vi.waitFor(() => expect(received).toHaveLength(2));
+      f.native.emitMockLine({ method: 'serverRequest/resolved', params: { threadId: handle.id, requestId: 'native-cancel' } });
+      await vi.waitFor(() => expect(received.at(-1)).toMatchObject({ kind: 'resolved', id: 'native-cancel' }));
+      expect(frontend.answer('native-cancel', result)).toBe(false);
+      expect(responseFor('native-cancel')?.success).toBe(false);
+      let releaseApproval!: () => void, observedApproval!: () => void;
+      const heldApproval = new Promise<void>(resolve => { releaseApproval = resolve; });
+      const approvalObserved = new Promise<void>(resolve => { observedApproval = resolve; });
+      handle.setInteractionResolver(async () => { observedApproval(); await heldApproval; return { kind: 'permission', behavior: 'allow' }; });
+      const beforeHeldApproval = received.length;
+      f.native.emitMockLine({ id: 'native-pending-approval', method: 'item/tool/call', params: { ...params, callId: 'held-native-call' } });
+      await approvalObserved;
+      f.native.emitMockLine({ method: 'serverRequest/resolved', params: { threadId: handle.id, requestId: 'native-pending-approval' } });
+      await vi.waitFor(() => expect(responseFor('native-pending-approval')?.success).toBe(false));
+      releaseApproval();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(received).toHaveLength(beforeHeldApproval);
+      frontend.detach(); await handle.close();
+    } finally { await f.agent.dispose(); }
+  });
+
+  it('routes native Stop through its product owner and reports strict interrupt failures', async () => {
+    const agent = new CodexAgent(createDeps());
+    const host = installFakeHost(agent, method => {
+      if (method === Method.TurnStart) return { turn: { id: 'owned-stop-turn', status: 'inProgress', items: [] } };
+      if (method === Method.TurnInterrupt) return {};
+    });
+    try {
+      const handle = await agent.startSession({ sessionId: 'native-stop', model: 'gpt-5.4', workingDir: '/repo' }) as CodexNativeSessionHandle;
+      await handle.send({ type: 'user', content: 'start turn' });
+      const signal = new AbortController().signal;
+      const params = { threadId: handle.id, turnId: 'owned-stop-turn' };
+      await expect(handle.interruptNativeTurn(params, signal)).rejects.toThrow('no available');
+      const owner = vi.fn(async (request: { nativeTurnId: string; signal: AbortSignal }) => handle.abort({ expectedTurnId: request.nativeTurnId, signal: request.signal }));
+      handle.setNativeStopResolver!(owner);
+      await expect(handle.interruptNativeTurn({ ...params, turnId: 'previous' }, signal)).rejects.toThrow('turn changed');
+      await expect(handle.interruptNativeTurn({ ...params, threadId: 'foreign' }, signal)).rejects.toThrow('Invalid native stop');
+      expect(owner).not.toHaveBeenCalled();
+      host.request.mockRejectedValueOnce(new Error('interrupt refused'));
+      await expect(handle.interruptNativeTurn(params, signal)).rejects.toThrow('interrupt refused');
+      await handle.interruptNativeTurn(params, signal); expect(owner).toHaveBeenCalledTimes(2);
+      expect(host.request).toHaveBeenCalledWith(Method.TurnInterrupt, params, expect.objectContaining({ beforeDispatch: expect.any(Function) }));
+      await handle.close();
+    } finally { await agent.dispose(); }
+  });
+
+  it('clears native reasoning in place and keeps later turns on the same thread', async () => {
+    const agent = new CodexAgent(createDeps()); const host = installFakeHost(agent, method => {
+      if (method === Method.ThreadSettingsUpdate) return {};
+      if (method === Method.TurnStart) return { turn: { id: 'fixed-turn', status: 'inProgress', items: [] } };
+    });
+    try {
+      const handle = await agent.startSession({ sessionId: 'fixed-reasoning', model: 'gpt-5.4', workingDir: '/repo', effort: 'high' }) as CodexNativeSessionHandle;
+      const thread = handle.id;
+      host.request.mockRejectedValueOnce(new Error('fixed reasoning refused'));
+      await expect(handle.clearEffort!()).rejects.toThrow('fixed reasoning refused');
+      expect(handle.getEffort!()).toBe('high');
+      await handle.clearEffort!(); expect(handle.getEffort!()).toBeNull();
+      expect(handle.readNativeRuntimeSnapshot().effort).toBe('none');
+      await handle.send({ type: 'user', content: 'fixed reasoning' });
+      expect(host.request).toHaveBeenCalledWith(Method.TurnStart, expect.objectContaining({ threadId: thread, effort: 'none' }), expect.anything());
+      await handle.setEffort!('low'); expect(handle.getEffort!()).toBe('low'); expect(handle.id).toBe(thread);
+      await handle.close();
+    } finally { await agent.dispose(); }
+  });
+
+  it('snapshots exact catalog and native model identities without borrowing a connection', async () => {
+    const agent = new CodexAgent(createDeps());
+    const host = installFakeHost(agent);
+    try {
+      const handle = await agent.startSession({ sessionId: 'native-catalog-identity', model: 'gpt-5.4',
+        providerId: 'fixture-provider', workingDir: '/repo', effort: 'high' }) as CodexNativeSessionHandle;
+      const first = handle.readNativeRuntimeSnapshot();
+      expect(first).toMatchObject({ catalogModel: 'gpt-5.4', nativeModel: 'gpt-5.4', providerId: 'fixture-provider', effort: 'high', fastMode: false });
+      expect(Object.isFrozen(first)).toBe(true);
+      host.getThreadHandlers()?.threadSettingsUpdated?.({ threadId: handle.id,
+        threadSettings: { model: 'gpt-5.4-codex', effort: 'low' } });
+      expect(handle.readNativeRuntimeSnapshot()).toMatchObject({ catalogModel: 'gpt-5.4', nativeModel: 'gpt-5.4-codex', providerId: 'fixture-provider', effort: 'low' });
+      expect(first.nativeModel).toBe('gpt-5.4'); expect(first.effort).toBe('high');
+      await handle.setModel!('gpt-5.5');
+      expect(handle.readNativeRuntimeSnapshot()).toMatchObject({ catalogModel: 'gpt-5.5', nativeModel: 'gpt-5.5', providerId: 'fixture-provider' });
+      await handle.close(); expect(() => handle.readNativeRuntimeSnapshot()).toThrow();
+    } finally { await agent.dispose(); }
+  });
+
+  it('never creates a native frontend over a legacy task transport', async () => {
+    const frontend = vi.fn(async () => ({ presentation: {} as never, ready: Promise.resolve(), close: async () => {} }));
+    const agent = new CodexAgent(createDeps({}, { createLocalCodexNativePresentation: frontend }));
+    try {
+      const handle = await agent.startSession({ sessionId: 'native-no-service', model: 'gpt-5.4', workingDir: '/repo' });
+      expect(await handle.activatePresentation!(presentationOwner())).toEqual({ status: 'unavailable', reason: 'unsupported-service' });
+      expect(frontend).not.toHaveBeenCalled();
+      expect(createdTransports.flatMap(t => t.lines).map(line => JSON.parse(line))
+        .filter(v => v.method === 'thread/unsubscribe')).toHaveLength(0);
+      await handle.close();
+      expect(createdTransports.flatMap(t => t.lines).map(line => JSON.parse(line))
+        .filter(v => v.method === 'thread/unsubscribe')).toHaveLength(1);
+    } finally { await agent.dispose(); }
+  });
+
+  it('allows GUI first input while the fresh native ACK waits for Main bindings without another start', async () => {
+    const f = freshPresentationFixture();
+    f.native.setMockResponse('turn/start', { result: { turn: { id: 'gui-first-turn', status: 'inProgress', items: [] } } });
+    try {
+      const handle = await f.start();
+      await handle.send({ type: 'user', content: 'GUI first turn' });
+      expect(handle.getCurrentTurnId!()).toBe('gui-first-turn'); expect(f.delivered).toEqual([]);
+      expect(await handle.activatePresentation!(presentationOwner())).toEqual({ status: 'ready' });
+      const wire = f.native.lines.map(line => JSON.parse(line));
+      expect(wire.filter(v => v.method === 'thread/start')).toHaveLength(1);
+      expect(wire.find(v => v.method === 'turn/start').params.threadId).toBe(handle.id);
+      expect(wire.filter(v => v.method === 'thread/read' || v.method === 'thread/resume')).toEqual([]);
+      await handle.close();
+    } finally { await f.agent.dispose(); }
+  });
+
+  it('cancels a fresh presentation at Main activation without retiring or replacing its GUI task', async () => {
+    const f = freshPresentationFixture(), owner = new AbortController();
+    try {
+      const handle = await f.start(); owner.abort();
+      expect(await handle.activatePresentation!({ signal: owner.signal, isCurrent: () => false }))
+        .toEqual({ status: 'unavailable', reason: 'owner-changed' });
+      await expect(f.pending()).rejects.toThrow();
+      expect(handle.id).toBe(presentationThread); expect(f.native.closed).toBe(false); expect(f.delivered).toEqual([]);
+      expect(f.native.lines.map(line => JSON.parse(line)).filter(v => v.method === 'thread/start')).toHaveLength(1);
+      await handle.close();
+    } finally { await f.agent.dispose(); }
+  });
+
+  it('keeps a genuine legacy host resume without reading full history or applying the new-thread version gate', async () => {
+    const historicalId = '0199ae4e-d6b0-7755-a755-66754cd7a847';
+    const native = presentationTransport({ id: historicalId, historyMode: 'legacy', ephemeral: false });
+    MockCodexTransport.userAgent = 'codex_cli_rs/0.145.0';
+    native.setMockResponse('thread/resume', { result: { thread: { id: historicalId, historyMode: 'legacy', ephemeral: false },
+      model: 'gpt-5.4', modelProvider: 'openai', cwd: '/repo' } });
+    const frontend = vi.fn(async () => ({ presentation: {} as never, ready: Promise.resolve(), close: async () => {} }));
+    const agent = new CodexAgent(createDeps({}, {
+      createLocalCodexNativeService: () => Object.assign(native, { endpoint: Promise.resolve({ url: 'ws://127.0.0.1:31415', token: 'fixture-only' }) }),
+      createLocalCodexNativePresentation: frontend,
+    }));
+    try {
+      const handle = await agent.startSession({ sessionId: 'native-history', model: 'gpt-5.4', workingDir: '/repo', resumeSessionId: historicalId });
+      expect(await handle.activatePresentation!(presentationOwner())).toEqual({ status: 'ready' });
+      expect(frontend).toHaveBeenCalledOnce(); expect(handle.id).toBe(historicalId);
+      expect(native.lines.map(line => JSON.parse(line)).filter(v => v.method === 'thread/read' || v.method === 'thread/start')).toEqual([]);
+      await handle.close();
+    } finally { await agent.dispose(); }
+  });
+
+  it.each(['prepared-path', 'resume-ack-path'])('restores historical native dynamic execution from %s without redeclaring tools', async pathSource => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cindy-native-tool-resume-')); tempRoots.push(dir);
+    const source = path.join(dir, 'rollout.jsonl');
+    const savedTools = [{ type: 'namespace', name: 'codex_tui', description: 'original tools', tools: [
+      { type: 'function', name: 'read_thread', description: 'read', inputSchema: { type: 'object', required: ['threadId'] } },
+    ] }];
+    const history = JSON.stringify({ type: 'session_meta', payload: { id: presentationThread, dynamic_tools: savedTools } }) + '\n';
+    await fs.writeFile(source, history);
+    const native = presentationTransport();
+    native.setMockResponse('thread/resume', { result: { thread: { id: presentationThread, path: source },
+      model: 'gpt-5.4', modelProvider: 'openai', cwd: '/repo' } });
+    native.setMockResponse('turn/start', { result: { turn: { id: 'resumed-native-turn', status: 'inProgress', items: [] } } });
+    const factory = vi.fn(async () => ({ presentation: {} as never, ready: Promise.resolve(), close: async () => {} }));
+    const agent = new CodexAgent(createDeps({}, {
+      createLocalCodexNativeService: () => Object.assign(native, { endpoint: Promise.resolve({ url: 'ws://127.0.0.1:31415', token: 'fixture-only' }) }),
+      createLocalCodexNativePresentation: factory, getMcpToolApprovalPolicy: () => 'prompt-each-time',
+      ...(pathSource === 'prepared-path' ? { prepareCodexResumeSession: async () => source } : {}),
+    }));
+    try {
+      const handle = await agent.startSession({ sessionId: 'native-tool-history', model: 'gpt-5.4', workingDir: '/repo',
+        resumeSessionId: presentationThread }) as CodexNativeSessionHandle;
+      expect(await handle.activatePresentation!(presentationOwner())).toEqual({ status: 'ready' });
+      const received: unknown[] = [];
+      const frontend = handle.attachNativeToolFrontend!(async event => { received.push(event); return true; }); frontend.ready();
+      const approve = vi.fn(async (request: InteractionRequest) => {
+        expect(request).toMatchObject({ kind: 'permission', toolName: 'dynamic:codex_tui:read_thread' });
+        return { kind: 'permission', behavior: 'allow' } as const;
+      });
+      handle.setInteractionResolver(approve);
+      await handle.send({ type: 'user', content: 'read this resumed task' });
+      const params = { threadId: handle.id, turnId: 'resumed-native-turn', callId: 'saved-tool-call', namespace: 'codex_tui',
+        tool: 'read_thread', arguments: { threadId: handle.id } };
+      native.emitMockLine({ id: 'resumed-tool-request', method: 'item/tool/call', params });
+      await vi.waitFor(() => expect(received).toEqual([{ kind: 'request', request: { id: 'resumed-tool-request', method: 'item/tool/call', params } }]));
+      expect(approve).toHaveBeenCalledOnce();
+      const result = { success: true, contentItems: [{ type: 'inputText', text: 'original resumed executor result' }] };
+      expect(frontend.answer('resumed-tool-request', result)).toBe(true);
+      await vi.waitFor(() => expect(native.lines.map(line => JSON.parse(line))
+        .filter(value => value.id === 'resumed-tool-request' && 'result' in value)).toEqual([{ id: 'resumed-tool-request', result }]));
+      const wire = native.lines.map(line => JSON.parse(line));
+      const resumes = wire.filter(value => value.method === 'thread/resume');
+      expect(resumes).toHaveLength(1); expect(resumes[0].params).not.toHaveProperty('dynamicTools');
+      expect(wire.filter(value => value.method === 'thread/start' || value.method === 'thread/read')).toEqual([]);
+      expect(factory).toHaveBeenCalledOnce(); expect(await fs.readFile(source, 'utf8')).toBe(history);
+      frontend.detach(); await handle.close();
+    } finally { await agent.dispose(); }
+  });
+
+  it.each(['foreign-thread', 'invalid-declarations'])('keeps the GUI task when historical native metadata has %s', async failure => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cindy-native-tool-resume-invalid-')); tempRoots.push(dir);
+    const source = path.join(dir, 'rollout.jsonl');
+    await fs.writeFile(source, JSON.stringify({ type: 'session_meta', payload: {
+      id: failure === 'foreign-thread' ? 'foreign-thread' : presentationThread, dynamic_tools: {},
+    } }) + '\n');
+    const native = presentationTransport();
+    native.setMockResponse('thread/resume', { result: { thread: { id: presentationThread, path: source },
+      model: 'gpt-5.4', modelProvider: 'openai', cwd: '/repo' } });
+    native.setMockResponse('turn/start', { result: { turn: { id: 'gui-after-native-metadata-failure', status: 'inProgress', items: [] } } });
+    const factory = vi.fn(async () => ({ presentation: {} as never, ready: Promise.resolve(), close: async () => {} }));
+    const agent = new CodexAgent(createDeps({}, {
+      createLocalCodexNativeService: () => Object.assign(native, { endpoint: Promise.resolve({ url: 'ws://127.0.0.1:31415', token: 'fixture-only' }) }),
+      createLocalCodexNativePresentation: factory, prepareCodexResumeSession: async () => source,
+    }));
+    try {
+      const handle = await agent.startSession({ sessionId: 'native-invalid-history', model: 'gpt-5.4', workingDir: '/repo', resumeSessionId: presentationThread });
+      expect(await handle.activatePresentation!(presentationOwner())).toEqual({ status: 'unavailable', reason: 'startup-failed' });
+      expect(factory).not.toHaveBeenCalled(); expect(handle.id).toBe(presentationThread); expect(native.closed).toBe(false);
+      await handle.send({ type: 'user', content: 'GUI stays on the same task' });
+      expect(handle.getCurrentTurnId!()).toBe('gui-after-native-metadata-failure');
+      const wire = native.lines.map(line => JSON.parse(line));
+      expect(wire.filter(value => value.method === 'thread/start' || value.method === 'thread/unsubscribe')).toEqual([]);
+      await handle.close();
+    } finally { await agent.dispose(); }
+  });
+
+  it('service retirement invalidates the published native frontend without starting a replacement', async () => {
+    const native = presentationTransport(), closed = vi.fn(async () => {});
+    const frontend: NonNullable<AgentDeps['createLocalCodexNativePresentation']> = vi.fn(async () => ({ presentation: {} as never, ready: Promise.resolve(), close: closed }));
+    const service = vi.fn(() => Object.assign(native, { endpoint: Promise.resolve({ url: 'ws://127.0.0.1:31415', token: 'fixture-only' }) }));
+    const agent = new CodexAgent(createDeps({}, { createLocalCodexNativeService: service, createLocalCodexNativePresentation: frontend }));
+    native.setMockResponse('thread/resume', { result: { thread: { id: presentationThread }, model: 'gpt-5.4', modelProvider: 'openai', cwd: '/repo' } });
+    const handle = await agent.startSession({ sessionId: 'native-retire', model: 'gpt-5.4', workingDir: '/repo', resumeSessionId: presentationThread });
+    expect(await handle.activatePresentation!(presentationOwner())).toEqual({ status: 'ready' });
+    await agent.dispose();
+    await vi.waitFor(() => expect(closed).toHaveBeenCalledOnce());
+    expect(vi.mocked(frontend).mock.calls[0]![0].signal.aborted).toBe(true);
+    expect(handle.presentation).toBeUndefined(); expect(service).toHaveBeenCalledOnce();
+  });
+  it('injects the native task service without replacing control-plane probes or its resolved launch policy', async () => {
+    const native = new MockCodexTransport();
+    const factory: NonNullable<AgentDeps['createLocalCodexNativeService']> = vi.fn(options => {
+      options.onProcessSpawned?.(8100);
+      return Object.assign(native, { endpoint: Promise.resolve({ url: 'ws://127.0.0.1:31415', token: 'fixture-only' }) });
+    });
+    const register = vi.fn();
+    const agent = new CodexAgent(createDeps({}, { createLocalCodexNativeService: factory, registerLocalCodexAppServerProcess: register,
+      onCodexLocalModelsListed: vi.fn(), disableCodexPluginRuntime: true }));
+    try {
+      const first = await agent.startSession({ sessionId: 'native-first', model: 'gpt-5.4', workingDir: '/repo' });
+      const second = await agent.startSession({ sessionId: 'native-second', model: 'gpt-5.4', workingDir: '/repo' });
+      expect(factory).toHaveBeenCalledOnce(); expect(createdStdioOptions).toHaveLength(0);
+      const launch = vi.mocked(factory).mock.calls[0]![0];
+      expect(launch.binaryPath).toBe(process.execPath);
+      expect(launch.extraArgs).toEqual(expect.arrayContaining(['--disable', 'plugins', 'remote_plugin']));
+      expect(register).toHaveBeenCalledWith({ pid: 8100, role: 'task-host' });
+      await first.close(); expect(native.closed).toBe(false);
+      await agent.refreshLocalModels({ credentialMode: 'oauth-bearer' });
+      expect(factory).toHaveBeenCalledOnce(); expect(createdStdioOptions).toHaveLength(1);
+      expect(register).toHaveBeenCalledWith({ pid: 7001, role: 'control-plane-service' });
+      expect(native.closed).toBe(false); await second.close(); expect(native.closed).toBe(false);
+    } finally { await agent.dispose(); }
+    expect(native.closed).toBe(true);
   });
 
   it('uses an isolated OpenAI control-plane host without closing provider-oauth sessions', async () => {
@@ -34347,7 +34729,7 @@ describe('CodexAgent custom provider context window override', () => {
     expect(host.getHost).toHaveBeenCalledWith(
       undefined,
       'provider-oauth',
-      { ignoreBindingLeases: 1, routeIsCurrent: expect.any(Function), routeSignal: expect.any(AbortSignal) },
+      { ignoreBindingLeases: 1, routeIsCurrent: expect.any(Function), routeSignal: expect.any(AbortSignal), notificationProfile: 'legacy' },
     );
     await handle.close();
   });
@@ -34994,3 +35376,480 @@ describe('Codex native model context overrides', () => {
 });
 
 function intentText(value: unknown): string { return typeof value === "string" ? value : JSON.stringify(value); }
+
+describe('native frontend approval ownership', () => {
+  async function fixture(deps: Partial<AgentDeps> = {}, permissionMode: 'ask' | 'auto' = 'ask') {
+    const agent = new CodexAgent(createDeps({}, deps));
+    const host = installFakeHost(agent, method => method === Method.TurnStart ? { turn: { id: 'native-approval-turn' } } : undefined);
+    const handle = await agent.startSession({ sessionId: 'native-approval', model: 'gpt-5.4', workingDir: '/repo', permissionMode }) as CodexNativeSessionHandle;
+    const events: AgentEvent[] = [];
+    const drained = (async () => { for await (const event of handle.events()) events.push(event); })();
+    let answer!: (decision: InteractionDecision) => void;
+    const resolver = vi.fn(() => new Promise<InteractionDecision>(resolve => { answer = resolve; }));
+    handle.setInteractionResolver(resolver);
+    const prompts: import('./native-approvals.js').CodexNativeApprovalEvent[] = [];
+    const native = handle.attachNativeApprovalFrontend(event => prompts.push(event));
+    await handle.send({ type: 'user', content: 'run fixture command' });
+    const handlers = host.getThreadHandlers()!;
+    const params = { threadId: 'start-thread-id', turnId: 'native-approval-turn', itemId: 'native-item', approvalId: 'native-approval-item',
+      command: 'fixture-command', cwd: '/repo', availableDecisions: ['accept', 'cancel', 'acceptForSession'] };
+    return { agent, host, handle, events, resolver, prompts, native, handlers, params,
+      answer: (value: InteractionDecision) => answer(value),
+      start: () => handlers.commandExecutionApproval!(params, { requestId: 72 }),
+      close: async () => { await handle.close(); await drained; await agent.dispose(); } };
+  }
+  it('native frontend cannot override a host shell denial', async () => {
+    const f = await fixture({ getShellCommandPolicy: () => ({ decision: 'deny', reason: 'fixture host refusal' }) });
+    try { expect(await f.start()).toEqual({ decision: 'decline' });
+      expect(f.prompts).toEqual([]); expect(f.resolver).not.toHaveBeenCalled();
+      expect(f.native.answer(72, { decision: 'accept' })).toBe(false);
+    } finally { await f.close(); }
+  });
+  it('native frontend answer closes the GUI prompt and late GUI denial cannot change it', async () => {
+    const f = await fixture();
+    try { const result = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      expect(f.native.answer(72, { decision: 'accept' })).toBe(true);
+      expect(await result).toEqual({ decision: 'accept' });
+      f.answer({ kind: 'permission', behavior: 'deny' }); await Promise.resolve();
+      expect(f.native.answer(72, { decision: 'cancel' })).toBe(false);
+      await vi.waitFor(() => expect(f.events).toContainEqual(expect.objectContaining({ type: 'interaction_dismissed',
+        data: expect.objectContaining({ requestId: 'native-approval-item', reason: 'native_answered',
+          resolvedAs: 'allow', nativePermissionScope: 'once' }) })));
+      expect(f.prompts.map(e => e.kind)).toEqual(['request', 'resolved']);
+    } finally { await f.close(); }
+  });
+  it('native frontend receives GUI refusal as retirement and cannot answer afterward', async () => {
+    const f = await fixture();
+    try { const result = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      f.answer({ kind: 'permission', behavior: 'deny' }); expect(await result).toEqual({ decision: 'decline' });
+      expect(f.native.answer(72, { decision: 'accept' })).toBe(false);
+      expect(f.prompts.map(e => e.kind)).toEqual(['request', 'resolved']);
+    } finally { await f.close(); }
+  });
+  it('native frontend cannot revive a server-resolved numeric request with a different product approval ID', async () => {
+    const f = await fixture();
+    try { const result = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      f.handlers.serverRequestResolved!({ threadId: f.params.threadId, requestId: 72 });
+      expect(await result).toEqual({ decision: 'decline' }); expect(f.native.answer(72, { decision: 'accept' })).toBe(false);
+      f.answer({ kind: 'permission', behavior: 'allow' }); await Promise.resolve();
+      expect(f.prompts.map(e => e.kind)).toEqual(['request', 'resolved']);
+    } finally { await f.close(); }
+  });
+  it('native frontend cannot act before Auto review or after a cancellation during review', async () => {
+    let review!: (value: { verdict: 'ask'; reason: string }) => void;
+    const reviewer = vi.fn<AutoReviewDelegate>(() => new Promise(resolve => { review = resolve; }));
+    const f = await fixture({ reviewAutoPermissionAction: reviewer }, 'auto');
+    try { const result = f.start(); await vi.waitFor(() => expect(reviewer).toHaveBeenCalledOnce());
+      expect(f.prompts).toEqual([]); expect(f.native.answer(72, { decision: 'accept' })).toBe(false);
+      f.handlers.serverRequestResolved!({ threadId: f.params.threadId, requestId: 72 });
+      review({ verdict: 'ask', reason: 'fixture needs user confirmation' });
+      expect(await result).toEqual({ decision: 'decline' }); expect(f.prompts).toEqual([]); expect(f.resolver).not.toHaveBeenCalled();
+    } finally { await f.close(); }
+  });
+  it('native frontend file approval retains the same single-answer lifecycle', async () => {
+    const f = await fixture();
+    try { const result = f.handlers.fileChangeApproval!({ threadId: f.params.threadId, turnId: f.params.turnId,
+        itemId: 'file-item', changes: [{ path: '/repo/fixture.txt', kind: { type: 'add' } }] }, { requestId: 73 });
+      await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      expect(f.native.answer(73, { decision: 'acceptForSession' })).toBe(true);
+      expect(await result).toEqual({ decision: 'acceptForSession' });
+      f.answer({ kind: 'permission', behavior: 'deny' });
+      expect(f.prompts.map(e => e.kind)).toEqual(['request', 'resolved']);
+      await vi.waitFor(() => expect(f.events).toContainEqual(expect.objectContaining({ type: 'interaction_dismissed',
+        data: expect.objectContaining({ requestId: 'file-item', resolvedAs: 'allow', nativePermissionScope: 'session' }) })));
+    } finally { await f.close(); }
+  });
+  it.each(['native', 'gui', 'cancelled'] as const)('native frontend file approval forced confirmation: %s wins once', async winner => {
+    const f = await fixture({ reviewAutoPermissionAction: async () => ({ verdict: 'ask', reason: 'Confirm these changes' }) }, 'auto');
+    try {
+      // Actual Codex announces changes in item/started, not necessarily in approval params.
+      f.handlers.itemStarted!({ threadId: f.params.threadId, turnId: f.params.turnId,
+        item: { id: 'forced-file-item', type: 'fileChange', status: 'inProgress',
+          changes: [{ path: '/repo/fixture.txt', kind: { type: 'add' }, diff: '+fixture' }] } });
+      const result = f.handlers.fileChangeApproval!({ threadId: f.params.threadId, turnId: f.params.turnId,
+        itemId: 'forced-file-item' }, { requestId: 75 });
+      await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      expect(f.prompts.find(event => event.kind === 'request')).toMatchObject({ request: { method: 'item/tool/requestUserInput' } });
+      expect(JSON.stringify(f.prompts)).toContain('+fixture');
+      expect(f.native.answer(75, { decision: 'acceptForSession' })).toBe(false);
+      const answer = { answers: { 'lex-file-change': { answers: ['Apply these changes once'] } } };
+      if (winner === 'native') {
+        expect(f.native.answer(75, answer)).toBe(true);
+        expect(await result).toEqual({ decision: 'accept' });
+        f.answer({ kind: 'permission', behavior: 'deny' });
+        await vi.waitFor(() => expect(f.events).toContainEqual(expect.objectContaining({ type: 'interaction_dismissed',
+          data: expect.objectContaining({ requestId: 'forced-file-item', resolvedAs: 'allow', nativePermissionScope: 'once' }) })));
+      } else {
+        if (winner === 'gui') f.answer({ kind: 'permission', behavior: 'deny' });
+        else f.handlers.serverRequestResolved!({ threadId: f.params.threadId, requestId: 75 });
+        expect(await result).toEqual({ decision: 'decline' });
+      }
+      expect(f.native.answer(75, answer)).toBe(false);
+      expect(f.prompts.map(event => event.kind)).toEqual(['request', 'resolved']);
+    } finally { await f.close(); }
+  });
+  it('native denial of a network rule reaches the server unchanged and records denial', async () => {
+    const f = await fixture();
+    const decision = { applyNetworkPolicyAmendment: { network_policy_amendment: { host: 'example.test', action: 'deny' as const } } };
+    try {
+      const result = f.handlers.commandExecutionApproval!({ ...f.params, availableDecisions: [decision, 'cancel'] }, { requestId: 74 });
+      await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      expect(f.native.answer(74, { decision })).toBe(true);
+      expect(await result).toEqual({ decision });
+      await vi.waitFor(() => expect(f.events).toContainEqual(expect.objectContaining({ type: 'interaction_dismissed',
+        data: expect.objectContaining({ resolvedAs: 'deny', nativePermissionScope: 'persistent' }) })));
+    } finally { await f.close(); }
+  });
+  it('Auto human handoff permits only this call in the native frontend', async () => {
+    const f = await fixture({ reviewAutoPermissionAction: async () => ({ verdict: 'ask', reason: 'Confirm this command' }) }, 'auto');
+    try {
+      const result = f.start();
+      await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      expect(f.native.answer(72, { decision: 'acceptForSession' })).toBe(false);
+      expect(f.native.answer(72, { decision: 'accept' })).toBe(true);
+      expect(await result).toEqual({ decision: 'accept' });
+    } finally { await f.close(); }
+  });
+});
+
+describe('native MCP confirmation ownership', () => {
+  async function fixture(deps: Partial<AgentDeps> = {}, permissionMode: 'ask' | 'auto' = 'ask') {
+    const agent = new CodexAgent(createDeps({}, deps));
+    const host = installFakeHost(agent, method => method === Method.TurnStart ? { turn: { id: 'native-mcp-turn' } } : undefined);
+    const handle = await agent.startSession({ sessionId: 'native-mcp', model: 'gpt-5.4', workingDir: '/repo', permissionMode }) as CodexNativeSessionHandle;
+    const events: AgentEvent[] = [];
+    const drained = (async () => { for await (const event of handle.events()) events.push(event); })();
+    let answer!: (decision: InteractionDecision) => void;
+    const resolver = vi.fn(() => new Promise<InteractionDecision>(resolve => { answer = resolve; }));
+    handle.setInteractionResolver(resolver);
+    const prompts: import('./native-approvals.js').CodexNativeApprovalEvent[] = [];
+    const native = handle.attachNativeApprovalFrontend(event => prompts.push(event));
+    await handle.send({ type: 'user', content: 'use fixture tool' });
+    const handlers = host.getThreadHandlers()!;
+    const params = { threadId: 'start-thread-id', turnId: 'native-mcp-turn', serverName: 'fixture', mode: 'form' as const,
+      message: 'Fixture confirmation', requestedSchema: {}, _meta: { codex_approval_kind: 'mcp_tool_call',
+        persist: ['session', 'always'], tool_name: 'fixture_mutation', tool_params: { resource: 'fixture' } } };
+    return { agent, host, handle, events, resolver, prompts, native, handlers, params,
+      answer: (value: InteractionDecision) => answer(value),
+      start: () => handlers.mcpServerElicitation!(params, { requestId: 81 }),
+      close: async () => { await handle.close(); await drained; await agent.dispose(); } };
+  }
+  it('native MCP acceptance settles the existing GUI prompt and ignores a late GUI denial', async () => {
+    const f = await fixture();
+    try { const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      expect(f.native.answer(81, { action: 'accept', content: null, _meta: null })).toBe(true);
+      expect(await pending).toEqual({ action: 'accept', content: null, _meta: null });
+      f.answer({ kind: 'permission', behavior: 'deny' }); await Promise.resolve();
+      expect(f.native.answer(81, { action: 'decline' })).toBe(false);
+      await vi.waitFor(() => expect(f.events).toContainEqual(expect.objectContaining({ type: 'interaction_dismissed',
+        data: expect.objectContaining({ reason: 'native_answered', resolvedAs: 'allow', nativePermissionScope: 'once' }) })));
+      expect(f.prompts.map(e => e.kind)).toEqual(['request', 'resolved']);
+    } finally { await f.close(); }
+  });
+  it('GUI denial closes the native MCP prompt without allowing a second response', async () => {
+    const f = await fixture();
+    try { const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      f.answer({ kind: 'permission', behavior: 'deny' });
+      expect(await pending).toEqual({ action: 'decline', content: null, _meta: null });
+      expect(f.native.answer(81, { action: 'accept' })).toBe(false);
+      expect(f.prompts.map(e => e.kind)).toEqual(['request', 'resolved']);
+    } finally { await f.close(); }
+  });
+  it('native MCP approval keeps a deliberate advertised session grant', async () => {
+    const f = await fixture();
+    try { const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      expect(f.native.answer(81, { action: 'accept', content: null, _meta: { persist: 'session' } })).toBe(true);
+      expect(await pending).toEqual({ action: 'accept', content: null, _meta: { persist: 'session' } });
+      await vi.waitFor(() => expect(f.events).toContainEqual(expect.objectContaining({ type: 'interaction_dismissed',
+        data: expect.objectContaining({ reason: 'native_answered', nativePermissionScope: 'session' }) })));
+      f.answer({ kind: 'permission', behavior: 'deny' });
+    } finally { await f.close(); }
+  });
+  it('prompt-each-time native MCP approval cannot display or acquire persistence', async () => {
+    const f = await fixture({ getMcpToolApprovalPolicy: () => 'prompt-each-time' });
+    try { const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      const prompt = f.prompts[0]; expect(prompt?.kind).toBe('request');
+      if (prompt?.kind === 'request') expect(prompt.request.params._meta).not.toHaveProperty('persist');
+      expect(f.native.answer(81, { action: 'accept', _meta: { persist: 'session' } })).toBe(false);
+      expect(f.native.answer(81, { action: 'accept' })).toBe(true);
+      expect(await pending).toEqual({ action: 'accept', content: null, _meta: null });
+      f.answer({ kind: 'permission', behavior: 'deny' });
+    } finally { await f.close(); }
+  });
+  it('native MCP confirmation cannot bypass Auto review or its cancellation', async () => {
+    let review!: (value: { verdict: 'ask'; reason: string }) => void;
+    const reviewer = vi.fn<AutoReviewDelegate>(() => new Promise(resolve => { review = resolve; }));
+    const f = await fixture({ reviewAutoPermissionAction: reviewer }, 'auto');
+    try { const pending = f.start(); await vi.waitFor(() => expect(reviewer).toHaveBeenCalledOnce());
+      expect(f.prompts).toEqual([]); expect(f.native.answer(81, { action: 'accept' })).toBe(false);
+      f.handlers.serverRequestResolved!({ threadId: f.params.threadId, requestId: 81 });
+      review({ verdict: 'ask', reason: 'fixture asks user' });
+      expect(await pending).toEqual({ action: 'decline', content: null, _meta: null });
+      expect(f.prompts).toEqual([]); expect(f.resolver).not.toHaveBeenCalled();
+    } finally { await f.close(); }
+  });
+  it('server cancellation retires the corresponding native MCP numeric request', async () => {
+    const f = await fixture();
+    try { const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      f.handlers.serverRequestResolved!({ threadId: f.params.threadId, requestId: 81 });
+      expect(await pending).toEqual({ action: 'decline', content: null, _meta: null });
+      expect(f.native.answer(81, { action: 'accept' })).toBe(false);
+      f.answer({ kind: 'permission', behavior: 'allow' });
+      expect(f.prompts.map(e => e.kind)).toEqual(['request', 'resolved']);
+    } finally { await f.close(); }
+  });
+});
+
+
+describe('Codex native config reload after task sandbox selection', () => {
+  it.each(['ask', 'auto', 'bypassPermissions'] as const)(
+    'does not install an unselected named profile for a %s task without external roots', async permissionMode => {
+      const agent = new CodexAgent(createDeps());
+      const host = installFakeHost(agent);
+      const handle = await agent.startSession({ sessionId: 'native-config', model: 'gpt-5.4', workingDir: '/repo', permissionMode });
+      try {
+        const [, params] = host.request.mock.calls.find(([method]) => method === Method.ThreadStart)! as [string, Record<string, unknown>];
+        const config = params.config as Record<string, unknown>;
+        expect(Object.keys(config).filter(key => key.startsWith('permissions.'))).toEqual([]);
+        expect(config).not.toHaveProperty('default_permissions');
+        expect(params).not.toHaveProperty('permissions');
+        expect(params.sandbox).toBe(permissionMode === 'bypassPermissions' ? 'danger-full-access' : 'workspace-write');
+      } finally { await handle.close(); await agent.dispose(); }
+    },
+  );
+  it('keeps the selected read-only-reference profile and its restricted directory policy', async () => {
+    const agent = new CodexAgent(createDeps());
+    const host = installFakeHost(agent);
+    const handle = await agent.startSession({ sessionId: 'native-config-reference', model: 'gpt-5.4', workingDir: '/repo', permissionMode: 'ask', extraDirs: ['/reference'] });
+    try {
+      const [, params] = host.request.mock.calls.find(([method]) => method === Method.ThreadStart)! as [string, Record<string, unknown>];
+      expect(params.permissions).toBe('cindy-readonly-references');
+      expect(params.config).toHaveProperty('default_permissions', 'cindy-readonly-references');
+      expect(params).not.toHaveProperty('sandbox');
+      const profile = (params.config as Record<string, { filesystem: Record<string, unknown> }> )['permissions.cindy-readonly-references'];
+      expect(profile.filesystem[':workspace_roots']).toBe('read');
+      expect(profile.filesystem['/reference']).toBeUndefined();
+    } finally { await handle.close(); await agent.dispose(); }
+  });
+});
+
+describe('native question mirrors retain one host-owned answer', () => {
+  async function fixture() {
+    const agent = new CodexAgent(createDeps());
+    const host = installFakeHost(agent);
+    const handle = await agent.startSession({ sessionId: 'native-question', model: 'gpt-5.4', workingDir: '/repo' }) as CodexNativeSessionHandle;
+    const events: AgentEvent[] = [];
+    const drained = (async () => { for await (const event of handle.events()) events.push(event); })();
+    const held = deferred<InteractionDecision>();
+    const resolver = vi.fn((_request: InteractionRequest) => held.promise); handle.setInteractionResolver(resolver);
+    const prompts: import('./native-approvals.js').CodexNativeApprovalEvent[] = [];
+    const native = handle.attachNativeApprovalFrontend(event => prompts.push(event));
+    const handlers = host.getThreadHandlers()!;
+    const params = { threadId: handle.id, turnId: 'turn-1', itemId: 'native-question-item', questions: [{
+      id: 'q1', header: 'Direction', question: 'What next?', isOther: false, isSecret: false, options: [],
+    }] };
+    return { agent, host, handle, events, resolver, prompts, native, handlers, params, held,
+      start: () => handlers.requestUserInput!(params, { requestId: 901 }),
+      close: async () => { held.resolve({ kind: 'ask_user_question', answers: {}, dismissed: true }); await handle.close(); await drained; await agent.dispose(); } };
+  }
+  it('native response settles the real host request and emits the answer for GUI history', async () => {
+    const f = await fixture();
+    try { const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      expect(f.native.answer(901, { answers: { q1: { answers: ['Keep going'] } } })).toBe(true);
+      expect(await pending).toEqual({ answers: { q1: { answers: ['Keep going'] } } });
+      f.held.resolve({ kind: 'ask_user_question', answers: { 'What next?': 'different late GUI answer' } });
+      await vi.waitFor(() => expect(f.events).toContainEqual(expect.objectContaining({ type: 'interaction_dismissed',
+        data: expect.objectContaining({ reason: 'native_answered', nativeQuestionAnswers: { 'What next?': '["Keep going"]' } }) })));
+      expect(f.native.answer(901, { answers: {} })).toBe(false);
+    } finally { await f.close(); }
+  });
+  it('GUI response retires the native question', async () => {
+    const f = await fixture();
+    try { const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      f.held.resolve({ kind: 'ask_user_question', answers: { 'What next?': 'GUI choice' } });
+      expect(await pending).toEqual({ answers: { q1: { answers: ['GUI choice'] } } });
+      expect(f.native.answer(901, { answers: {} })).toBe(false);
+      expect(f.prompts.map(e => e.kind)).toEqual(['request', 'resolved']);
+    } finally { await f.close(); }
+  });
+  it('server cancellation closes the native question before a late response can change intent', async () => {
+    const f = await fixture();
+    try { const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      f.handlers.serverRequestResolved!({ threadId: f.params.threadId, requestId: 901 });
+      expect(await pending).toEqual({ answers: {} });
+      expect(f.native.answer(901, { answers: { q1: { answers: ['late'] } } })).toBe(false);
+      expect(f.events.some(e => e.type === 'interaction_dismissed' && (e.data as Record<string, unknown>).reason === 'native_answered')).toBe(false);
+    } finally { await f.close(); }
+  });
+  it('joins a dynamic-tool question and maps native ids back to that same answer', async () => {
+    const f = await fixture();
+    try {
+      f.handlers.itemStarted!({ threadId: f.params.threadId, turnId: 'turn-1', item: {
+        id: 'dynamic-call-1', type: 'dynamicToolCall', namespace: null, tool: 'cindy__ask_user_question',
+      } });
+      const dynamic = f.handlers.dynamicToolCall!({ threadId: f.params.threadId, turnId: 'turn-1', callId: 'dynamic-call-1',
+        namespace: null, tool: 'cindy__ask_user_question', arguments: { questions: [{ header: 'Direction', question: 'What next?' }] },
+      }, { requestId: 'dynamic-first' });
+      const native = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      expect(f.native.answer(901, { answers: { q1: { answers: ['One answer'] } } })).toBe(false);
+      expect(f.native.answer('dynamic-first', { answers: { 'question-1': { answers: ['One answer'] } } })).toBe(true);
+      expect(await native).toEqual({ answers: { q1: { answers: ['One answer'] } } });
+      expect(await dynamic).toMatchObject({ success: true, contentItems: [{ type: 'inputText', text: JSON.stringify({ 'question-1': { answers: ['One answer'] } }) }] });
+      expect(f.resolver).toHaveBeenCalledOnce();
+    } finally { await f.close(); }
+  });
+  it('does not expose secret questions or tool permission fallback as ordinary native questions', async () => {
+    const f = await fixture();
+    try {
+      expect(await f.handlers.requestUserInput!({ ...f.params, questions: [{ ...f.params.questions[0]!, isSecret: true }] }, { requestId: 902 }))
+        .toEqual({ answers: { q1: { answers: [] } } });
+      expect(f.prompts).toEqual([]); expect(f.resolver).not.toHaveBeenCalled();
+      f.handlers.itemStarted!({ threadId: f.params.threadId, turnId: 'turn-1', item: {
+        id: f.params.itemId, type: 'mcpToolCall', server: 'fixture', tool: 'action', arguments: {},
+      } });
+      const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      expect(f.resolver.mock.calls[0]?.[0]).toMatchObject({ kind: 'permission' });
+      expect(f.prompts).toEqual([]); expect(f.native.answer(901, { answers: { q1: { answers: ['allow'] } } })).toBe(false);
+      f.held.resolve({ kind: 'permission', behavior: 'deny' }); await pending;
+    } finally { await f.close(); }
+  });
+});
+
+describe('native extended permissions share the existing policy decision', () => {
+  async function fixture(overrides: Partial<AgentDeps> = {}, mode: 'ask' | 'auto' = 'ask') {
+    const agent = new CodexAgent(createDeps({}, overrides));
+    const host = installFakeHost(agent);
+    const handle = await agent.startSession({ sessionId: 'native-permissions', model: 'gpt-5.4', workingDir: '/repo', permissionMode: mode }) as CodexNativeSessionHandle;
+    const held = deferred<InteractionDecision>();
+    const resolver = vi.fn((_request: InteractionRequest) => held.promise); handle.setInteractionResolver(resolver);
+    const events: AgentEvent[] = [];
+    const drained = (async () => { for await (const event of handle.events()) events.push(event); })();
+    const prompts: import('./native-approvals.js').CodexNativeApprovalEvent[] = [];
+    const native = handle.attachNativeApprovalFrontend(event => prompts.push(event));
+    const handlers = host.getThreadHandlers()!;
+    const params = { threadId: handle.id, turnId: 'turn-1', itemId: 'permission-item',
+      permissions: { network: { enabled: true }, fileSystem: null } };
+    return { handle, held, resolver, events, prompts, native, handlers, params,
+      start: () => handlers.permissionsApproval!(params, { requestId: 902 }),
+      close: async () => { held.resolve({ kind: 'permission', behavior: 'deny' }); await handle.close(); await drained; await agent.dispose(); } };
+  }
+  it('native choice preserves the exact grant, scope and strict review, then retires GUI', async () => {
+    const f = await fixture();
+    try {
+      const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      const response = { permissions: { network: { enabled: true } }, scope: 'turn', strictAutoReview: true };
+      expect(f.native.answer(902, response)).toBe(true);
+      expect(await pending).toEqual(response);
+      f.held.resolve({ kind: 'permission', behavior: 'deny' });
+      expect(f.native.answer(902, response)).toBe(false);
+      await vi.waitFor(() => expect(f.events).toContainEqual(expect.objectContaining({ type: 'interaction_dismissed',
+        data: expect.objectContaining({ reason: 'native_answered', resolvedAs: 'allow', nativePermissionScope: 'once' }) })));
+    } finally { await f.close(); }
+  });
+  it('keeps session grants only when they are advertised and eligible', async () => {
+    const f = await fixture();
+    try {
+      const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      const response = { permissions: { network: { enabled: true } }, scope: 'session' };
+      expect(f.native.answer(902, response)).toBe(true); expect(await pending).toEqual(response);
+      await vi.waitFor(() => expect(f.events).toContainEqual(expect.objectContaining({ type: 'interaction_dismissed',
+        data: expect.objectContaining({ nativePermissionScope: 'session' }) })));
+    } finally { await f.close(); }
+  });
+  it('GUI denial retires the native request; invented grants cannot settle it first', async () => {
+    const f = await fixture();
+    try {
+      const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      expect(f.native.answer(902, { permissions: { fileSystem: { write: ['/foreign'] } }, scope: 'turn' })).toBe(false);
+      f.held.resolve({ kind: 'permission', behavior: 'deny' });
+      expect(await pending).toEqual({ permissions: {}, scope: 'turn' });
+      expect(f.native.answer(902, { permissions: { network: { enabled: true } }, scope: 'turn' })).toBe(false);
+    } finally { await f.close(); }
+  });
+  it('server cancellation before review completes cannot open a native prompt', async () => {
+    const reviewed = deferred<{ verdict: 'ask'; reason: string }>();
+    const review = vi.fn<AutoReviewDelegate>(() => reviewed.promise);
+    const f = await fixture({ reviewAutoPermissionAction: review }, 'auto');
+    try {
+      const pending = f.start(); await vi.waitFor(() => expect(review).toHaveBeenCalledOnce());
+      expect(f.prompts).toEqual([]);
+      f.handlers.serverRequestResolved!({ threadId: f.params.threadId, requestId: 902 });
+      reviewed.resolve({ verdict: 'ask', reason: 'fixture review' });
+      expect(await pending).toEqual({ permissions: {}, scope: 'turn' });
+      expect(f.prompts).toEqual([]); expect(f.resolver).not.toHaveBeenCalled();
+    } finally { await f.close(); }
+  });
+  it('a review requiring human confirmation uses a native one-turn form', async () => {
+    const review = vi.fn<AutoReviewDelegate>(async () => ({ verdict: 'ask', reason: 'fixture review' }));
+    const f = await fixture({ reviewAutoPermissionAction: review }, 'auto');
+    try {
+      const pending = f.start(); await vi.waitFor(() => expect(f.resolver).toHaveBeenCalledOnce());
+      const prompt = f.prompts.find(event => event.kind === 'request');
+      expect(prompt).toMatchObject({ request: { method: 'item/tool/requestUserInput' } });
+      expect(f.native.answer(902, { permissions: { network: { enabled: true } }, scope: 'session' })).toBe(false);
+      expect(f.native.answer(902, { answers: { 'lex-permission-grant': { answers: ['Allow for this turn'] } } })).toBe(true);
+      expect(await pending).toEqual({ permissions: { network: { enabled: true } }, scope: 'turn' });
+      expect(review).toHaveBeenCalledOnce();
+    } finally { await f.close(); }
+  });
+});
+
+describe('Codex native menu uses the product runtime owner', () => {
+  async function fixture(fail = false) {
+    const agent = new CodexAgent(createDeps());
+    const host = installFakeHost(agent, method => {
+      if (method === Method.ThreadSettingsUpdate) {
+        if (fail) throw new Error('native write rejected');
+        return {};
+      }
+      return undefined;
+    });
+    const handle = await agent.startSession({ sessionId: 'native-settings', model: 'gpt-5.4', workingDir: '/repo' }) as import('./native-input.js').CodexNativeSessionHandle;
+    handle.setNativeRuntimeResolver!(async request => {
+      const patch = request.patch;
+      if (patch.model !== undefined) await handle.setModel!(patch.model);
+      if (patch.effort === null) await handle.clearEffort!();
+      else if (patch.effort !== undefined) await handle.setEffort!(patch.effort);
+      if (patch.fastMode !== undefined) await handle.setFastMode!(patch.fastMode);
+      if (patch.planMode !== undefined) await handle.setPlanMode!(patch.planMode);
+    });
+    return { agent, host, handle };
+  }
+  it('applies model, effort, tier and plan through the same task settings channel without starting another turn', async () => {
+    const f = await fixture();
+    try {
+      await f.handle.applyNativeRuntimeSettings({ threadId: f.handle.id, model: 'gpt-5.4-codex', effort: 'low', serviceTier: 'fast',
+        collaborationMode: { mode: 'plan', settings: { model: 'gpt-5.4-codex', reasoning_effort: 'low', developer_instructions: null } } }, new AbortController().signal);
+      expect(f.handle.model).toBe('gpt-5.4-codex'); expect(f.handle.getEffort!()).toBe('low');
+      expect(f.handle.getFastMode!()).toBe(true); expect(f.handle.getPlanMode!()).toBe(true);
+      const writes = f.host.request.mock.calls.filter(([method]) => method === Method.ThreadSettingsUpdate).map(([, params]) => params);
+      expect(writes).toEqual([
+        { threadId: f.handle.id, model: 'gpt-5.4-codex' }, { threadId: f.handle.id, effort: 'low' },
+        { threadId: f.handle.id, serviceTier: 'fast' },
+        { threadId: f.handle.id, collaborationMode: { mode: 'plan', settings: { model: 'gpt-5.4-codex', reasoning_effort: 'low', developer_instructions: null } } },
+      ]);
+      expect(f.host.request.mock.calls.filter(([method]) => method === Method.TurnStart)).toHaveLength(0);
+    } finally { await f.handle.close(); }
+  });
+  it.each([
+    { patch: { model: 'gpt-5.4-codex' }, value: (h: import('./native-input.js').CodexNativeSessionHandle) => h.model, expected: 'gpt-5.4' },
+    { patch: { effort: 'low' }, value: (h: import('./native-input.js').CodexNativeSessionHandle) => h.getEffort!(), expected: 'high' },
+    { patch: { serviceTier: 'fast' }, value: (h: import('./native-input.js').CodexNativeSessionHandle) => h.getFastMode!(), expected: false },
+    { patch: { collaborationMode: { mode: 'plan', settings: {} } }, value: (h: import('./native-input.js').CodexNativeSessionHandle) => h.getPlanMode!(), expected: false },
+  ])('does not acknowledge or retain a rejected native choice: $patch', async ({ patch, value, expected }) => {
+    const f = await fixture(true);
+    try {
+      await expect(f.handle.applyNativeRuntimeSettings({ threadId: f.handle.id, ...patch }, new AbortController().signal)).rejects.toThrow('native write rejected');
+      expect(value(f.handle)).toBe(expected);
+    } finally { await f.handle.close(); }
+  });
+  it('rejects foreign tasks and policy replacements before dispatching a settings write', async () => {
+    const f = await fixture();
+    try {
+      for (const params of [{ threadId: 'foreign', model: 'gpt-5.4' }, { threadId: f.handle.id, permissions: ':full-access' }]) {
+        await expect(f.handle.applyNativeRuntimeSettings(params, new AbortController().signal)).rejects.toThrow();
+      }
+      expect(f.host.request.mock.calls.filter(([method]) => method === Method.ThreadSettingsUpdate)).toHaveLength(0);
+    } finally { await f.handle.close(); }
+  });
+});

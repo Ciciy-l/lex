@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { createXdtHelperMcpServer, getLiziMcpSessionContext } from '@cindy/mcps';
+import { createXdtHelperMcpServer, getLiziMcpSessionContext, type LiziMcpSessionContext } from '@cindy/mcps';
 
 import type { Logger } from '@cindy/maker-core';
 import {
@@ -828,7 +828,17 @@ describe('codexHttpBridge', () => {
     }
   });
 
-  it('fail-closes batched aliases when their tool policies differ', async () => {
+  it.each([
+    ['tool policies',
+      { vendorOptions: { [CODEX_DISABLED_BUILTIN_PLUGIN_IDS_KEY]: ['browser'] } },
+      { vendorOptions: { [CODEX_DISABLED_BUILTIN_PLUGIN_IDS_KEY]: ['android'] } }],
+    ['caller roles',
+      { mcpCallerKind: 'root', mcpCallerAttested: true },
+      { mcpCallerKind: 'descendant', mcpCallerAttested: true }],
+    ['caller attestation',
+      { mcpCallerKind: 'root', mcpCallerAttested: true },
+      { mcpCallerKind: 'root', mcpCallerAttested: false }],
+  ] satisfies Array<[string, Partial<LiziMcpSessionContext>, Partial<LiziMcpSessionContext>]>)('fail-closes batched aliases when their %s differ', async (_label, first, second) => {
     bridge = await startCodexHttpBridge({
       serverFactories: { lizi_test: createTestServer },
       pluginIdByServerName: { lizi_test: 'ssh' },
@@ -842,11 +852,11 @@ describe('codexHttpBridge', () => {
     };
     bridge.registerThreadContext('thread-policy-one', {
       ...baseContext,
-      vendorOptions: { [CODEX_DISABLED_BUILTIN_PLUGIN_IDS_KEY]: ['browser'] },
+      ...first,
     });
     bridge.registerThreadContext('thread-policy-two', {
       ...baseContext,
-      vendorOptions: { [CODEX_DISABLED_BUILTIN_PLUGIN_IDS_KEY]: ['android'] },
+      ...second,
     });
 
     const baseHeaders = {

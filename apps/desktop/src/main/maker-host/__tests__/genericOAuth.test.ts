@@ -14,6 +14,7 @@ import { providerPresetOAuth } from '@cindy/model-providers';
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { get as httpGet } from 'node:http';
 
 import type { OAuthProviderDescriptor, ProviderView } from '@cindy/model-providers';
 import { fetchSavedOAuthProviderModels } from '../provider-model-fetch.js';
@@ -1008,16 +1009,36 @@ describe('OpenRouter discovery metadata', () => {
 describe('official preset OAuth contracts', () => {
   it('OpenRouter uses PKCE JSON exchange and stores the permanent key', async () => {
     let authorization!: URL;
+    let callbackResponse: Promise<{ status: number | undefined; body: string }> | undefined;
     configureGenericOAuth({ openExternal: async url => {
       authorization = new URL(url);
       const callback = new URL(authorization.searchParams.get('callback_url')!);
       expect(callback.searchParams.get('state')).toBe(authorization.searchParams.get('state'));
       callback.searchParams.set('code', 'test-authorization-code');
-      void fetch(callback).catch(() => {});
+      // Each login owns a short-lived loopback listener. Do not reuse a socket
+      // from another listener or swallow callback failures until the test timeout.
+      // The response ends after token exchange, so openExternal must not await it.
+      callbackResponse = new Promise<{ status: number | undefined; body: string }>((resolve, reject) => {
+        const request = httpGet(callback, { agent: false }, response => {
+          let body = '';
+          response.setEncoding('utf8');
+          response.on('data', chunk => { body += chunk; });
+          response.once('error', reject);
+          response.once('end', () => resolve({ status: response.statusCode, body }));
+        });
+        request.once('error', reject);
+        request.setTimeout(5_000, () => request.destroy(new Error('OpenRouter fixture callback timed out')));
+      }).catch(error => {
+        cancelGenericOAuthLogin('or-test');
+        throw error;
+      });
+      void callbackResponse.catch(() => {}); // Observed below after the login settles.
     } });
     fetchResponder = () => new Response(JSON.stringify({ key: 'test-openrouter-key' }));
     const oauth = providerPresetOAuth('openrouter')!;
     const result = await runGenericOAuthLogin({ id: 'or-test', name: 'OpenRouter' }, oauth);
+    expect(callbackResponse).toBeDefined();
+    expect(await callbackResponse).toMatchObject({ status: 200, body: expect.stringContaining('OpenRouter') });
     expect(result.ok).toBe(true);
     expect(authorization.searchParams.has('redirect_uri')).toBe(false);
     expect(authorization.searchParams.get('code_challenge_method')).toBe('S256');

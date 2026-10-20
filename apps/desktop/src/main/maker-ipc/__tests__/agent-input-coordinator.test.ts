@@ -1141,6 +1141,213 @@ function createRealSessionCoordinatorBridge(h: ReturnType<typeof createHarness>)
     },
   };
 }
+describe('held native input adoption', () => {
+  const sid = 'native-task';
+  function fixture() {
+    const h = createHarness();
+    const dispatch = vi.fn<AgentInputCoordinatorDeps['sendToAgent']>(async (id, _message, _create, options) => {
+      options.onVendorTurnReserved?.(1);
+      await persistQueuedUserMessage(id, options); h.setRunning(true); return sendSuccess();
+    });
+    return { h, input: { session: h.getTurnSessionIdentity(), messageId: 'native-row', dispatch }, dispatch };
+  }
+
+  it('uses normal screening and durable hooks once, then releases queued GUI input at the terminal boundary', async () => {
+    const { h, input, dispatch } = fixture();
+    const screened = vi.fn(async () => ({ action: 'rewrite' as const, text: 'rewritten', ghostId: 'guard', ghostName: 'Guard' }));
+    h.setScreenUserMessage(screened);
+    await h.coordinator.acceptNativeInput(sid, makeItem('native', 'TUI', { bypassGhostHooks: true }), input);
+    expect(screened).toHaveBeenCalledOnce();
+    expect(dispatch).toHaveBeenCalledWith(sid, expect.objectContaining({ content: 'rewritten' }), expect.any(Object),
+      expect.objectContaining({ messageUuid: 'native-row' }));
+    expect(h.sendToAgent).not.toHaveBeenCalled();
+    expect(h.onAcceptedQueuedMessage).toHaveBeenCalledOnce();
+    expect(h.onDispatchedUserTurn).toHaveBeenCalledOnce();
+    h.coordinator.enqueue(sid, makeItem('gui', 'GUI'));
+    expect(h.coordinator.getProjection(sid).pendingQueue.map(row => row.clientId)).toEqual(['gui']);
+    await expect(h.coordinator.acceptNativeInput(sid, makeItem('native', 'TUI'), input)).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    h.setRunning(false); h.coordinator.onTurnEvent(sid, 'done');
+    await vi.waitFor(() => expect(h.sendToAgent).toHaveBeenCalledOnce());
+    expect(dispatch).toHaveBeenCalledOnce();
+  });
+
+  it('does not queue or persist a refused native input or an uncertain acceptance', async () => {
+    for (const outcome of ['blocked', 'uncertain', 'rejected']) {
+      const { h, input, dispatch } = fixture();
+      if (outcome === 'blocked') h.setScreenUserMessage(async () => ({ action: 'block', ghostId: 'guard', ghostName: 'Guard', reason: 'fixture refusal' }));
+      else dispatch.mockImplementation(async () => {
+        if (outcome === 'uncertain') throw new Error('receipt unavailable');
+        return sessionDispatchFailure('provider-rejected-before-dispatch');
+      });
+      await expect(h.coordinator.acceptNativeInput(sid, makeItem('native', 'TUI'), input)).rejects.toThrow();
+      expect(h.coordinator.getProjection(sid).pendingQueue).toEqual([]);
+      expect(h.sendToAgent).not.toHaveBeenCalled();
+      expect(h.onDispatchedUserTurn).not.toHaveBeenCalled();
+      expect(h.persistQueueSnapshot.mock.calls.every(([, rows]) => !JSON.stringify(rows).includes('native'))).toBe(true);
+    }
+  });
+
+  it('keeps TUI → GUI → TUI on one task when vendor idle precedes the first product terminal', async () => {
+    const { h, input, dispatch } = fixture();
+    h.setAgentKind('codex');
+    h.setTurnGeneration(1);
+    await h.coordinator.acceptNativeInput(sid, makeItem('native-first', 'LEX_B0_TUI_FIRST'), input);
+    // The real provider can become idle before Session fans out its queued done.
+    // GUI must enter through the coordinator rather than start generation 2 via
+    // a direct Session.send and strand generation 1's native reservation.
+    h.setRunning(false);
+    h.coordinator.enqueue(sid, makeItem('gui', 'LEX_B0_GUI_AFTER'));
+    await flush();
+    expect(h.sendToAgent).not.toHaveBeenCalled();
+    expect(h.coordinator.getActiveInputClientId(sid)).toBe('native-first');
+    await expect(h.coordinator.acceptNativeInput(sid, makeItem('too-early', 'native'),
+      { ...input, messageId: 'different-input' })).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(mocks.logger.warn).toHaveBeenCalledWith('native input refused at task boundary', {
+      reason: 'dispatch-boundary-busy', boundGeneration: 1, currentGeneration: 1,
+    });
+
+    h.setTurnGeneration(2);
+    h.coordinator.onTurnEvent(sid, 'done', undefined, undefined,
+      { sessionTurnGeneration: 1, sessionInstanceId: 'harness-session' });
+    await flush();
+    expect(h.sendToAgent).toHaveBeenCalledOnce();
+    expect(h.sendToAgent.mock.calls[0]?.[1]).toMatchObject({ content: 'LEX_B0_GUI_AFTER' });
+    expect(h.coordinator.getActiveInputClientId(sid)).toBe('gui');
+    h.setRunning(false);
+    h.coordinator.onTurnEvent(sid, 'done', undefined, undefined,
+      { sessionTurnGeneration: 2, sessionInstanceId: 'harness-session' });
+
+    dispatch.mockImplementationOnce(async (id, _message, _create, options) => {
+      options.onVendorTurnReserved?.(3);
+      await persistQueuedUserMessage(id, options);
+      h.setRunning(true);
+      return sendSuccess();
+    });
+    h.setTurnGeneration(3);
+    await h.coordinator.acceptNativeInput(sid, makeItem('native-after', 'LEX_B0_TUI_AFTER_CONCURRENT'),
+      { ...input, messageId: 'f5e522e3-466a-4603-9dab-43659bdaa122' });
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(dispatch.mock.calls[1]?.[1]).toMatchObject({ content: 'LEX_B0_TUI_AFTER_CONCURRENT' });
+    expect(h.coordinator.getActiveInputClientId(sid)).toBe('native-after');
+    expect(h.coordinator.getProjection(sid)).toMatchObject({ pendingQueue: [], error: null, recovery: null });
+    expect(h.sendToAgent).toHaveBeenCalledOnce();
+    h.coordinator.onSessionClosed(sid);
+  });
+
+  it('lets a new native message abandon a failed turn without retrying the old input', async () => {
+    const { h, input, dispatch } = fixture();
+    await h.coordinator.acceptNativeInput(sid, makeItem('failed-native', 'first'), input);
+    h.setRunning(false);
+    h.coordinator.onTurnEvent(sid, 'error', 'stream disconnected');
+    expect(h.coordinator.getProjection(sid).recovery?.kind).toBe('active-turn');
+    h.onUserEnqueue.mockClear();
+
+    await h.coordinator.acceptNativeInput(sid, makeItem('new-native', 'different input'),
+      { ...input, messageId: 'new-native-row' });
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(dispatch.mock.calls[1]?.[1]).toMatchObject({ content: 'different input' });
+    expect(h.onUserEnqueue).toHaveBeenCalledExactlyOnceWith(sid);
+    expect(h.coordinator.getProjection(sid)).toMatchObject({ recovery: null, error: null, pendingQueue: [] });
+    await h.coordinator.retryLastError(sid);
+    await flush();
+    expect(h.sendToAgent).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    h.coordinator.onSessionClosed(sid);
+  });
+
+  it('preserves failed-turn recovery when a stale, cancelled, or locked native input is refused', async () => {
+    for (const refusal of ['stale', 'cancelled', 'locked'] as const) {
+      const { h, input, dispatch } = fixture();
+      await h.coordinator.acceptNativeInput(sid, makeItem('failed-native', 'first'), input);
+      h.setRunning(false);
+      h.coordinator.onTurnEvent(sid, 'error', 'stream disconnected');
+      const recovery = h.coordinator.getProjection(sid).recovery;
+      expect(recovery?.kind).toBe('active-turn');
+      h.onUserEnqueue.mockClear();
+      const controller = new AbortController();
+      if (refusal === 'cancelled') controller.abort();
+      if (refusal === 'locked') h.coordinator.setInteractionLock(sid, 'confirmation', true);
+      await expect(h.coordinator.acceptNativeInput(sid, makeItem('refused-native', 'second'),
+        { ...input, session: refusal === 'stale' ? {} : input.session,
+          signal: controller.signal, messageId: 'refused-native-row' })).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+      expect(h.coordinator.getProjection(sid).recovery).toEqual(recovery);
+      expect(h.onUserEnqueue).not.toHaveBeenCalled();
+      expect(dispatch).toHaveBeenCalledOnce();
+      h.coordinator.onSessionClosed(sid);
+    }
+  });
+
+  it('does not let native input overtake an older queued GUI input', async () => {
+    const { h, input, dispatch } = fixture();
+    h.setRunning(true);
+    h.coordinator.enqueue(sid, makeItem('older-gui', 'first'));
+    await flush();
+    h.setRunning(false);
+    await expect(h.coordinator.acceptNativeInput(sid, makeItem('native', 'second'), input)).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(h.sendToAgent).not.toHaveBeenCalled();
+    expect(h.coordinator.getProjection(sid).pendingQueue.map(row => row.clientId)).toEqual(['older-gui']);
+  });
+
+  it('fences Stop and close during host preparation without leaving a replayable queue row', async () => {
+    for (const action of ['stop', 'close', 'replace']) {
+      const { h, input, dispatch } = fixture();
+      let release!: () => void;
+      h.getSdkSessionId.mockImplementationOnce(async () => { await new Promise<void>(resolve => { release = resolve; }); return 'sdk-session'; });
+      const pending = h.coordinator.acceptNativeInput(sid, makeItem('native', 'TUI'), input);
+      const rejected = expect(pending).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+      await vi.waitFor(() => expect(release).toBeDefined());
+      expect(h.persistQueueSnapshot.mock.calls.every(([, rows]) => !JSON.stringify(rows).includes('native'))).toBe(true);
+      if (action === 'stop') h.coordinator.stop(sid, { keepQueue: true, pauseQueue: true });
+      else if (action === 'close') h.coordinator.onSessionClosed(sid);
+      else h.setTurnSessionIdentity({});
+      release(); await rejected;
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(h.coordinator.getProjection(sid).pendingQueue).toEqual([]);
+    }
+  });
+
+  it('refuses a competing native turn immediately while an existing GUI dispatch is pending', async () => {
+    const { h, input, dispatch } = fixture();
+    h.setRunning(true);
+    h.coordinator.enqueue(sid, makeItem('gui', 'GUI'));
+    await expect(h.coordinator.acceptNativeInput(sid, makeItem('native', 'TUI'), input)).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(h.coordinator.getProjection(sid).pendingQueue.map(row => row.clientId)).toEqual(['gui']);
+  });
+
+  it('does not recover a persisted native row when a terminal error beats its acceptance receipt', async () => {
+    const { h, input, dispatch } = fixture();
+    dispatch.mockImplementation(async (id, _message, _create, options) => {
+      options.onVendorTurnReserved?.(1);
+      await persistQueuedUserMessage(id, options);
+      h.coordinator.onTurnEvent(id, 'error', 'receipt lost', { reason: 'stream_stalled' });
+      expect(h.coordinator.getProjection(id).recovery).toBeNull();
+      throw new Error('receipt lost');
+    });
+    await expect(h.coordinator.acceptNativeInput(sid, makeItem('native', 'TUI'), input)).rejects.toThrow('receipt lost');
+    expect(h.coordinator.getProjection(sid).pendingQueue).toEqual([]);
+    expect(h.coordinator.getProjection(sid).recovery).toBeNull();
+    expect(h.onResumableTurnError).not.toHaveBeenCalled();
+    expect(h.sendToAgent).not.toHaveBeenCalled();
+  });
+
+  it('carries native cancellation and media-preserving preparation into dispatch', async () => {
+    const { h, input, dispatch } = fixture();
+    const controller = new AbortController();
+    const buildMessage = vi.fn(() => ({ type: 'user' as const, content: [{ type: 'image', path: '/owned/image.png' }] }));
+    dispatch.mockImplementation(async (_id, _message, _create, options) => {
+      expect(options.signal?.aborted).toBe(false); controller.abort();
+      expect(options.signal?.aborted).toBe(true);
+      return sessionDispatchFailure('cancelled-before-dispatch');
+    });
+    await expect(h.coordinator.acceptNativeInput(sid, makeItem('native', 'TUI'),
+      { ...input, signal: controller.signal, buildMessage })).rejects.toThrow();
+    expect(dispatch.mock.calls[0]?.[1]).toEqual(buildMessage.mock.results[0]?.value);
+    expect(h.coordinator.getProjection(sid).pendingQueue).toEqual([]);
+  });
+});
+
 describe('agent-chosen control steering', () => {
   const sid = 'lead-report';
   function expected(h: ReturnType<typeof createHarness>) {
@@ -13182,4 +13389,71 @@ describe('AgentInputCoordinator 中断自动续跑', () => {
     );
     expect(h.onResumableTurnError, '落库失败就没有可续跑的目标,不该消耗额度').not.toHaveBeenCalled();
   });
+});
+
+describe('original native steering through the product coordinator', () => {
+  const sid = 'native-steer';
+  function native(h: ReturnType<typeof createHarness>, dispatch = vi.fn<AgentInputCoordinatorDeps['steerToAgent']>(async () => {})) {
+    const controller = new AbortController();
+    return { controller, input: { session: h.getTurnSessionIdentity(), turnGeneration: 0, messageId: 'native-row',
+      signal: controller.signal, dispatch, buildMessage: (item: AgentInputQueuedMessage) => ({ type: 'user' as const, content: item.text }) } };
+  }
+  it('screens and persists one native message with its actual identity without sending a second prompt', async () => {
+    const h = createHarness(); h.setRunning(true);
+    h.setScreenUserMessage(async () => ({ action: 'rewrite', ghostId: 'guard', ghostName: 'guard', text: 'prepared' }));
+    const n = native(h);
+    await h.coordinator.acceptNativeSteer(sid, makeItem('native-row', 'original'), n.input);
+    expect(n.input.dispatch).toHaveBeenCalledExactlyOnceWith(sid, { type: 'user', content: 'prepared' },
+      expect.objectContaining({ messageUuid: 'native-row', expectedTurnSession: n.input.session, expectedTurnGeneration: 0 }));
+    expect(h.sendToAgent).not.toHaveBeenCalled(); expect(h.steerToAgent).not.toHaveBeenCalled();
+    expect(h.onSteerAccepted).toHaveBeenCalledOnce();
+    expect(mocks.createMessage).toHaveBeenCalledOnce();
+    await expect(h.coordinator.acceptNativeSteer(sid, makeItem('native-row', 'original'), n.input)).rejects.toThrow('identity');
+  });
+  it.each(['pause','turn','owner','abort','stop','block'] as const)('rejects %s during preparation without a fallback turn', async kind => {
+    const h = createHarness(); h.setRunning(true); const n = native(h);
+    h.setScreenUserMessage(async () => {
+      if (kind === 'pause') h.coordinator.setExecutionPaused(sid, true);
+      if (kind === 'turn') h.setTurnGeneration(1);
+      if (kind === 'owner') h.setTurnSessionIdentity({});
+      if (kind === 'abort') n.controller.abort();
+      if (kind === 'stop') h.setRunning(false);
+      return kind === 'block' ? { action: 'block', ghostId: 'guard', ghostName: 'guard', reason: 'blocked' } : { action: 'allow' };
+    });
+    await expect(h.coordinator.acceptNativeSteer(sid, makeItem('native-row','native'),n.input)).rejects.toThrow('not accepted');
+    expect(n.input.dispatch).not.toHaveBeenCalled(); expect(h.sendToAgent).not.toHaveBeenCalled();
+  });
+  it('retains uncertain delivery once in a paused queue and never automatically replays', async () => {
+    const h=createHarness(); h.setAgentKind('codex'); h.setRunning(true);
+    const n=native(h,vi.fn(async () => { h.setRunning(false); throw new Error('Native steering delivery uncertain'); }));
+    await expect(h.coordinator.acceptNativeSteer(sid,makeItem('native-row','native'),n.input)).rejects.toThrow('uncertain');
+    expect(h.coordinator.getQueueControlSnapshot(sid).pendingQueue.map(item=>item.clientId)).toEqual(['native-row']);
+    expect(h.coordinator.isQueuePaused(sid)).toBe(true);
+    h.coordinator.onTurnEvent(sid,'done'); await flush(); expect(h.sendToAgent).not.toHaveBeenCalled();
+    expect(n.input.dispatch).toHaveBeenCalledOnce();
+  });
+  it.each(['early', 'late', 'clear', 'persistence-failure'])('retains actual consumption across %s history settlement', async timing => {
+    const h = createHarness(); h.setRunning(true); const n = native(h);
+    let state = { version: 1 as const, engine: 'codex' as const, sessionId: 'native', turnId: 'turn',
+      messageId: 'native-row', status: 'pending' as 'pending' | 'unconsumed' };
+    let settle!: (next: typeof state) => void;
+    const settled = new Promise<typeof state>(resolve => { settle = resolve; });
+    const persistConsumption = vi.fn(async () => true);
+    const consumption = { read: () => state, settled };
+    const finish = () => { state = { ...state, status: 'unconsumed' }; settle(state); };
+    if (timing === 'early') finish();
+    if (timing === 'persistence-failure') mocks.createMessage.mockRejectedValueOnce(new Error('disk full'));
+    await h.coordinator.acceptNativeSteer(sid, { ...makeItem('native-row', 'original'), autoReviewUserText: 'original' }, { ...n.input, consumption, persistConsumption });
+    expect(mocks.createMessage).toHaveBeenCalledWith(sid, expect.objectContaining({ agentMeta: expect.objectContaining({
+      nativeConsumption: expect.objectContaining({ messageId: 'native-row', status: timing === 'early' ? 'unconsumed' : 'pending' }),
+      autoReviewUserText: { kind: 'native-input-pending', text: 'original' },
+    }) }), expect.anything());
+    if (timing === 'clear') h.coordinator.clearSession(sid);
+    if (timing !== 'early') finish();
+    await flush();
+    if (timing === 'clear' || timing === 'persistence-failure') expect(persistConsumption).not.toHaveBeenCalled();
+    else expect(persistConsumption).toHaveBeenCalledExactlyOnceWith(state, null);
+    expect(h.sendToAgent).not.toHaveBeenCalled(); expect(n.input.dispatch).toHaveBeenCalledOnce();
+  });
+
 });

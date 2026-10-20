@@ -27,6 +27,17 @@ function message(patch: Partial<RemoteMessage> & Pick<RemoteMessage, 'id' | 'rol
 }
 
 describe('normalizeRemoteMessages', () => {
+  it('keeps plugin provenance on phone GUI after remote history reload', () => {
+    const source = { version: 1, engine: 'claude-code', sessionId: 'native', messageId: 'row',
+      origin: { kind: 'plugin', name: 'lex-native-bridge' },
+      bridge: { sessionId: 'native', messageId: 'row', submissionId: 'host-input', pluginName: 'lex-native-bridge' } };
+    const rows = [source, { ...source, bridge: undefined },
+      { ...source, origin: { kind: 'plugin', name: 'external-plugin' } }].map((nativeSource, index) =>
+      message({ id: 'row-' + index, role: 'user', content: 'original body', agentMeta: { nativeSource } }));
+    const mapped = normalizeRemoteMessages(JSON.parse(JSON.stringify(rows)));
+    expect(mapped.map(message => message.nativePluginSource)).toEqual([undefined, 'lex-native-bridge', 'external-plugin']);
+    expect(mapped.map(message => message.body)).toEqual(['original body', 'original body', 'original body']);
+  });
   beforeAll(async () => {
     await i18n.changeLanguage('zh-CN');
   });
@@ -1367,4 +1378,17 @@ describe('normalizeRemoteMessages — /goal 持久记录与 plan_review 状态',
     ]);
     expect(items[0].label).toBe('plan_review:cancelled');
   });
+});
+
+it('keeps native consumption separate from accepted delivery after history reload', () => {
+  const rows = ['pending', 'consumed', 'unconsumed', 'unknown'].map((status, index) => ({
+    id: 'row-' + index, clientId: 'row-' + index, sessionId: 'task', role: 'user' as const,
+    content: 'identical input', toolUseId: null, createdAt: '2026-10-19T00:00:00Z',
+    agentMeta: { uuid: 'row-' + index, sdkSessionId: 'thread', delivery: 'steer',
+      nativeConsumption: { version: 1, engine: 'codex', sessionId: 'thread', turnId: 'turn',
+        messageId: 'row-' + index, status, itemId: 'item-' + index } },
+  }));
+  const mapped = normalizeRemoteMessages(JSON.parse(JSON.stringify(rows)));
+  expect(mapped.map(row => row.nativeInputStatus)).toEqual(['pending', 'consumed', 'unconsumed', 'unknown']);
+  expect(mapped).toHaveLength(4);
 });

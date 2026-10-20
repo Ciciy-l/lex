@@ -205,6 +205,14 @@ async function writeClaudeJsonlInConfigDir(
 // ── tests ──────────────────────────────────────────────────────────────────
 
 describe('forkSessionAtMessage', () => {
+  it.each(['pending', 'unconsumed', 'unknown'])('refuses %s native input before native fork or database writes', async status => {
+    selectQueue.push([makeSourceRow()]);
+    selectQueue.push([makeMessageRow({ agentMeta: JSON.stringify({ uuid: 'native', sdkSessionId: 'thread',
+      nativeConsumption: { version: 1, engine: 'codex', sessionId: 'thread', turnId: 'turn', messageId: 'native', status } }) })]);
+    await expect(forkSessionAtMessage('src-session', 'client-id')).rejects.toMatchObject({ code: 'UNSUPPORTED_HISTORY' });
+    expect(forkSdkSessionMock).not.toHaveBeenCalled();
+    expect(txMock).not.toHaveBeenCalled();
+  });
   it.each([
     { marker: 200000, projectedWindow: 200000 },
     { marker: null, projectedWindow: 272000 },

@@ -9374,6 +9374,12 @@
       "attachmentSourceMissing": "保存元のファイルが存在しないため、添付ファイルを保存できません",
       "attachmentSaveFailed": "添付ファイルを保存できません。保存先フォルダーの権限を確認して再試行してください",
       "automationSent": "自動化タスクから送信",
+      "nativeInput": {
+        "pending": "エンジンの処理待ち",
+        "unconsumed": "エンジンはこのメッセージを処理していません",
+        "unknown": "メッセージの処理状態は未確認です"
+      },
+      "nativePluginSource": "プラグイン：{{name}}",
       "automationSentNamed": "自動化タスク「{{name}}」から送信",
       "automationViewTask": "自動化タスクを表示",
       "orcaFromLead": "Lead からのメッセージ",
@@ -9589,6 +9595,43 @@
     }
   },
   "ccAgent": {
+    "presentation": {
+      "startupUnavailable": {
+        "label": "TUI は利用できません",
+        "startup": "TUI をこのタスクに接続できませんでした。GUI を引き続き利用できます。"
+      },
+      "nativeFileApproval": {
+        "header": "ファイルの変更",
+        "confirmation": "これらの変更には確認が必要です。",
+        "once": "今回の変更のみ適用",
+        "onceDescription": "今回の変更のみ適用し、以降のアクセスは許可しません。",
+        "cancel": "これらの変更をキャンセル",
+        "cancelDescription": "これらの変更を適用しません。"
+      },
+      "nativePermissions": {
+        "header": "権限",
+        "confirmation": "この操作には確認が必要です。",
+        "once": "このターンのみ許可",
+        "onceDescription": "このターンに限り、これらの権限を付与します。",
+        "strict": "許可して厳密に審査",
+        "strictDescription": "このターンに権限を付与し、以降のすべてのコマンドを審査します。",
+        "deny": "権限を付与せず続行",
+        "denyDescription": "追加の権限を付与しません。"
+      },
+      "retry": "再接続",
+      "label": "表示モード",
+      "gui": "GUI",
+      "tui": "TUI",
+      "guiDescription": "グラフィカルインターフェース",
+      "tuiDescription": "ネイティブ端末インターフェース",
+      "connecting": "端末に接続中…",
+      "viewing": "閲覧のみ。他の画面から入力している可能性があります",
+      "controlling": "入力できます",
+      "exited": "ネイティブプロセスは終了しました",
+      "unavailable": "端末の接続が切れました。GUI に切り替えて確認できます。",
+      "gap": "端末画面の再同期が必要です。GUI で進捗を確認できます。",
+      "takeControl": "入力を引き継ぐ"
+    },
     "agentStatus": {
       "thinking": "考え中…",
       "generating": "生成中…",

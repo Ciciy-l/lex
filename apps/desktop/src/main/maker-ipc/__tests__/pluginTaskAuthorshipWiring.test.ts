@@ -9,26 +9,62 @@ const compile = (code: string) => ts.transpileModule(code, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
 }).outputText;
 
-it.each(['Do not publish.', '', undefined])('keeps live authority through the final delegated steer boundary: %j', async previous => {
-  const start = source.indexOf('await sess.steer(steerPayload as never, {');
+it.each(['Do not publish.', '', undefined])('keeps live authority through both final delegated steer boundaries: %j', async previous => {
+  const start = source.indexOf('const dispatch = native');
   expect(start).toBeGreaterThan(0);
   const end = source.indexOf('\n      });', start) + '\n      });'.length;
-  const deliver = new Function('sess', 'steerPayload', 'so', 'meta', 'restoredSteerIntent',
+  const deliver = new Function('sess', 'native', 'steerPayload', 'so', 'meta', 'restoredSteerIntent',
     'MAIN_OWNED_SEND_CONTEXT', 'AUTO_REVIEW_SOURCE_CONTENT', 'AUTO_REVIEW_USER_INTENT', 'AUTO_REVIEW_DELEGATED_CONTINUATION',
-    compile(`return (async () => { ${source.slice(start, end)} })();`));
-  const invoke = async (delegated: boolean) => {
+    compile('return (async () => { ' + source.slice(start, end) + ' })();'));
+  const invoke = async (delegated: boolean, isNative: boolean) => {
     let result;
-    const steer = vi.fn(async (content: string, options: SendOptions) => {
+    const record = (content: string, options: SendOptions) => {
       result = appendAutoReviewUserIntent(previous, content, options);
+    };
+    const steer = vi.fn(async function (this: unknown, content: string, options: SendOptions) {
+      expect(this).toBe(session);
+      record(content, options);
     });
-    await deliver({ steer }, 'Publish now', { [AUTO_REVIEW_SOURCE_CONTENT]: '',
-      ...(delegated ? { [AUTO_REVIEW_DELEGATED_CONTINUATION]: true } : {}) }, {}, 'Old persisted permission',
+    const acceptNativeSteer = vi.fn(async (input: { message: string }, options: SendOptions) => record(input.message, options));
+    const session = { steer, acceptNativeSteer };
+    const signal = new AbortController().signal;
+    const context = { origin: { kind: 'desktop' }, rawChannelText: 'Human instruction' };
+    const nativeInput = { message: 'Original native message', nativeSessionId: 'thread', nativeTurnId: 'turn', inputId: 'native-id', signal };
+    const options = { messageUuid: 'receipt', userName: 'User', signal, [MAIN_OWNED_SEND_CONTEXT]: context,
+      [AUTO_REVIEW_SOURCE_CONTENT]: '', ...(delegated ? { [AUTO_REVIEW_DELEGATED_CONTINUATION]: true } : {}) };
+    await deliver(session, isNative ? { input: nativeInput } : undefined, 'Publish now', options, { title: 'Task' }, 'Old persisted permission',
       MAIN_OWNED_SEND_CONTEXT, AUTO_REVIEW_SOURCE_CONTENT, AUTO_REVIEW_USER_INTENT, AUTO_REVIEW_DELEGATED_CONTINUATION);
-    expect(steer).toHaveBeenCalledOnce();
+    const expectedOptions = { logTitle: 'Task', messageUuid: 'receipt', userName: 'User', signal,
+      [MAIN_OWNED_SEND_CONTEXT]: context, [AUTO_REVIEW_SOURCE_CONTENT]: '',
+      [AUTO_REVIEW_DELEGATED_CONTINUATION]: delegated ? true : undefined,
+      [AUTO_REVIEW_USER_INTENT]: 'Old persisted permission' };
+    const checkFields = (actual: object, expected: object) => {
+      expect(Reflect.ownKeys(actual)).toHaveLength(Reflect.ownKeys(expected).length);
+      for (const key of Reflect.ownKeys(expected)) {
+        expect(Object.hasOwn(actual, key)).toBe(true);
+        expect(Reflect.get(actual, key), String(key)).toBe(Reflect.get(expected, key));
+      }
+    };
+    if (isNative) {
+      expect(acceptNativeSteer).toHaveBeenCalledOnce();
+      const [input, actualOptions] = acceptNativeSteer.mock.calls[0]!;
+      checkFields(input, { ...nativeInput, message: 'Publish now' });
+      checkFields(actualOptions, expectedOptions);
+      expect(steer).not.toHaveBeenCalled();
+      expect(nativeInput.message).toBe('Original native message');
+    } else {
+      expect(steer).toHaveBeenCalledOnce();
+      const [message, actualOptions] = steer.mock.calls[0]!;
+      expect(message).toBe('Publish now');
+      checkFields(actualOptions, expectedOptions);
+      expect(acceptNativeSteer).not.toHaveBeenCalled();
+    }
     return result;
   };
-  expect(await invoke(true)).toEqual(previous ?? 'Old persisted permission');
-  expect(await invoke(false)).toEqual('Old persisted permission');
+  for (const isNative of [false, true]) {
+    expect(await invoke(true, isNative)).toEqual(previous ?? 'Old persisted permission');
+    expect(await invoke(false, isNative)).toEqual('Old persisted permission');
+  }
 });
 
 it('restores human authorization for both live and cold internal delegated sends', () => {

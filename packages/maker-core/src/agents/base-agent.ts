@@ -1,4 +1,16 @@
+import type { AgentNativeRuntimeResolver } from './native-runtime.js';
+import type { AgentNativeStopResolver } from './native-stop.js';
+import type { CodexNativeFileApprovalCopy } from './codex/native-file-approval.js';
+import type { CodexNativePermissionCopy } from './codex/native-permissions.js';
+import type { StdioTransportOptions } from './codex/app-server/stdioTransport.js';
+import type { CodexNativeService } from './codex/native-service.js';
+import type { CodexNativePresentationFactory } from './codex/native-task-presentation.js';
 import type { AutoReviewUserIntent } from './shared/auto-review-decision.js';
+import type { AgentSessionPresentation, AgentPresentationOwner, AgentPresentationInitialization } from './presentation.js';
+import type { AgentNativeInputResolver, AgentNativeMediaResolver } from './native-input.js';
+import type { ClaudeLocalNativeSessionOptions } from './claude-code/local-session-launch.js';
+import type { ClaudeNativeSessionHandle } from './claude-code/native-session.js';
+import type { NativeMessageSource } from '@cindy/maker-shared/message-presentation';
 /**
  * BaseAgent — Claude Code / Codex 等具体 agent 的统一抽象。
  *
@@ -695,6 +707,16 @@ export interface PiSubagentRunnerLaunchRequest {
 }
 
 export interface AgentDeps {
+  /** Host-only dual-frontend service. Control-plane probes and SSH keep their own transports. */
+  createLocalCodexNativeService?: (options: StdioTransportOptions) => CodexNativeService;
+  /** Optional task-owned frontend; requires the same concrete native service. */
+  createLocalCodexNativePresentation?: CodexNativePresentationFactory;
+  /** Fresh original TUI and owning-host creation, before the native id exists. */
+  prepareLocalCodexNativePresentation?: import('./codex/native-task-presentation.js').CodexNativeFreshPresentationFactory;
+  /** Host selects ordinary local tasks before cache lookup; never a vendor flag. */
+  useLocalCodexNativePresentation?: (options: Pick<StartSessionOptions, 'sessionId' | 'nativePresentation' | 'reviewMode' | 'remoteHostId'>) => boolean;
+  /** Host-only native adapter injection. Absent until native/remote acceptance; never a vendor option. */
+  createLocalClaudeNativeSession?: (options: ClaudeLocalNativeSessionOptions) => Promise<ClaudeNativeSessionHandle>;
   /** Cindy-only local Skill overrides. Freeze at native runtime startup; never apply to SSH. */
   getDisabledSkillPaths?: () => readonly string[];
   /** Host-isolated discovery; native runtime loading stays unchanged. */
@@ -893,6 +915,10 @@ export interface AgentDeps {
    * interaction surfaces, so maker-core never hard-codes one UI language.
    */
   getPiExtensionUiStrings?: () => PiExtensionUiStrings;
+
+  /** Host-localized choices for native per-operation permission confirmation. */
+  getCodexNativePermissionCopy?: () => CodexNativePermissionCopy;
+  getCodexNativeFileApprovalCopy?: () => CodexNativeFileApprovalCopy;
 
   /**
    * Pi-only: start a durable Subagent runner through a host-supported Node
@@ -1816,6 +1842,8 @@ export class TurnDispatchRejectedError extends Error {
 }
 
 export interface StartSessionOptions {
+  /** Host-owned GUI/TUI capability for this task, frozen before service lookup. */
+  nativePresentation?: boolean;
   /**
    * Business 层 session id (host 调用 maker.createSession 时传的 opts.id, 由
    * maker.ts 透传到这里)。agent 把它放到 McpProviderContext.sessionId, 让 MCP
@@ -2058,6 +2086,12 @@ export interface SendOptions {
    */
   onTranscriptUserEntry?: (entryId: string) => void | Promise<void>;
   /**
+   * Host-only receipt for this input's engine-generated UUID and provenance.
+   * May arrive after an uncertain dispatch result. Association failure must
+   * never make accepted native input retryable or create a second user row.
+   */
+  onNativeUserMessage?: (source: NativeMessageSource) => void | Promise<void>;
+  /**
    * 当前用户的展示名 (host / renderer 在调 send 时提供)。仅用于 turn-start 时
    * push status event 的文案 — agent 拼成 "<userName> Just Wait ..." 让 UI 个人化;
    * 缺省时 fallback "Just Wait ..."。不参与任何业务逻辑。
@@ -2250,6 +2284,15 @@ export interface AgentMcpServerToolsReport {
 }
 
 export interface AgentSessionHandle {
+  /** Native composer admission. A missing resolver must refuse provider execution. */
+  setNativeInputResolver?(resolver: AgentNativeInputResolver, importMedia?: AgentNativeMediaResolver): void;
+  /** Native menus share the product runtime-selection transaction. */
+  setNativeRuntimeResolver?(resolver: AgentNativeRuntimeResolver): void;
+  setNativeStopResolver?(resolver: AgentNativeStopResolver): void;
+  /** Native UI of this running task; attaching a view must never start another agent. */
+  readonly presentation?: AgentSessionPresentation;
+  /** Main calls only after account, DB, input, controls and interactions are bound. */
+  activatePresentation?(owner: AgentPresentationOwner): Promise<AgentPresentationInitialization>;
   /** Canonical physical Skill identities frozen at native runtime startup. */
   readonly disabledSkillPaths?: readonly string[];
   getCodexContextWindowInfo?(): Promise<CodexContextWindowInfo | null>;
@@ -2327,7 +2370,7 @@ export interface AgentSessionHandle {
   steer(message: UserMessage, opts?: SendOptions): Promise<void>;
 
   /** 中断当前 turn */
-  abort(): Promise<void>;
+  abort(options?: { expectedTurnId: string; signal: AbortSignal }): Promise<void>;
 
   /**
    * 请求当前 turn 在 provider 的安全边界停止。
@@ -2433,6 +2476,8 @@ export interface AgentSessionHandle {
 
   /** 运行时切换 effort */
   setEffort?(effort: Effort): Promise<void>;
+  /** Clear the reasoning axis in place when the native runtime supports it. */
+  clearEffort?(): Promise<void>;
 
   /** 运行时切换 permission mode */
   setPermissionMode?(mode: PermissionMode): Promise<void>;
@@ -2754,7 +2799,7 @@ export abstract class BaseAgent {
   }
 
   async requiresCodexThreadHostTransfer(
-    opts: Pick<StartSessionOptions, 'sessionId' | 'model' | 'providerId' | 'reviewMode' | 'remoteHostId'> & { threadId: string },
+    opts: Pick<StartSessionOptions, 'sessionId' | 'model' | 'providerId' | 'reviewMode' | 'remoteHostId' | 'nativePresentation'> & { threadId: string },
   ): Promise<boolean> {
     void opts;
     return false;

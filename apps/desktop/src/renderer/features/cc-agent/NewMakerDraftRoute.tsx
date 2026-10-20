@@ -64,6 +64,7 @@ import { useHasAnyRemoteTarget } from '@/hooks/useHasAnyReadyRemoteHost';
 import { useSelectableDevices } from '@/hooks/useControllableDevices';
 import { useProviderOnboarding } from '@/hooks/useProviderOnboarding';
 import { HomeZeroModelAction } from './HomeZeroModelAction';
+import { AgentPresentationSwitch } from './AgentPresentationSwitch';
 import { resolveDeviceLinkSubmission } from './deviceLinkCreateArgs';
 import { commitRemoteSessionHandoff } from './remoteSessionHandoff';
 import { remoteProjectsStore } from '@/features/device-link/remoteProjectsStore';
@@ -3018,6 +3019,69 @@ export function NewMakerDraftRoute() {
     sendInFlightRef.current = value;
     setSendInFlight(value);
   }, []);
+  const [nativeDraftOpening, setNativeDraftOpening] = useState(false);
+  const nativeDraftMounted = useRef(true);
+  useEffect(() => {
+    nativeDraftMounted.current = true;
+    return () => { nativeDraftMounted.current = false; };
+  }, []);
+  // Only the local, single-task Codex path has a native startup contract yet.
+  // Never silently discard a selected worktree, remote target or collaboration.
+  const canOpenDraftNative = persistedAgentKind === 'codex' && !isDeviceLinkDraft &&
+    !isRemoteProjectDraft && !effectiveRemoteHostId && !effectiveCollab.enabled &&
+    !wtEnabled && !!draftInitialModel && !showProviderOnboardingCard;
+  const handleDraftPresentation = async (mode: 'gui' | 'tui') => {
+    if (mode !== 'tui' || !canOpenDraftNative || sendInFlightRef.current) return;
+    const owner = getDataOwnerGeneration();
+    const isCurrent = () => nativeDraftMounted.current &&
+      owner.dataOwnerId === dataOwnerId && isDataOwnerGenerationCurrent(owner);
+    markSendInFlight(true);
+    setNativeDraftOpening(true);
+    try {
+      const { proceed } = await vendorAuthGate.checkAndConfirm(authVendor);
+      if (!proceed || !isCurrent()) return;
+      // Persist the ordinary unnamed task, without sending, titling, or creating
+      // an upstream thread here. SessionView uses the existing startup receipt.
+      const newSession = await createSession({
+        id: localDraftSessionIdRef.current,
+        agentKind: persistedAgentKind,
+        model: draftInitialModel,
+        effort: draftInitialEffort,
+        permissionMode: chatInitialPermissionMode,
+        fastMode: effectiveFastMode,
+        planModeEnabled: effectivePlanMode,
+        workingDir: effectiveWorkingDir ?? undefined,
+        workspaceKind: effectiveWorkingDir ? 'project' : 'dialogue',
+        extraDirs: effectiveExtraDirs,
+        writableDirs: effectiveWritableDirs,
+        providerId: chatInitialProviderId ?? null,
+      });
+      if (!isCurrent()) return;
+      if (!newSession) { toastCreateSessionFailed(); return; }
+      carryDraftFavoriteAnchorToSession(newSession.id, persistedAgentKind,
+        draftInitialModel, chatInitialProviderId ?? null);
+      const composer = getComposerDraft(NEW_MAKER_DRAFT_KEY);
+      if (composer) {
+        const attachments = await rehomeDraftAttachments(composer.attachments, newSession.id);
+        const browserComments = await rehomeDraftBrowserComments(composer.browserComments, newSession.id);
+        if (!isCurrent()) return;
+        saveComposerDraft(newSession.id, { ...composer, attachments: attachments ?? [], browserComments });
+        clearComposerDraftAndNotify(NEW_MAKER_DRAFT_KEY);
+        attachmentState.clearFiles();
+      }
+      resetDraftWorkspaceAfterSend();
+      navigate('/cc-agent/' + newSession.id, {
+        replace: true,
+        flushSync: true,
+        state: { nativePresentation: { sessionId: newSession.id, ownerId: dataOwnerId } },
+      });
+    } catch (error) {
+      if (isCurrent()) { log.error('[draft native startup]', error); toastCreateSessionFailed(error); }
+    } finally {
+      markSendInFlight(false);
+      if (nativeDraftMounted.current) setNativeDraftOpening(false);
+    }
+  };
 
   /**
    * 换设备(#807)。**一并清掉 workingDir 与 extraDirs** —— 上一台机器的路径在新机器上
@@ -5592,6 +5656,7 @@ export function NewMakerDraftRoute() {
                 <div className="w-full">
                   <ChatInput
                     onSend={handleSend}
+                    disabled={nativeDraftOpening}
                     onBeforeVoiceInputStart={handleBeforeVoiceInputStart}
                     externalDragOver={pageDragOver}
                     visualVariant="create-agent"
@@ -5726,6 +5791,11 @@ export function NewMakerDraftRoute() {
                     }
                   />
                 </div>
+                {canOpenDraftNative && (
+                  <div className="mt-3 flex w-full items-center justify-start">
+                    <AgentPresentationSwitch mode="gui" onChange={(mode) => { void handleDraftPresentation(mode); }} />
+                  </div>
+                )}
                 {/* device-link:为远程设备项目新建对话时的明显标识。让用户清楚这条对话会建在
                     被控设备上、属于那台机器的项目,而不是本机。放输入框正下方并与其水平居中
                     (父列 items-start,靠 self-center 相对 w-full 的输入框居中)。 */}

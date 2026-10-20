@@ -30,6 +30,12 @@
     "expand": "展開",
     "automationOriginNamed": "自動化タスク「{{name}}」から送信",
     "automationOrigin": "自動化タスクから送信",
+    "nativeInput": {
+      "pending": "エンジンの処理待ち",
+      "unconsumed": "エンジンはこのメッセージを処理していません",
+      "unknown": "メッセージの処理状態は未確認です"
+    },
+    "nativePluginSource": "プラグイン：{{name}}",
     "modelMismatch": "今回は選択した {{selected}} ではなく {{actual}} が応答しました（サーバー側の一時的なダウングレード）",
     "copyStateCopying": "コピー中",
     "copyStateCopied": "コピーしました",

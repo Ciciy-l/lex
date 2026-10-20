@@ -1,3 +1,5 @@
+import { AgentNativeRuntimeBinding, type AgentNativeRuntimeResolver } from './agents/native-runtime.js';
+import { AgentNativeStopBinding, type AgentNativeStopResolver } from './agents/native-stop.js';
 /**
  * Session — 单次 agent 会话的上层包装。
  *
@@ -11,6 +13,8 @@
  */
 
 import type { AutoReviewUserIntent } from './agents/shared/auto-review-decision.js';
+import type { AgentSessionPresentation, AgentPresentationInitialization } from './agents/presentation.js';
+import type { AgentNativeInput, AgentNativeInputRequest, AgentNativeInputResolver, AgentNativeMediaInput, AgentNativeMediaResolver } from './agents/native-input.js';
 import { randomUUID } from 'node:crypto';
 import { ToolLoopGuard } from './agents/shared/loop-guard.js';
 import { AsyncUserQuestions } from './agents/shared/async-user-questions.js';
@@ -337,6 +341,14 @@ export interface SessionSendOptions extends SendOptions {
   onDispatching?: () => void;
 }
 
+/**
+ * An input held by the task's native adapter before provider execution. This is
+ * a host capability, never an IPC payload. accept continues that same input; it
+ * must not enqueue another prompt. The transformed message includes the normal
+ * vision bridge, and the adapter must preserve those bytes before acknowledging.
+ */
+export type SessionNativeInput = AgentNativeInput;
+
 export interface SessionTurnLifecycleObserver {
   /** Awaited after option validation and before any provider-owned start hook or send. */
   beforeProviderStart(turnGeneration: number): void | Promise<void>;
@@ -434,6 +446,53 @@ export class Session {
   readonly remoteHostId: string | null;
 
   private readonly handle: AgentSessionHandle;
+
+  /** Views share the live task's native runtime; they do not own its lifecycle. */
+  get presentation(): AgentSessionPresentation | undefined {
+    return this.handle.presentation;
+  }
+  private presentationActivation?: {
+    controller: AbortController; started: boolean;
+    settled: Promise<AgentPresentationInitialization>;
+    complete(result: AgentPresentationInitialization): void;
+  };
+  /** Awaiting this receipt never launches a frontend or waits inside createSession. */
+  get presentationInitialization(): Promise<AgentPresentationInitialization> | undefined {
+    return this.presentationActivation?.settled;
+  }
+  activatePresentation(
+    isOwnerCurrent: () => boolean,
+    startup?: Promise<AgentPresentationInitialization>,
+  ): () => void {
+    const activation = this.presentationActivation;
+    if (!activation || activation.started) return () => {};
+    activation.started = true;
+    const input = this.nativeInputBinding, nativeId = this.sdkSessionId;
+    const current = () => !activation.controller.signal.aborted && Boolean(input)
+      && this.nativeInputBinding === input && !input!.controller.signal.aborted
+      // Stop interrupts a turn, not the task-owned frontend. A presentation
+      // read during this transient state must not permanently retire its PTY.
+      && !this.terminationStarted && (this.status === 'active' || this.status === 'aborting') && this.sdkSessionId === nativeId
+      && Boolean(this.interactionListener) && isOwnerCurrent();
+    const retire = () => {
+      activation.controller.abort();
+      activation.complete({ status: 'unavailable', reason: 'owner-changed' });
+    };
+    if (!current()) { retire(); return retire; }
+    const signal = AbortSignal.any([activation.controller.signal, input!.controller.signal]);
+    signal.addEventListener('abort', () => activation.complete({ status: 'unavailable', reason: 'owner-changed' }), { once: true });
+    // Main may still be hydrating route/effort stores after installing owners.
+    // Only presentation waits for that receipt; GUI send and createSession do not.
+    // The abort listener above settles immediately even if hydration never returns.
+    void Promise.resolve(startup).then(result => {
+      if (!current()) return { status: 'unavailable' as const, reason: 'owner-changed' as const };
+      if (result?.status === 'unavailable') return result;
+      return this.handle.activatePresentation!({ signal, isCurrent: current });
+    }).then(result => {
+      activation.complete(current() ? result : { status: 'unavailable', reason: 'owner-changed' });
+    }, () => { activation.complete({ status: 'unavailable', reason: 'startup-failed' }); });
+    return retire;
+  }
   private readonly logger: Logger;
   /** 视觉桥钩子（层 B）。缺省 = 未启用，send 完全跳过。 */
   private readonly visionBridge: VisionBridgeHook | undefined;
@@ -558,6 +617,13 @@ export class Session {
   /** 优雅停止所需的 turn 控制事实；不承担 UI/MCP 会话状态投影。 */
   private turnControlState: TurnControlState | null = null;
   private readonly asyncUserQuestions: AsyncUserQuestions;
+  private readonly nativeInputs = new WeakSet<SessionNativeInput>();
+  private readonly nativeStopBinding = new AgentNativeStopBinding(() => this.sdkSessionId,
+    () => !this.terminationStarted && this.status !== 'closed' && this.status !== 'error', () => this.getCurrentTurnId());
+  private readonly nativeRuntimeBinding = new AgentNativeRuntimeBinding(() => this.sdkSessionId,
+    () => !this.terminationStarted && this.status === 'active');
+  private nativeInputBinding: { listener: AgentNativeInputResolver; importMedia?: AgentNativeMediaResolver; controller: AbortController } | null = null;
+  private readonly nativeInputRequests = new WeakSet<AgentNativeInputRequest>();
 
   constructor(opts: SessionOptions) {
     this.hostStartupPreferences = opts.hostStartupPreferences
@@ -606,9 +672,106 @@ export class Session {
       }
       return await this.interactionListener(req);
     }));
+    this.handle.setNativeInputResolver?.(input => this.resolveNativeInput(input), input => this.resolveNativeMedia(input));
+    this.handle.setNativeRuntimeResolver?.(request => this.nativeRuntimeBinding.resolve(request));
+    this.handle.setNativeStopResolver?.(request => this.nativeStopBinding.resolve(request));
+    if (this.handle.activatePresentation) {
+      let complete!: (result: AgentPresentationInitialization) => void;
+      const settled = new Promise<AgentPresentationInitialization>(resolve => { complete = resolve; });
+      this.presentationActivation = { controller: new AbortController(), started: false, settled, complete };
+    }
   }
 
   // ── 公开 API ─────────────────────────────────────────────────────────────
+
+  onNativeStop(resolve: AgentNativeStopResolver): () => void {
+    this.ensureActive(); return this.nativeStopBinding.bind(resolve);
+  }
+
+  /** Bind settings to the same product task, independently of attached views. */
+  onNativeRuntimeSelection(resolve: AgentNativeRuntimeResolver): () => void {
+    this.ensureActive();
+    return this.nativeRuntimeBinding.bind(resolve);
+  }
+
+  /** One product owner for native input; view subscriptions never own admission. */
+  onNativeInput(listener: AgentNativeInputResolver, importMedia?: AgentNativeMediaResolver): () => void {
+    this.ensureActive();
+    if (this.nativeInputBinding) throw new Error('Native input already has a product owner');
+    const binding = { listener, importMedia, controller: new AbortController() };
+    this.nativeInputBinding = binding;
+    return () => {
+      binding.controller.abort();
+      if (this.nativeInputBinding === binding) this.nativeInputBinding = null;
+    };
+  }
+
+  private retireNativeInputBinding(): void {
+    this.presentationActivation?.controller.abort();
+    this.presentationActivation?.complete({ status: 'unavailable', reason: 'owner-changed' });
+    this.nativeInputBinding?.controller.abort();
+    this.nativeInputBinding = null;
+  }
+
+  private async resolveNativeMedia(input: AgentNativeMediaInput) {
+    const binding = this.nativeInputBinding;
+    if (!binding?.importMedia) throw new TurnDispatchRejectedError('Native media has no current product owner');
+    const nativeSessionId = input.sessionId;
+    const signal = AbortSignal.any([input.signal, binding.controller.signal]);
+    const assertCurrent = () => {
+      if (signal.aborted || this.terminationStarted || this.status !== 'active'
+        || this.nativeInputBinding !== binding || !nativeSessionId || nativeSessionId !== this.sdkSessionId) {
+        throw new TurnDispatchRejectedError('Native media runtime is no longer current');
+      }
+    };
+    assertCurrent();
+    if (!input.messageId || !Number.isSafeInteger(input.index) || input.index < 0) {
+      throw new TurnDispatchRejectedError('Native media identity is invalid');
+    }
+    const result = await binding.importMedia({ ...input, block: structuredClone(input.block), signal });
+    assertCurrent();
+    return structuredClone(result);
+  }
+
+  private async resolveNativeInput(input: AgentNativeInputRequest): Promise<void> {
+    const binding = this.nativeInputBinding;
+    if (!binding || this.nativeInputRequests.has(input)) {
+      throw new TurnDispatchRejectedError('Native input has no current product owner or was already delivered');
+    }
+    this.nativeInputRequests.add(input);
+    const nativeSessionId = input.nativeSessionId;
+    const signal = AbortSignal.any([input.signal, binding.controller.signal]);
+    const assertCurrent = () => {
+      if (signal.aborted || this.terminationStarted || this.status !== 'active'
+        || this.nativeInputBinding !== binding || !nativeSessionId || nativeSessionId !== this.sdkSessionId) {
+        throw new TurnDispatchRejectedError('Native input runtime is no longer current');
+      }
+    };
+    assertCurrent();
+    if (!input.nativeMessageId || (input.source && (input.source.sessionId !== nativeSessionId
+      || input.source.messageId !== input.nativeMessageId))) {
+      throw new TurnDispatchRejectedError('Native input message identity changed');
+    }
+    const accept = input.accept.bind(input);
+    let attempted = false, accepted = false;
+    await binding.listener({
+      nativeSessionId, nativeMessageId: input.nativeMessageId,
+      ...(input.nativeTurnId ? { nativeTurnId: input.nativeTurnId } : {}),
+      ...(input.consumption ? { consumption: input.consumption } : {}),
+      message: structuredClone(input.message),
+      ...(input.source ? { source: structuredClone(input.source) } : {}), signal,
+      accept: async (message, options) => {
+        assertCurrent();
+        if (attempted) throw new TurnDispatchRejectedError('Native input was already admitted');
+        attempted = true;
+        await accept(message, { ...options, signal: options.signal ? AbortSignal.any([signal, options.signal]) : signal });
+        assertCurrent();
+        accepted = true;
+      },
+    });
+    assertCurrent();
+    if (!accepted) throw new TurnDispatchRejectedError('Native input was not admitted');
+  }
 
   /** 当前/最近一次已建立 reservation 的 turn 代号；只用于跨 await 识别是否仍是同一轮。 */
   getTurnGeneration(): number {
@@ -748,6 +911,41 @@ export class Session {
     return this.dispatchSend(message, opts, false);
   }
 
+  /** Admit a held native input through the same reservation/policy/history path. */
+  async acceptNativeInput(input: SessionNativeInput, opts?: SessionSendOptions): Promise<SessionSendResult> {
+    const nativeSessionId = input.nativeSessionId;
+    const assertIdentity = () => {
+      if (!nativeSessionId || nativeSessionId !== this.sdkSessionId) {
+        throw new TurnDispatchRejectedError('Native input belongs to a different session');
+      }
+    };
+    assertIdentity();
+    if (this.nativeInputs.has(input)) throw new TurnDispatchRejectedError('Native input was already admitted');
+    this.nativeInputs.add(input);
+    const accept = input.accept.bind(input);
+    return this.dispatchSend(input.message, {
+      ...opts,
+      afterTurnReserved: async () => {
+        assertIdentity();
+        await opts?.afterTurnReserved?.();
+        assertIdentity();
+      },
+      beforeProviderStart: async () => {
+        assertIdentity();
+        await opts?.beforeProviderStart?.();
+        assertIdentity();
+      },
+      onAccepted: async () => {
+        assertIdentity();
+        await opts?.onAccepted?.();
+        assertIdentity();
+      },
+    }, false, async (message, sendOptions) => {
+      assertIdentity();
+      await accept(message, sendOptions);
+    });
+  }
+
   /**
    * Host-owned silent-stop continuation. This is the only send admitted while a
    * retiring runtime has claimed the current generation; ordinary `send()` stays
@@ -764,6 +962,7 @@ export class Session {
     message: UserMessage | string,
     opts: SessionSendOptions | undefined,
     allowRetirementContinuation: boolean,
+    nativeDispatch?: (message: UserMessage, opts: SendOptions) => Promise<void>,
   ): Promise<SessionSendResult> {
     const {
       afterTurnReserved,
@@ -957,11 +1156,13 @@ export class Session {
         onDispatching?.();
         this.insideProviderSendSync = true;
         try {
-          await this.handle.send(msg, {
+          const sendOptions: SendOptions = {
             ...handleOpts,
             [AUTO_REVIEW_SOURCE_CONTENT]: autoReviewSourceContent,
             signal: reservation.abortController.signal,
-          });
+          };
+          if (nativeDispatch) await nativeDispatch(msg, sendOptions);
+          else await this.handle.send(msg, sendOptions);
         } finally {
           this.insideProviderSendSync = false;
         }
@@ -1135,6 +1336,27 @@ export class Session {
   }
 
   async steer(message: UserMessage | string, opts?: SendOptions): Promise<void> {
+    return this.dispatchSteer(message, opts);
+  }
+
+  /** Same policy and vision preparation as GUI steering, with one native continuation. */
+  async acceptNativeSteer(input: SessionNativeInput, opts?: SendOptions): Promise<void> {
+    const check = () => {
+      if (!input.nativeSessionId || this.sdkSessionId !== input.nativeSessionId
+        || !input.nativeTurnId || this.getCurrentTurnId() !== input.nativeTurnId || opts?.signal?.aborted) {
+        throw new TurnDispatchRejectedError('Native steering belongs to another turn');
+      }
+    };
+    check();
+    if (this.nativeInputs.has(input)) throw new TurnDispatchRejectedError('Native input was already admitted');
+    this.nativeInputs.add(input);
+    return this.dispatchSteer(input.message, opts, async (message, options) => {
+      check(); await input.accept(message, options);
+    });
+  }
+
+  private async dispatchSteer(message: UserMessage | string, opts?: SendOptions,
+    dispatch?: (message: UserMessage, options: SendOptions) => Promise<void>): Promise<void> {
     let msg: UserMessage = typeof message === 'string'
       ? { type: 'user', content: message }
       : message;
@@ -1162,10 +1384,12 @@ export class Session {
       throw new Error(`Session ${this.id} has no active turn to steer`);
     }
     this.startEventLoopIfNeeded();
-    await this.handle.steer(msg, { ...opts, [AUTO_REVIEW_SOURCE_CONTENT]: autoReviewSourceContent });
+    await (dispatch ?? this.handle.steer.bind(this.handle))(msg, { ...opts, [AUTO_REVIEW_SOURCE_CONTENT]: autoReviewSourceContent });
   }
 
-  async abort(): Promise<void> {
+  async abort(options?: { expectedTurnId: string; signal: AbortSignal }): Promise<void> {
+    if (options && (options.signal.aborted || !options.expectedTurnId
+      || this.getCurrentTurnId() !== options.expectedTurnId)) throw new Error('Native stop turn changed');
     if (this.status === 'closed') return;
     if (this.status === 'error') return;
     this.asyncUserQuestions.expire('session_aborted');
@@ -1185,7 +1409,7 @@ export class Session {
     this.scheduleAbortRecoveryCheck(MANUAL_ABORT_RECOVERY_GRACE_MS, 'manual-abort');
     this.setStatus('aborting');
     try {
-      const aborting = this.handle.abort();
+      const aborting = options ? this.handle.abort(options) : this.handle.abort();
       // Stop revokes Host continuation immediately. The RPC may never settle;
       // do not let its acknowledgement own an already-settled turn's retirement.
       this.settleHostTurnContinuation(abortGeneration);
@@ -1399,6 +1623,9 @@ export class Session {
     if (this.status === 'closed') return Promise.resolve();
 
     this.terminationStarted = true;
+    this.retireNativeInputBinding();
+    this.nativeRuntimeBinding.retire();
+    this.nativeStopBinding.retire();
     this.asyncUserQuestions.expire('session_closed');
     // 拆除开始即作废进行中的工具循环复核,迟到结论不得再中断。
     this.turnControlState?.toolLoopMonitor?.dispose();
@@ -1550,6 +1777,9 @@ export class Session {
     const teardown: AgentSessionTeardownOptions = opts ?? { reason: 'account-boundary' };
     if (this.status === 'closed') return;
     this.terminationStarted = true;
+    this.retireNativeInputBinding();
+    this.nativeRuntimeBinding.retire();
+    this.nativeStopBinding.retire();
     this.asyncUserQuestions.expire('session_closed');
     // 拆除开始即作废进行中的工具循环复核,迟到结论不得再中断。
     this.turnControlState?.toolLoopMonitor?.dispose();
@@ -1809,6 +2039,14 @@ export class Session {
     opts?: { providerId?: string | null },
   ): Promise<boolean> {
     return await this.handle.requiresModelSwitchRebuild?.(model, opts) ?? false;
+  }
+
+  canClearEffort(): boolean { return typeof this.handle.clearEffort === 'function'; }
+
+  async clearEffort(): Promise<void> {
+    this.ensureActive();
+    if (!this.handle.clearEffort) throw new NotSupportedError('effort', { supported: false, reason: 'not-implemented' });
+    await this.handle.clearEffort();
   }
 
   async setEffort(effort: Effort): Promise<void> {
@@ -3299,6 +3537,9 @@ export class Session {
       this.hasUnsettledTurn();
     this.logger.debug('event loop ended (handle dead), auto-closing session', { unfinishedTurn });
     this.terminationStarted = true;
+    this.retireNativeInputBinding();
+    this.nativeRuntimeBinding.retire();
+    this.nativeStopBinding.retire();
     this.closePromise = Promise.resolve();
     this.settleUnfinishedTurn('Session event loop stopped unexpectedly without a terminal event');
     this.clearTurnStallWatchdog();

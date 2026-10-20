@@ -9380,6 +9380,12 @@
       "attachmentSourceMissing": "Cannot save attachment because the source file no longer exists",
       "attachmentSaveFailed": "Cannot save attachment. Check the destination folder permissions and retry",
       "automationSent": "Sent by automation",
+      "nativeInput": {
+        "pending": "Waiting for the engine",
+        "unconsumed": "Not processed by the engine",
+        "unknown": "Message processing status unknown"
+      },
+      "nativePluginSource": "Plugin: {{name}}",
       "automationSentNamed": "Sent by automation \"{{name}}\"",
       "automationViewTask": "View automation task",
       "orcaFromLead": "Message from Lead",
@@ -9604,6 +9610,43 @@
     }
   },
   "ccAgent": {
+    "presentation": {
+      "startupUnavailable": {
+        "label": "TUI Unavailable",
+        "startup": "TUI could not connect to this task. Continue in GUI."
+      },
+      "nativeFileApproval": {
+        "header": "File changes",
+        "confirmation": "{{appName}} requires confirmation for these changes.",
+        "once": "Apply these changes once",
+        "onceDescription": "Apply only these changes without granting future access.",
+        "cancel": "Cancel these changes",
+        "cancelDescription": "Do not apply these changes."
+      },
+      "nativePermissions": {
+        "header": "Permissions",
+        "confirmation": "{{appName}} requires confirmation for this operation.",
+        "once": "Allow for this turn",
+        "onceDescription": "Grant only these permissions for this turn.",
+        "strict": "Allow with strict review",
+        "strictDescription": "Grant for this turn and review every subsequent command.",
+        "deny": "Continue without permissions",
+        "denyDescription": "Do not grant additional permissions."
+      },
+      "retry": "Reconnect",
+      "label": "Presentation",
+      "gui": "GUI",
+      "tui": "TUI",
+      "guiDescription": "Graphical interface",
+      "tuiDescription": "Native terminal interface",
+      "connecting": "Connecting to terminal…",
+      "viewing": "View only; another view may be entering input",
+      "controlling": "Input enabled",
+      "exited": "This native process has exited",
+      "unavailable": "Terminal disconnected. Switch to GUI to continue viewing.",
+      "gap": "Terminal display needs synchronization. View progress in GUI.",
+      "takeControl": "Take control"
+    },
     "agentStatus": {
       "thinking": "Thinking…",
       "generating": "Generating…",
