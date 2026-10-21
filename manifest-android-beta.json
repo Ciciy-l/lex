@@ -1,18 +1,28 @@
 {
   "schemaVersion": 1,
-  "version": "0.1.7-rc.2",
-  "versionCode": 1000762,
+  "version": "0.1.7",
+  "versionCode": 1000799,
   "packageName": "io.github.ciciyl.lex",
-  "size": 129531066,
-  "sha256": "6e00a89cb6e6ea6887ae730aa8905adfd5b27b988c6605edbc69a163c860800d",
+  "size": 129531058,
+  "sha256": "092d6c26708c3ae9c9c03697e0da7e965879faef89aad5307068b2160ebe40bc",
   "certificateSha256": "86261bb1fea32e9122a7934f5f62d3b100c2248e032d148837ea997ce0b33a14",
   "platform": "android",
-  "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.7-rc.2/Lex-0.1.7-rc.2-Android.apk",
-  "releaseUrl": "https://github.com/Ciciy-l/lex/releases/tag/v0.1.7-rc.2",
+  "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.7/Lex-0.1.7-Android.apk",
+  "releaseUrl": "https://github.com/Ciciy-l/lex/releases/tag/v0.1.7",
   "contentByLocale": {
     "zh-CN": {
-      "intro": "Lex 0.1.7-rc.2 预发布版改善桌面四种 Agent 引擎的主要 GUI/TUI 交互，并支持重启后恢复已保存的草稿。",
+      "intro": "Lex 0.1.7 正式版整理模型选择与可选登录流程，并汇总桌面端主要 GUI/TUI 交互和草稿恢复改进。",
       "topics": [
+        {
+          "id": "model-selection",
+          "title": "更清晰的模型选择",
+          "text": "模型名称优先展示，渠道与协议合并为一处紧凑入口，保留原有选项；长名称可查看完整提示。"
+        },
+        {
+          "id": "optional-sign-in",
+          "title": "打开即可使用",
+          "text": "未登录时默认进入主界面；主动登录先选择账号服务（本轮仅 Cindy），再进入现有登录流程，取消可返回。已登录账号仍正常恢复，在线能力继续遵守原登录与权限要求。"
+        },
         {
           "id": "same-task-switching",
           "title": "同一任务，切换继续",
@@ -40,14 +50,29 @@
         },
         {
           "id": "upgrade",
-          "title": "升级至预发布版",
-          "text": "0.1.7-rc.2 仅进入 beta 更新通道，正式更新通道仍为 0.1.6，官网默认下载继续选择稳定版。下载入口：https://github.com/Ciciy-l/lex/releases 。Android 保持包名 io.github.ciciyl.lex 与永久签名，可直接覆盖安装，请勿先卸载。暂不提供 iOS 安装包。"
+          "title": "升级至正式版",
+          "text": "0.1.7 发布后进入 stable 与 beta 更新通道，官网默认下载随正式发布更新。下载：https://github.com/Ciciy-l/lex/releases 。Android 保持包名 io.github.ciciyl.lex 与永久签名，可直接覆盖安装，请勿先卸载。桌面安装包可能尚未签名或公证，请核对实际发行说明与系统警示。暂不提供 iOS 安装包。"
+        },
+        {
+          "id": "coming-soon",
+          "title": "敬请期待",
+          "text": "Lex 自建中转服务正在开发，敬请期待。"
         }
       ]
     },
     "zh-TW": {
-      "intro": "Lex 0.1.7-rc.2 預發佈版改善桌面四種 Agent 引擎的主要 GUI/TUI 互動，並支援重新啟動後還原已儲存的草稿。",
+      "intro": "Lex 0.1.7 正式版整理模型選擇與可選登入流程，並彙整桌面端主要 GUI/TUI 互動和草稿還原改進。",
       "topics": [
+        {
+          "id": "model-selection",
+          "title": "更清楚的模型選擇",
+          "text": "優先顯示模型名稱，將渠道與協議合併為一處精簡入口，保留原有選項；長名稱可查看完整提示。"
+        },
+        {
+          "id": "optional-sign-in",
+          "title": "開啟即可使用",
+          "text": "未登入時預設進入主畫面；主動登入先選擇帳號服務（本輪僅 Cindy），再進入現有登入流程，取消可返回。已登入帳號仍正常還原，線上功能繼續遵守原登入與權限要求。"
+        },
         {
           "id": "same-task-switching",
           "title": "同一任務，切換繼續",
@@ -75,14 +100,29 @@
         },
         {
           "id": "upgrade",
-          "title": "升級至預發佈版",
-          "text": "0.1.7-rc.2 僅進入 beta 更新渠道，正式更新渠道仍為 0.1.6，官網預設下載繼續選擇穩定版。下載入口：https://github.com/Ciciy-l/lex/releases 。Android 保持套件名稱 io.github.ciciyl.lex 與永久簽章，可直接覆蓋安裝，請勿先解除安裝。暫不提供 iOS 安裝包。"
+          "title": "升級至正式版",
+          "text": "0.1.7 發佈後進入 stable 與 beta 更新渠道，官網預設下載隨正式發佈更新。下載：https://github.com/Ciciy-l/lex/releases 。Android 保持套件名稱 io.github.ciciyl.lex 與永久簽章，可直接覆蓋安裝，請勿先解除安裝。桌面安裝套件可能尚未簽章或公證，請核對實際發行說明與系統警示。暫不提供 iOS 安裝套件。"
+        },
+        {
+          "id": "coming-soon",
+          "title": "敬請期待",
+          "text": "Lex 自建中轉服務正在開發，敬請期待。"
         }
       ]
     },
     "en": {
-      "intro": "Lex 0.1.7-rc.2 improves everyday GUI/TUI interaction across four desktop Agent engines and restores saved drafts after desktop restarts.",
+      "intro": "Lex 0.1.7 is a stable release with clearer model choices, optional sign-in, and improvements to everyday desktop GUI/TUI interaction and draft recovery.",
       "topics": [
+        {
+          "id": "model-selection",
+          "title": "Clearer Model Choices",
+          "text": "The model name comes first, with a single compact channel/protocol control. Existing choices remain available, and full names appear in tooltips."
+        },
+        {
+          "id": "optional-sign-in",
+          "title": "Start Without an Account",
+          "text": "Desktop opens in the account-free main interface. Sign in when needed: choose an account service (currently Cindy), then use the existing login flow. Cancel to return. Existing signed-in accounts restore normally; online features retain their authentication and permission requirements."
+        },
         {
           "id": "same-task-switching",
           "title": "Switch Views and Continue the Same Task",
@@ -110,14 +150,29 @@
         },
         {
           "id": "upgrade",
-          "title": "Upgrade to the Prerelease",
-          "text": "0.1.7-rc.2 enters only the beta update channel. Stable remains on 0.1.6, and the website's default downloads continue to select stable. Downloads: https://github.com/Ciciy-l/lex/releases . Android keeps package io.github.ciciyl.lex and its permanent signing certificate. Install over the existing app without uninstalling first. No iOS package is available."
+          "title": "Upgrade to Stable",
+          "text": "Once published, 0.1.7 enters both stable and beta update channels; website downloads follow the published stable release. Downloads: https://github.com/Ciciy-l/lex/releases . Android keeps package io.github.ciciyl.lex and its permanent signing certificate. Install over the existing app without uninstalling first. Desktop packages may be unsigned or unnotarized; check the release notes and system warnings. No iOS package is available."
+        },
+        {
+          "id": "coming-soon",
+          "title": "Coming Soon",
+          "text": "Lex's self-hosted relay service is in development. Stay tuned."
         }
       ]
     },
     "ja": {
-      "intro": "Lex 0.1.7-rc.2 は、デスクトップの4種類の Agent エンジンで日常的な GUI/TUI 操作を改善し、デスクトップの再起動後に保存済みの下書きを復元するプレリリースです。",
+      "intro": "Lex 0.1.7 正式版では、モデル選択と任意のログインを整理し、デスクトップの日常的な GUI/TUI 操作と下書きの復元を改善しました。",
       "topics": [
+        {
+          "id": "model-selection",
+          "title": "見やすいモデル選択",
+          "text": "モデル名を優先し、チャネルとプロトコルの操作を1か所にまとめました。既存の選択肢は維持し、長い名前はツールチップで確認できます。"
+        },
+        {
+          "id": "optional-sign-in",
+          "title": "アカウントなしで開始",
+          "text": "未ログイン時はメイン画面を開きます。必要なときにアカウントサービス（現在は Cindy のみ）を選び、既存のログインに進めます。キャンセルすると元の画面に戻ります。ログイン済みアカウントは通常どおり復元され、オンライン機能の認証・権限要件は変わりません。"
+        },
         {
           "id": "same-task-switching",
           "title": "画面を切り替えて同じタスクを継続",
@@ -145,14 +200,29 @@
         },
         {
           "id": "upgrade",
-          "title": "プレリリースへの更新",
-          "text": "0.1.7-rc.2 は beta 更新チャネルのみで配信します。正式チャネルは 0.1.6 のままで、公式サイトの既定のダウンロードも安定版を選択します。ダウンロード：https://github.com/Ciciy-l/lex/releases 。Android はパッケージ名 io.github.ciciyl.lex と永続署名を維持します。先にアンインストールせず、上書きインストールしてください。iOS パッケージは提供していません。"
+          "title": "正式版への更新",
+          "text": "公開後、0.1.7 は stable と beta の両更新チャネルで配信され、サイトのダウンロードも正式公開に追従します。ダウンロード：https://github.com/Ciciy-l/lex/releases 。Android はパッケージ名 io.github.ciciyl.lex と永続署名を維持します。先にアンインストールせず、上書きインストールしてください。デスクトップ版は未署名・未公証の場合があります。発行情報とシステムの警告をご確認ください。iOS パッケージは提供していません。"
+        },
+        {
+          "id": "coming-soon",
+          "title": "今後の予定",
+          "text": "Lex 独自の中継サービスを開発中です。続報をお待ちください。"
         }
       ]
     },
     "ko": {
-      "intro": "Lex 0.1.7-rc.2는 데스크톱의 네 가지 Agent 엔진에서 일상적인 GUI/TUI 사용을 개선하고 데스크톱 재시작 후 저장된 초안을 복원하는 사전 릴리스입니다.",
+      "intro": "Lex 0.1.7 정식 버전은 모델 선택과 선택적 로그인 흐름을 정리하고 데스크톱의 일상적인 GUI/TUI 사용 및 초안 복원을 개선합니다.",
       "topics": [
+        {
+          "id": "model-selection",
+          "title": "더 명확한 모델 선택",
+          "text": "모델 이름을 우선 표시하고 채널과 프로토콜을 간결한 선택 메뉴 하나로 통합했습니다. 기존 선택지는 유지하며 긴 이름은 도구 설명에서 확인할 수 있습니다."
+        },
+        {
+          "id": "optional-sign-in",
+          "title": "계정 없이 시작",
+          "text": "로그인하지 않았으면 기본 화면을 엽니다. 필요할 때 계정 서비스(현재 Cindy만 지원)를 선택한 뒤 기존 로그인 절차로 진행하며 취소하면 돌아옵니다. 로그인된 계정은 정상 복원되며 온라인 기능의 인증과 권한 요건은 그대로 유지됩니다."
+        },
         {
           "id": "same-task-switching",
           "title": "화면을 전환하며 같은 작업 계속",
@@ -180,8 +250,13 @@
         },
         {
           "id": "upgrade",
-          "title": "사전 릴리스로 업데이트",
-          "text": "0.1.7-rc.2는 beta 업데이트 채널에만 배포합니다. 정식 채널은 0.1.6을 유지하며 웹사이트의 기본 다운로드도 안정 버전을 선택합니다. 다운로드: https://github.com/Ciciy-l/lex/releases . Android는 패키지 이름 io.github.ciciyl.lex와 영구 서명을 유지합니다. 먼저 삭제하지 말고 기존 앱 위에 설치하세요. iOS 패키지는 제공하지 않습니다."
+          "title": "정식 버전으로 업데이트",
+          "text": "게시 후 0.1.7은 stable과 beta 업데이트 채널 모두에 배포되며 웹사이트 다운로드도 정식 게시에 맞춰 갱신됩니다. 다운로드: https://github.com/Ciciy-l/lex/releases . Android는 패키지 이름 io.github.ciciyl.lex와 영구 서명을 유지합니다. 먼저 삭제하지 말고 기존 앱 위에 설치하세요. 데스크톱 패키지는 서명이나 공증이 없을 수 있으니 릴리스 안내와 시스템 경고를 확인하세요. iOS 패키지는 제공하지 않습니다."
+        },
+        {
+          "id": "coming-soon",
+          "title": "곧 만나요",
+          "text": "Lex 자체 중계 서비스를 개발 중입니다. 기대해 주세요."
         }
       ]
     }

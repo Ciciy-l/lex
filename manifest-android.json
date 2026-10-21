@@ -1,187 +1,262 @@
 {
   "schemaVersion": 1,
-  "version": "0.1.6",
-  "versionCode": 1000699,
+  "version": "0.1.7",
+  "versionCode": 1000799,
   "packageName": "io.github.ciciyl.lex",
-  "size": 129527346,
-  "sha256": "d6073c277f54f10620a06d62e518ebc6f2238d16c6b324dc808d5eb34237b611",
+  "size": 129531058,
+  "sha256": "092d6c26708c3ae9c9c03697e0da7e965879faef89aad5307068b2160ebe40bc",
   "certificateSha256": "86261bb1fea32e9122a7934f5f62d3b100c2248e032d148837ea997ce0b33a14",
   "platform": "android",
-  "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.6/Lex-0.1.6-Android.apk",
-  "releaseUrl": "https://github.com/Ciciy-l/lex/releases/tag/v0.1.6",
+  "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.7/Lex-0.1.7-Android.apk",
+  "releaseUrl": "https://github.com/Ciciy-l/lex/releases/tag/v0.1.7",
   "contentByLocale": {
     "zh-CN": {
-      "intro": "Lex 0.1.6 正式版改善模型连接、任务连续性和手机操作，并移除伙伴相关功能。",
+      "intro": "Lex 0.1.7 正式版整理模型选择与可选登录流程，并汇总桌面端主要 GUI/TUI 交互和草稿恢复改进。",
       "topics": [
         {
-          "id": "protocol-channels",
-          "title": "多协议、多渠道",
-          "text": "供应商按协议配置，同一协议可添加多组地址、密钥和模型。同名模型保留具体渠道，桌面和手机按电脑确认的实际来源切换。OMP 支持原生 Gemini；Claude Code、Codex 的其他协议连接明确标注 Lex 桥接。已有专用供应商设置继续保留。"
+          "id": "model-selection",
+          "title": "更清晰的模型选择",
+          "text": "模型名称优先展示，渠道与协议合并为一处紧凑入口，保留原有选项；长名称可查看完整提示。"
         },
         {
-          "id": "continuity",
-          "title": "模型与任务连续性",
-          "text": "自动切换避免跨 Codex 协议混用历史，思考档位优先保留实际运行值。改善 Pi 上下文缓存、定时任务恢复与排队图片保留。"
+          "id": "optional-sign-in",
+          "title": "打开即可使用",
+          "text": "未登录时默认进入主界面；主动登录先选择账号服务（本轮仅 Cindy），再进入现有登录流程，取消可返回。已登录账号仍正常恢复，在线能力继续遵守原登录与权限要求。"
         },
         {
-          "id": "connections-and-schedules",
-          "title": "连接与查询",
-          "text": "修复部分供应商返回无类型标头的事件流时，非流式请求得到异常结果的问题。Agent 查询定时任务支持按关键词筛选，并明确查询范围为当前电脑。"
+          "id": "same-task-switching",
+          "title": "同一任务，切换继续",
+          "text": "Claude Code、Codex、Pi 与 OMP 的本地新任务可直接从原生 TUI 发送首条消息；GUI/TUI 来回切换沿用原任务与对话记录。停止生成后可明确发送新消息，状态不明的输入不会自动重发。"
         },
         {
-          "id": "mobile-and-ui",
-          "title": "手机与界面",
-          "text": "改善后台切换、重连历史保留和隐藏弹层的开销；停止生成后可删除消息，收到电脑确认后才更新列表。右侧工具栏保持靠右，供应商配置交互继续优化。"
+          "id": "durable-drafts",
+          "title": "草稿跨重启恢复",
+          "text": "原任务与新任务分别保存草稿；已保存的文本、附件和图片批注可在桌面端重启后恢复，发送或丢弃后清理。尚未保存的最后编辑不保证在硬中断后恢复。"
         },
         {
-          "id": "companion-retirement",
-          "title": "伙伴功能退休",
-          "text": "移除伙伴、伙伴私聊、伙伴群聊及专属定时流程的入口与运行功能。旧资料保留在原存储中，不自动删除、不继续执行，也不转成普通任务；本版不提供其浏览和导出入口。普通任务、Orca 协作、定时任务、Skills、插件及 IM 接入继续可用。"
+          "id": "engine-state-and-usage",
+          "title": "引擎状态与用量",
+          "text": "修正 Pi 正常空闲退出被误报为异常的问题，改善 OMP 真实消息用量的累计显示，重新打开任务不重复累加。"
+        },
+        {
+          "id": "omp-recap-mitigation",
+          "title": "OMP 自动 recap 的有限规避",
+          "text": "OMP 原生任务暂时关闭自动 recap，规避已观察到的空闲断连；显式 TUI 设置仍可能重新开启。/btw、/omfg 与其它辅助并发未验，不代表所有原生辅助功能已对齐。"
+        },
+        {
+          "id": "verification-scope",
+          "title": "验证范围",
+          "text": "本次交互实测使用 Windows 专有模拟模型，真实供应商、macOS/Linux 与高级工具未逐项实测。GUI/TUI 可用功能仍有差异。"
         },
         {
           "id": "upgrade",
           "title": "升级至正式版",
-          "text": "0.1.6 同时进入正式与 beta 更新渠道。建议桌面和 Android 一同更新。Android 保持原包名 io.github.ciciyl.lex 与永久签名，可直接覆盖安装，请勿先卸载。暂不提供 iOS 安装包。 https://github.com/Ciciy-l/lex/releases/tag/v0.1.6 https://ciciy-l.github.io/lex/"
+          "text": "0.1.7 发布后进入 stable 与 beta 更新通道，官网默认下载随正式发布更新。下载：https://github.com/Ciciy-l/lex/releases 。Android 保持包名 io.github.ciciyl.lex 与永久签名，可直接覆盖安装，请勿先卸载。桌面安装包可能尚未签名或公证，请核对实际发行说明与系统警示。暂不提供 iOS 安装包。"
+        },
+        {
+          "id": "coming-soon",
+          "title": "敬请期待",
+          "text": "Lex 自建中转服务正在开发，敬请期待。"
         }
       ]
     },
     "zh-TW": {
-      "intro": "Lex 0.1.6 正式版改善模型連線、任務連續性與手機操作，並移除夥伴相關功能。",
+      "intro": "Lex 0.1.7 正式版整理模型選擇與可選登入流程，並彙整桌面端主要 GUI/TUI 互動和草稿還原改進。",
       "topics": [
         {
-          "id": "protocol-channels",
-          "title": "多協定、多渠道",
-          "text": "供應商依協定設定，同一協定可新增多組位址、金鑰與模型。同名模型保留具體渠道，桌面與手機依電腦確認的實際來源切換。OMP 支援原生 Gemini；Claude Code、Codex 的其他協定連線明確標示 Lex 橋接。既有專用供應商設定繼續保留。"
+          "id": "model-selection",
+          "title": "更清楚的模型選擇",
+          "text": "優先顯示模型名稱，將渠道與協議合併為一處精簡入口，保留原有選項；長名稱可查看完整提示。"
         },
         {
-          "id": "continuity",
-          "title": "模型與任務連續性",
-          "text": "自動切換避免跨 Codex 協定混用歷史，思考檔位優先保留實際執行值。改善 Pi 上下文快取、定時任務恢復與排隊圖片保留。"
+          "id": "optional-sign-in",
+          "title": "開啟即可使用",
+          "text": "未登入時預設進入主畫面；主動登入先選擇帳號服務（本輪僅 Cindy），再進入現有登入流程，取消可返回。已登入帳號仍正常還原，線上功能繼續遵守原登入與權限要求。"
         },
         {
-          "id": "connections-and-schedules",
-          "title": "連線與查詢",
-          "text": "修正部分供應商回傳無類型標頭事件串流時，非串流請求得到異常結果的問題。Agent 查詢定時任務支援關鍵字篩選，並明確限定目前電腦。"
+          "id": "same-task-switching",
+          "title": "同一任務，切換繼續",
+          "text": "Claude Code、Codex、Pi 與 OMP 的本機新任務可直接從原生 TUI 傳送第一則訊息；GUI/TUI 來回切換沿用原任務與對話記錄。停止生成後可明確傳送新訊息，狀態不明的輸入不會自動重送。"
         },
         {
-          "id": "mobile-and-ui",
-          "title": "手機與介面",
-          "text": "改善背景切換、重新連線的歷史保留與隱藏浮層的開銷；停止生成後可刪除訊息，收到電腦確認後才更新清單。右側工具列維持靠右，供應商設定互動繼續改善。"
+          "id": "durable-drafts",
+          "title": "重新啟動後還原草稿",
+          "text": "原任務與新任務分別儲存草稿；已儲存的文字、附件與圖片註記可在桌面端重新啟動後還原，傳送或捨棄後清除。尚未儲存的最後編輯不保證在強制中斷後還原。"
         },
         {
-          "id": "companion-retirement",
-          "title": "夥伴功能退役",
-          "text": "移除夥伴、夥伴私聊、夥伴群聊及專屬定時流程的入口與執行功能。舊資料保留在原儲存位置，不自動刪除、不繼續執行，也不轉為普通任務；本版不提供瀏覽或匯出入口。普通任務、Orca 協作、定時任務、Skills、外掛與 IM 接入仍可使用。"
+          "id": "engine-state-and-usage",
+          "title": "引擎狀態與用量",
+          "text": "修正 Pi 正常閒置結束被誤報為異常的問題，改善 OMP 實際訊息用量的累計顯示，重新開啟任務不會重複累加。"
+        },
+        {
+          "id": "omp-recap-mitigation",
+          "title": "OMP 自動 recap 的有限規避",
+          "text": "OMP 原生任務暫時關閉自動 recap，規避已觀察到的閒置斷線；明確修改 TUI 設定仍可能重新開啟。/btw、/omfg 與其他輔助並行尚未驗證，不代表所有原生輔助功能已對齊。"
+        },
+        {
+          "id": "verification-scope",
+          "title": "驗證範圍",
+          "text": "本次互動實測使用 Windows 專用模擬模型，實際供應商、macOS/Linux 與進階工具尚未逐項實測。GUI/TUI 可用功能仍有差異。"
         },
         {
           "id": "upgrade",
-          "title": "升級正式版",
-          "text": "0.1.6 同時進入正式與 beta 更新渠道。建議桌面與 Android 一同更新。Android 保留套件名稱 io.github.ciciyl.lex 與永久簽章，可直接覆蓋安裝，請勿先解除安裝。暫不提供 iOS 安裝包。 https://github.com/Ciciy-l/lex/releases/tag/v0.1.6 https://ciciy-l.github.io/lex/"
+          "title": "升級至正式版",
+          "text": "0.1.7 發佈後進入 stable 與 beta 更新渠道，官網預設下載隨正式發佈更新。下載：https://github.com/Ciciy-l/lex/releases 。Android 保持套件名稱 io.github.ciciyl.lex 與永久簽章，可直接覆蓋安裝，請勿先解除安裝。桌面安裝套件可能尚未簽章或公證，請核對實際發行說明與系統警示。暫不提供 iOS 安裝套件。"
+        },
+        {
+          "id": "coming-soon",
+          "title": "敬請期待",
+          "text": "Lex 自建中轉服務正在開發，敬請期待。"
         }
       ]
     },
     "en": {
-      "intro": "Lex 0.1.6 is a stable release that improves model connections, task continuity and mobile controls, and retires companion features.",
+      "intro": "Lex 0.1.7 is a stable release with clearer model choices, optional sign-in, and improvements to everyday desktop GUI/TUI interaction and draft recovery.",
       "topics": [
         {
-          "id": "protocol-channels",
-          "title": "Multiple protocols and channels",
-          "text": "Configure providers by protocol with multiple URL, key and model sets per protocol. Models with the same name retain their channel identity, and desktop and mobile apply the source confirmed by the host. OMP supports native Gemini; other protocol connections for Claude Code and Codex are labelled Lex bridges. Existing dedicated provider settings remain available."
+          "id": "model-selection",
+          "title": "Clearer Model Choices",
+          "text": "The model name comes first, with a single compact channel/protocol control. Existing choices remain available, and full names appear in tooltips."
         },
         {
-          "id": "continuity",
-          "title": "Model and task continuity",
-          "text": "Automatic fallback avoids mixing Codex protocols within the same history, and reasoning levels preserve the actual runtime value. Improvements cover Pi context caching, scheduled task recovery and queued images."
+          "id": "optional-sign-in",
+          "title": "Start Without an Account",
+          "text": "Desktop opens in the account-free main interface. Sign in when needed: choose an account service (currently Cindy), then use the existing login flow. Cancel to return. Existing signed-in accounts restore normally; online features retain their authentication and permission requirements."
         },
         {
-          "id": "connections-and-schedules",
-          "title": "Connections and schedule search",
-          "text": "Fixes non-streaming requests when a provider returns an event stream without a Content-Type header. Agents can filter scheduled tasks by keyword, with results explicitly scoped to the current computer."
+          "id": "same-task-switching",
+          "title": "Switch Views and Continue the Same Task",
+          "text": "New local Claude Code, Codex, Pi and OMP tasks can send their first message directly in the native TUI. Switch between GUI and TUI with the same task and conversation history. After stopping generation, explicitly send a new message; input with an unknown delivery status is never resent automatically."
         },
         {
-          "id": "mobile-and-ui",
-          "title": "Mobile and interface",
-          "text": "Improves background transitions, history retention on reconnect and hidden overlay overhead. Messages can be deleted after stopping generation; the list changes after host confirmation. The right toolbar stays at the right edge, with further provider form improvements."
+          "id": "durable-drafts",
+          "title": "Restore Drafts After Restart",
+          "text": "Task and new-task drafts are saved separately. Saved text, attachments and image annotations restore after a desktop restart; sending or discarding clears the draft. The last edits not yet saved are not guaranteed to survive a hard interruption."
         },
         {
-          "id": "companion-retirement",
-          "title": "Companion retirement",
-          "text": "Removes companions, their direct and group conversations, and dedicated routines from the interface and runtime. Existing data stays in its original storage without automatic deletion, execution or conversion to ordinary tasks; this version has no browsing or export entry for it. Ordinary tasks, Orca collaboration, schedules, Skills, plugins and IM integrations remain available."
+          "id": "engine-state-and-usage",
+          "title": "Engine State and Usage",
+          "text": "Fixes Pi's normal idle exit being reported as an error and improves cumulative usage from actual OMP messages. Reopening a task does not count that usage again."
+        },
+        {
+          "id": "omp-recap-mitigation",
+          "title": "Limited Mitigation for OMP Automatic Recap",
+          "text": "OMP native tasks temporarily disable automatic recap to avoid the observed idle disconnect. Explicit TUI settings can re-enable it. /btw, /omfg and other auxiliary concurrency remain unverified; full native feature parity is not claimed."
+        },
+        {
+          "id": "verification-scope",
+          "title": "Verification Scope",
+          "text": "Interactive checks used a dedicated simulated model on Windows. Live providers, macOS/Linux and advanced tools have not been individually verified. Available GUI/TUI features still differ."
         },
         {
           "id": "upgrade",
-          "title": "Upgrade to stable",
-          "text": "0.1.6 reaches both stable and beta update channels. Update desktop and Android together. Android keeps package io.github.ciciyl.lex and its permanent signing identity; install over the existing app without uninstalling it first. No iOS package is provided. https://github.com/Ciciy-l/lex/releases/tag/v0.1.6 https://ciciy-l.github.io/lex/"
+          "title": "Upgrade to Stable",
+          "text": "Once published, 0.1.7 enters both stable and beta update channels; website downloads follow the published stable release. Downloads: https://github.com/Ciciy-l/lex/releases . Android keeps package io.github.ciciyl.lex and its permanent signing certificate. Install over the existing app without uninstalling first. Desktop packages may be unsigned or unnotarized; check the release notes and system warnings. No iOS package is available."
+        },
+        {
+          "id": "coming-soon",
+          "title": "Coming Soon",
+          "text": "Lex's self-hosted relay service is in development. Stay tuned."
         }
       ]
     },
     "ja": {
-      "intro": "Lex 0.1.6 は、モデル接続、タスクの継続性、モバイル操作を改善し、パートナー関連機能を終了する正式版です。",
+      "intro": "Lex 0.1.7 正式版では、モデル選択と任意のログインを整理し、デスクトップの日常的な GUI/TUI 操作と下書きの復元を改善しました。",
       "topics": [
         {
-          "id": "protocol-channels",
-          "title": "複数プロトコルとチャネル",
-          "text": "プロバイダーをプロトコル別に設定し、同じプロトコルに複数の URL・キー・モデルを登録できます。同名モデルもチャネルを保持し、デスクトップとスマートフォンはホストが確認した接続元を適用します。OMP は Gemini をネイティブ対応し、Claude Code と Codex の他プロトコル接続には Lex ブリッジと表示します。既存の専用設定も利用できます。"
+          "id": "model-selection",
+          "title": "見やすいモデル選択",
+          "text": "モデル名を優先し、チャネルとプロトコルの操作を1か所にまとめました。既存の選択肢は維持し、長い名前はツールチップで確認できます。"
         },
         {
-          "id": "continuity",
-          "title": "モデルとタスクの継続性",
-          "text": "自動切り替えで Codex の異なるプロトコルの履歴を混在させず、推論レベルは実際の実行値を優先します。Pi のコンテキストキャッシュ、定期タスクの復旧、待機中画像の保持を改善しました。"
+          "id": "optional-sign-in",
+          "title": "アカウントなしで開始",
+          "text": "未ログイン時はメイン画面を開きます。必要なときにアカウントサービス（現在は Cindy のみ）を選び、既存のログインに進めます。キャンセルすると元の画面に戻ります。ログイン済みアカウントは通常どおり復元され、オンライン機能の認証・権限要件は変わりません。"
         },
         {
-          "id": "connections-and-schedules",
-          "title": "接続と定期タスク検索",
-          "text": "Content-Type ヘッダーのないイベントストリームを返すプロバイダーで、非ストリーミング要求が異常になる問題を修正しました。Agent は定期タスクをキーワードで絞り込み、現在のコンピューターのみを検索することを明示します。"
+          "id": "same-task-switching",
+          "title": "画面を切り替えて同じタスクを継続",
+          "text": "Claude Code、Codex、Pi、OMP の新しいローカルタスクでは、ネイティブ TUI から最初のメッセージを直接送れます。GUI/TUI を切り替えても同じタスクと会話履歴を引き継ぎます。生成を停止した後は新しいメッセージを明示的に送れます。配信状態が不明な入力は自動で再送しません。"
         },
         {
-          "id": "mobile-and-ui",
-          "title": "モバイルと画面",
-          "text": "バックグラウンド切り替え、再接続時の履歴保持、非表示オーバーレイの負荷を改善しました。生成停止後にメッセージを削除でき、ホストの確認後に一覧を更新します。右ツールバーを右端に維持し、プロバイダー設定操作も改善しました。"
+          "id": "durable-drafts",
+          "title": "再起動後に下書きを復元",
+          "text": "既存タスクと新規タスクの下書きを別々に保存します。保存済みのテキスト、添付ファイル、画像への注釈はデスクトップの再起動後に復元され、送信または破棄すると消去されます。未保存の最後の編集内容は、強制終了後の復元を保証しません。"
         },
         {
-          "id": "companion-retirement",
-          "title": "パートナー機能の終了",
-          "text": "パートナー、専用の個別・グループ会話、定期処理の画面と実行機能を削除しました。既存データは元の保存先に保持し、自動削除、実行、通常タスクへの変換は行いません。本版には閲覧・エクスポート入口がありません。通常タスク、Orca 協作、定期タスク、Skills、プラグイン、IM 連携は引き続き利用できます。"
+          "id": "engine-state-and-usage",
+          "title": "エンジンの状態と使用量",
+          "text": "Pi がアイドル状態で正常終了した際にエラーとして報告される問題を修正し、OMP の実際のメッセージに基づく累積使用量の表示を改善しました。タスクを開き直しても使用量を重複加算しません。"
+        },
+        {
+          "id": "omp-recap-mitigation",
+          "title": "OMP 自動 recap の限定的な回避策",
+          "text": "確認されたアイドル時の切断を避けるため、OMP のネイティブタスクでは自動 recap を一時的に無効にしています。TUI の設定を明示的に変更すると再び有効になる場合があります。/btw、/omfg などの補助的な並行処理は未検証であり、ネイティブ機能の完全な同等性は保証しません。"
+        },
+        {
+          "id": "verification-scope",
+          "title": "検証範囲",
+          "text": "操作の実測には Windows 上の専用模擬モデルを使用しました。実際のプロバイダー、macOS/Linux、高度なツールは個別に検証していません。GUI/TUI で利用できる機能には引き続き違いがあります。"
         },
         {
           "id": "upgrade",
           "title": "正式版への更新",
-          "text": "0.1.6 は stable と beta の両更新チャネルに配信されます。デスクトップと Android を一緒に更新してください。Android は io.github.ciciyl.lex と永続署名を維持します。先にアンインストールせず上書きインストールしてください。iOS パッケージはありません。 https://github.com/Ciciy-l/lex/releases/tag/v0.1.6 https://ciciy-l.github.io/lex/"
+          "text": "公開後、0.1.7 は stable と beta の両更新チャネルで配信され、サイトのダウンロードも正式公開に追従します。ダウンロード：https://github.com/Ciciy-l/lex/releases 。Android はパッケージ名 io.github.ciciyl.lex と永続署名を維持します。先にアンインストールせず、上書きインストールしてください。デスクトップ版は未署名・未公証の場合があります。発行情報とシステムの警告をご確認ください。iOS パッケージは提供していません。"
+        },
+        {
+          "id": "coming-soon",
+          "title": "今後の予定",
+          "text": "Lex 独自の中継サービスを開発中です。続報をお待ちください。"
         }
       ]
     },
     "ko": {
-      "intro": "Lex 0.1.6은 모델 연결, 작업 연속성, 모바일 조작을 개선하고 동료 관련 기능을 종료하는 정식 버전입니다.",
+      "intro": "Lex 0.1.7 정식 버전은 모델 선택과 선택적 로그인 흐름을 정리하고 데스크톱의 일상적인 GUI/TUI 사용 및 초안 복원을 개선합니다.",
       "topics": [
         {
-          "id": "protocol-channels",
-          "title": "여러 프로토콜과 채널",
-          "text": "제공자를 프로토콜별로 설정하고 같은 프로토콜에 여러 URL·키·모델 조합을 추가할 수 있습니다. 같은 이름의 모델도 채널 출처를 유지하며 데스크톱과 모바일은 호스트가 확인한 연결을 적용합니다. OMP는 Gemini를 네이티브 지원하고 Claude Code와 Codex의 다른 프로토콜 연결은 Lex 브리지로 표시합니다. 기존 전용 설정도 유지됩니다."
+          "id": "model-selection",
+          "title": "더 명확한 모델 선택",
+          "text": "모델 이름을 우선 표시하고 채널과 프로토콜을 간결한 선택 메뉴 하나로 통합했습니다. 기존 선택지는 유지하며 긴 이름은 도구 설명에서 확인할 수 있습니다."
         },
         {
-          "id": "continuity",
-          "title": "모델과 작업 연속성",
-          "text": "자동 전환 시 Codex의 다른 프로토콜 이력을 섞지 않으며 추론 수준은 실제 실행 값을 우선 보존합니다. Pi 컨텍스트 캐시, 예약 작업 복구, 대기 이미지 보존을 개선했습니다."
+          "id": "optional-sign-in",
+          "title": "계정 없이 시작",
+          "text": "로그인하지 않았으면 기본 화면을 엽니다. 필요할 때 계정 서비스(현재 Cindy만 지원)를 선택한 뒤 기존 로그인 절차로 진행하며 취소하면 돌아옵니다. 로그인된 계정은 정상 복원되며 온라인 기능의 인증과 권한 요건은 그대로 유지됩니다."
         },
         {
-          "id": "connections-and-schedules",
-          "title": "연결과 예약 작업 검색",
-          "text": "Content-Type 헤더 없이 이벤트 스트림을 반환하는 제공자에서 비스트리밍 요청 결과가 잘못되는 문제를 수정했습니다. Agent는 예약 작업을 키워드로 검색하며 현재 컴퓨터만 조회한다는 범위를 명확히 표시합니다."
+          "id": "same-task-switching",
+          "title": "화면을 전환하며 같은 작업 계속",
+          "text": "새 로컬 Claude Code, Codex, Pi, OMP 작업은 네이티브 TUI에서 첫 메시지를 바로 보낼 수 있습니다. GUI/TUI를 전환해도 같은 작업과 대화 기록을 이어갑니다. 생성을 중지한 뒤 새 메시지를 직접 보낼 수 있으며 전송 상태를 알 수 없는 입력은 자동으로 다시 보내지 않습니다."
         },
         {
-          "id": "mobile-and-ui",
-          "title": "모바일과 화면",
-          "text": "백그라운드 전환, 재연결 이력 보존, 숨겨진 오버레이의 부하를 개선했습니다. 생성 중지 후 메시지를 삭제할 수 있으며 호스트 확인 후 목록을 갱신합니다. 오른쪽 도구 모음을 오른쪽 끝에 유지하고 제공자 설정 조작도 개선했습니다."
+          "id": "durable-drafts",
+          "title": "재시작 후 초안 복원",
+          "text": "기존 작업과 새 작업의 초안을 따로 저장합니다. 저장된 텍스트, 첨부 파일, 이미지 주석은 데스크톱 재시작 후 복원되며 보내거나 버리면 지워집니다. 아직 저장되지 않은 마지막 편집 내용은 강제 종료 후 복원을 보장하지 않습니다."
         },
         {
-          "id": "companion-retirement",
-          "title": "동료 기능 종료",
-          "text": "동료, 동료의 개인·그룹 대화, 전용 예약 루틴의 화면과 실행 기능을 제거했습니다. 기존 자료는 원래 저장 위치에 보존하며 자동 삭제, 실행, 일반 작업 전환을 하지 않습니다. 이 버전에는 해당 자료의 열람·내보내기 메뉴가 없습니다. 일반 작업, Orca 협업, 예약 작업, Skills, 플러그인, IM 연동은 계속 사용할 수 있습니다."
+          "id": "engine-state-and-usage",
+          "title": "엔진 상태와 사용량",
+          "text": "Pi가 유휴 상태에서 정상 종료했을 때 오류로 표시되는 문제를 수정하고 실제 OMP 메시지에 기반한 누적 사용량 표시를 개선했습니다. 작업을 다시 열어도 사용량을 중복 합산하지 않습니다."
+        },
+        {
+          "id": "omp-recap-mitigation",
+          "title": "OMP 자동 recap의 제한적 우회",
+          "text": "확인된 유휴 상태 연결 끊김을 피하기 위해 OMP 네이티브 작업의 자동 recap을 일시적으로 끕니다. TUI 설정을 직접 변경하면 다시 켜질 수 있습니다. /btw, /omfg 및 기타 보조 동시 실행은 검증하지 않았으며 모든 네이티브 기능의 동등성을 보장하지 않습니다."
+        },
+        {
+          "id": "verification-scope",
+          "title": "검증 범위",
+          "text": "대화형 실측에는 Windows의 전용 모의 모델을 사용했습니다. 실제 제공자, macOS/Linux 및 고급 도구는 개별 검증하지 않았습니다. GUI/TUI에서 사용할 수 있는 기능에는 여전히 차이가 있습니다."
         },
         {
           "id": "upgrade",
-          "title": "정식 버전 업데이트",
-          "text": "0.1.6은 stable과 beta 업데이트 채널에 함께 배포됩니다. 데스크톱과 Android를 함께 업데이트하세요. Android는 io.github.ciciyl.lex와 영구 서명을 유지하므로 먼저 삭제하지 말고 덮어 설치하세요. iOS 패키지는 제공하지 않습니다. https://github.com/Ciciy-l/lex/releases/tag/v0.1.6 https://ciciy-l.github.io/lex/"
+          "title": "정식 버전으로 업데이트",
+          "text": "게시 후 0.1.7은 stable과 beta 업데이트 채널 모두에 배포되며 웹사이트 다운로드도 정식 게시에 맞춰 갱신됩니다. 다운로드: https://github.com/Ciciy-l/lex/releases . Android는 패키지 이름 io.github.ciciyl.lex와 영구 서명을 유지합니다. 먼저 삭제하지 말고 기존 앱 위에 설치하세요. 데스크톱 패키지는 서명이나 공증이 없을 수 있으니 릴리스 안내와 시스템 경고를 확인하세요. iOS 패키지는 제공하지 않습니다."
+        },
+        {
+          "id": "coming-soon",
+          "title": "곧 만나요",
+          "text": "Lex 자체 중계 서비스를 개발 중입니다. 기대해 주세요."
         }
       ]
     }

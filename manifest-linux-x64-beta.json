@@ -1,11 +1,11 @@
 {
   "app": {
-    "version": "0.1.7-rc.2",
-    "releaseNotes": "Lex 0.1.7-rc.2",
+    "version": "0.1.7",
+    "releaseNotes": "Lex 0.1.7",
     "installer": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.7-rc.2/Lex-0.1.7-rc.2-Linux-x64.deb",
-      "sha256": "399d6c14becf19ab54cf191a4dd56cc3a90654229573a8899d8ac0e40fa5ee9a",
-      "size": 205370430
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.7/Lex-0.1.7-Linux-x64.deb",
+      "sha256": "98d3c3b9b29ef8e80fb3acc6872add18d95192d1c5d27fc7db9e852702f3de94",
+      "size": 205385872
     }
   },
   "claudeCode": {
