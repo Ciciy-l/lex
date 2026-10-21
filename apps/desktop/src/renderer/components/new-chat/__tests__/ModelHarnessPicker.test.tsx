@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { unifiedModelEntries, type ProviderView } from '@cindy/model-providers';
 import dictionary from '../../../i18n/locales/zh-CN/common.json';
@@ -64,13 +64,16 @@ describe('model harness choices', () => {
         customized: false, wireModelId: capability.wireModelId }} state="recommended" sourceLabel="Cindy AI" price={null}
       effortLabelOf={(_, effort) => effort} onEngineChange={vi.fn()} onEffortChange={vi.fn()}
       onFastChange={vi.fn()} onResetToRecommended={vi.fn()} onAddFavorite={vi.fn()} onRemoveFavorite={vi.fn()} />);
-    expect(await screen.findByText('Cindy AI · 1K 上下文')).toBeTruthy();
+    const flyout = within(screen.getByRole('group', { name: 'Gemini 选项' }));
+    expect(flyout.getByText('Cindy AI')).toBeTruthy();
+    expect(await flyout.findByText('1K 上下文')).toBeTruthy();
     expect(getModelContextLimit).toHaveBeenCalledWith({ providerId: 'xd', agent, modelId: capability.wireModelId });
     getModelContextLimit.mockResolvedValue({ limit: null, isCustomized: false,
       codexContext: { contextWindow: 1_048_576 } });
     await act(async () => { changed?.(); });
-    expect(screen.queryByText('Cindy AI · 1K 上下文')).toBeNull();
-    expect(screen.getByText(/Cindy AI · 1M 上下文/)).toBeTruthy();
+    expect(flyout.queryByText('1K 上下文')).toBeNull();
+    expect(flyout.getByText('1M 上下文')).toBeTruthy();
+    expect(flyout.getByText('Cindy AI')).toBeTruthy();
     rendered.unmount();
     expect(unsubscribe).toHaveBeenCalled();
     Reflect.deleteProperty(window, 'electronAPI');
