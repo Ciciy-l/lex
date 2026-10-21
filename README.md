@@ -59,13 +59,17 @@ name.
 Lex continues to support Cindy plugins, Skill Hub resources, and `.cindy` files so the
 existing Cindy community ecosystem remains useful.
 
-## 0.1.7-rc.2 preview
+## What's new in 0.1.7
 
-This preview improves ordinary GUI/TUI sending and task recovery across Claude Code,
+The model selector puts the model name first, with one compact channel/protocol
+control. Desktop opens directly in the account-free main interface; choose Cindy
+from the sign-in entry when you want online services.
+
+This release improves ordinary GUI/TUI sending and task recovery across Claude Code,
 Codex, Pi, and OMP, preserves saved drafts across desktop restarts, fixes Pi's normal
 idle exit reporting, and improves OMP's cumulative usage display. See the
-[release notes](release-notices/0.1.7-rc.2.md) for details. RC updates remain beta-only;
-the website's default downloads continue to select the published stable release.
+[release notes](release-notices/0.1.7.md) for details. Version 0.1.7 is a stable
+release; the website's downloads follow the latest published stable release.
 
 OMP native sessions temporarily disable automatic recap to avoid the observed idle
 disconnect. Explicit TUI settings can re-enable it. `/btw`, `/omfg`, and other auxiliary
@@ -80,7 +84,7 @@ Lex's self-hosted relay service is in development. Stay tuned.
 
 ## Download and install
 
-Lex currently ships as an **early preview**. Choose the manual installer for your
+Choose the manual installer for your
 platform from [GitHub Releases](https://github.com/Ciciy-l/lex/releases):
 
 | Platform | Manual installation file |
@@ -94,7 +98,7 @@ platform from [GitHub Releases](https://github.com/Ciciy-l/lex/releases):
 Files ending in `Auto-Update.zip` are resources for Lex's in-app updater, not the
 recommended manual installer.
 
-Early RC packages may be unsigned. Windows SmartScreen, macOS Gatekeeper, or a Linux
+Packages may be unsigned. Windows SmartScreen, macOS Gatekeeper, or a Linux
 package manager may therefore show a warning. Signing status and release stability are
 separate: a signed RC is still a prerelease. To receive RC updates in the app, enable
 the **beta** update channel; the stable channel does not receive prereleases.
@@ -102,7 +106,8 @@ the **beta** update channel; the stable channel does not receive prereleases.
 ### First run on desktop
 
 1. Install Lex and open it.
-2. Sign in with a Cindy account, or choose **Skip Sign-In** for local-only use.
+2. Start in the account-free main interface. To use Cindy online services, open
+   **Sign In**, choose **Cindy**, and follow the existing account login.
 3. Open the project directory you want to work in.
 4. Select `+` to start a CLI, Shell, or browser; open collaboration from the
    workspace tool area when you need Workers.

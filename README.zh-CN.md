@@ -56,12 +56,15 @@ Lex 基于开源 [Cindy](https://github.com/makecindy/cindy) 客户端，由社�
 Lex 继续兼容 Cindy 插件、Skill Hub 资源和 `.cindy` 文件，让既有 Cindy 社区资源仍然可以
 直接使用。
 
-## 0.1.7-rc.2 预览
+## 0.1.7 更新
 
-本次预发布改善 Claude Code、Codex、Pi 与 OMP 的主要 GUI/TUI 收发与任务恢复，
+模型选择区以模型名称为主，渠道与协议合并为一处紧凑入口。桌面端未登录时默认进入主界面，
+需要在线服务时可主动点击登录，选择 Cindy 后进入原有账号登录流程。
+
+本次正式版改善 Claude Code、Codex、Pi 与 OMP 的主要 GUI/TUI 收发与任务恢复，
 增加桌面端重启后的已保存草稿恢复，修正 Pi 正常空闲退出的提示与 OMP 累计用量显示。
-详情见[发布说明](release-notices/0.1.7-rc.2.md)。RC 仍仅进入 beta 更新通道；
-官网默认下载继续选择已发布的稳定版。
+详情见[发布说明](release-notices/0.1.7.md)。0.1.7 为正式版本；
+官网默认下载跟随最新已发布的稳定版。
 
 OMP 原生任务暂时关闭自动 recap，规避已观察到的空闲断连；显式 TUI 设置仍可能重新开启。
 `/btw`、`/omfg` 与其它辅助并发未验，GUI/TUI 功能也并非完全一致。
@@ -74,7 +77,7 @@ Lex 自建中转服务正在开发，敬请期待。
 
 ## 下载与安装
 
-Lex 当前处于**早期预览**阶段。请从
+请从
 [GitHub Releases](https://github.com/Ciciy-l/lex/releases) 下载对应平台的手动安装包：
 
 | 平台 | 手动安装文件 |
@@ -87,14 +90,14 @@ Lex 当前处于**早期预览**阶段。请从
 
 以 `Auto-Update.zip` 结尾的文件供 Lex 应用内更新器使用，不是推荐的手动安装包。
 
-早期 RC 安装包可能尚未签名，因此 Windows SmartScreen、macOS Gatekeeper 或 Linux 包管理器
+安装包可能尚未签名，因此 Windows SmartScreen、macOS Gatekeeper 或 Linux 包管理器
 可能显示警告。签名状态与版本稳定性彼此独立：已经签名的 RC 仍然是预发布版。若希望在应用
 内接收 RC 更新，需要启用 **beta** 更新通道；稳定通道不会接收预发布版本。
 
 ### 桌面端第一次使用
 
 1. 安装并打开 Lex；
-2. 登录 Cindy 账号，或选择「跳过登录」仅使用本地能力；
+2. 默认进入未登录主界面；需要 Cindy 在线服务时，点击登录、选择 **Cindy**，再完成账号登录；
 3. 打开需要处理的项目目录；
 4. 点击 `+` 启动 CLI、Shell 或浏览器；需要 Worker 时，从工作区工具栏打开协同。
 
@@ -108,7 +111,7 @@ Cindy 服务区：
 - 企业 SSO 自动发现组织所属服务区。
 
 该选择只决定 Cindy 的鉴权、订阅、托管模型、语音、云存储、Device Link 与远程控制流量，
-不会改变 Lex 下载地址或更新通道。跳过登录后，依赖 Cindy 服务端的能力将不可用。
+不会改变 Lex 下载地址或更新通道。未登录时，依赖 Cindy 服务端的能力不可用。
 
 ## Lex 与 Cindy 的责任边界
 
