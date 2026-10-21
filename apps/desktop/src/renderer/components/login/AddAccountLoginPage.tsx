@@ -6,6 +6,7 @@ import { useAppShellCover } from '@/contexts/AppShellCoverContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from '@/lib/toast';
 import { LoginPage } from './LoginPage';
+import { LoginServiceSelection } from './LoginServiceSelection';
 
 interface AddAccountLocationState {
   returnTo?: string;
@@ -21,6 +22,7 @@ export function AddAccountLoginPage() {
   const flowFinishedRef = useRef(false);
   const closeStartedRef = useRef(false);
   const [flowInitialized, setFlowInitialized] = useState(false);
+  const [serviceSelected, setServiceSelected] = useState(false);
   const returnTo = (location.state as AddAccountLocationState | null)?.returnTo ?? '/cc-agent';
 
   useEffect(() => {
@@ -35,7 +37,7 @@ export function AddAccountLoginPage() {
   }, [reportLocalDbGate]);
 
   useEffect(() => {
-    if (initializedRef.current) return;
+    if (!serviceSelected || initializedRef.current) return;
     initializedRef.current = true;
     void beginAddAccount()
       .then(() => setFlowInitialized(true))
@@ -43,7 +45,7 @@ export function AddAccountLoginPage() {
         toast.error(t('sidebar.accountSwitcher.startFailed'));
         navigate(returnTo, { replace: true });
       });
-  }, [beginAddAccount, navigate, returnTo, t]);
+  }, [serviceSelected, beginAddAccount, navigate, returnTo, t]);
 
   useEffect(() => {
     if (!flowInitialized || loginState?.step !== 'completed') return;
@@ -56,7 +58,7 @@ export function AddAccountLoginPage() {
       // Browser history and parent navigation can remove this route without
       // invoking LoginPage's close action. Invalidate the add-account epoch so
       // a late verification or account-selection response cannot switch users.
-      if (flowFinishedRef.current || closeStartedRef.current) return;
+      if (!initializedRef.current || flowFinishedRef.current || closeStartedRef.current) return;
       void cancelAddAccount();
     },
     [cancelAddAccount],
@@ -65,11 +67,15 @@ export function AddAccountLoginPage() {
   const cancel = async () => {
     closeStartedRef.current = true;
     try {
-      await cancelAddAccount();
+      if (initializedRef.current) await cancelAddAccount();
     } finally {
       navigate(returnTo, { replace: true });
     }
   };
 
-  return <LoginPage intent="add-account" onClose={() => void cancel()} />;
+  return serviceSelected ? (
+    <LoginPage intent="add-account" onClose={() => void cancel()} />
+  ) : (
+    <LoginServiceSelection onSelect={() => setServiceSelected(true)} onCancel={() => void cancel()} />
+  );
 }

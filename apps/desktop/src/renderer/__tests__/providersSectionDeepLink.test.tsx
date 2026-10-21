@@ -752,14 +752,14 @@ describe('ProvidersSection — 深链定位', () => {
     expect(wizardSpy).toHaveBeenCalledWith({ kind: 'preset', presetId: 'deepseek' });
   });
 
-  it('目录无 xd(无账号会话)→ 左栏置顶 Cindy 登录引导行,connect=xd 落到该行,CTA 跳 /login', async () => {
+  it('目录无 xd(无账号会话)→ 左栏置顶 Cindy 登录引导行,connect=xd 落到该行,CTA 跳 /add-account', async () => {
     const { fireEvent } = await import('@testing-library/react');
     providersState.providers = [makeProvider('anthropic', { name: 'Anthropic' })];
     render(
       <MemoryRouter initialEntries={['/settings?tab=providers&connect=xd']}>
         <Routes>
           <Route path="/settings" element={<ProvidersSection />} />
-          <Route path="/login" element={<div data-testid="login-page" />} />
+          <Route path="/add-account" element={<div data-testid="login-page" />} />
         </Routes>
       </MemoryRouter>,
     );
@@ -772,7 +772,7 @@ describe('ProvidersSection — 深链定位', () => {
     expect(screen.queryByTestId('wizard-stub')).toBeNull();
 
     fireEvent.click(screen.getByText('settings.providers.xdSignin.cta'));
-    // local 模式:先 exitLocalMode 再进 /login(直跳会被 GuestRoute 弹回)。
+    // 保留访客会话，进入账号服务选择。
     await waitFor(() => expect(screen.getByTestId('login-page')).not.toBeNull());
   });
 

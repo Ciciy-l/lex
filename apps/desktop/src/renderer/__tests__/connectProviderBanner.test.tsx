@@ -3,7 +3,7 @@
 /**
  * ConnectProviderBanner — 会话内零可用模型引导条关键不变量:
  *   1. 与首屏卡片同判定:零已连接来源才渲染;有连接 → null。
- *   2. CTA 按登录态分派:cloud → /settings?tab=providers;local → /login。
+ *   2. CTA 按登录态分派:cloud → /settings?tab=providers;local → /add-account。
  *   3. dismiss 与卡片共享同一 key:banner 上点 X,key 写入(两处一起消失)。
  */
 
@@ -95,13 +95,13 @@ describe('ConnectProviderBanner', () => {
     expect(screen.getByTestId('location').textContent).toBe('/settings?tab=providers');
   });
 
-  it('local 模式 CTA 变登录,落 /login', async () => {
+  it('local 模式 CTA 变登录,落 /add-account', async () => {
     authState.mode = 'local';
     renderBanner();
 
     fireEvent.click(screen.getByText('onboarding.connectProvider.banner.loginCta'));
-    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/login'));
-    expect(exitLocalModeMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/add-account'));
+    expect(exitLocalModeMock).not.toHaveBeenCalled();
   });
 
   it('有已连接来源 → 渲染 null', () => {

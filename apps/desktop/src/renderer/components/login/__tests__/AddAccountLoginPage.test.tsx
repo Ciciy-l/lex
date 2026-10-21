@@ -34,6 +34,8 @@ vi.mock('@/lib/ghostPanelWindow', () => ({
   isGhostPanelWindow: () => false,
 }));
 
+vi.mock('@/components/title-bar/WindowControls', () => ({ WindowControls: () => null }));
+
 vi.mock('../LoginPage', () => ({
   LoginPage: ({ onClose }: { onClose?: () => void }) => (
     <button type="button" onClick={onClose}>
@@ -93,15 +95,28 @@ describe('AddAccountLoginPage app-shell cover', () => {
     render(<Harness />);
 
     expect(screen.getByTestId('cover-state').textContent).toBe('open:ready');
+    expect(auth.beginAddAccount).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Cindy' }));
+    await waitFor(() => expect(auth.beginAddAccount).toHaveBeenCalledOnce());
 
     fireEvent.click(screen.getByRole('button', { name: 'leave route' }));
     expect(screen.getByTestId('cover-state').textContent).toBe('held:pending');
     await waitFor(() => expect(auth.cancelAddAccount).toHaveBeenCalledOnce());
   });
 
+  it('returns to the current page without starting auth when service selection is cancelled', async () => {
+    render(<Harness />);
+    expect(screen.getAllByRole('button', { name: 'Cindy' })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'logic.confirm.cancel' }));
+    await waitFor(() => expect(screen.getByTestId('location-probe').textContent).toBe('/settings'));
+    expect(auth.beginAddAccount).not.toHaveBeenCalled();
+    expect(auth.cancelAddAccount).not.toHaveBeenCalled();
+  });
+
   it('cancels the add-account flow from the close action', async () => {
     render(<Harness />);
 
+    fireEvent.click(screen.getByRole('button', { name: 'Cindy' }));
     fireEvent.click(screen.getByRole('button', { name: 'close add-account login' }));
     await waitFor(() => expect(auth.cancelAddAccount).toHaveBeenCalledOnce());
     await waitFor(() => expect(screen.getByTestId('location-probe').textContent).toBe('/settings'));
@@ -116,6 +131,8 @@ describe('AddAccountLoginPage app-shell cover', () => {
 
     render(<Harness />);
 
+    expect(auth.beginAddAccount).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Cindy' }));
     await waitFor(() => expect(auth.beginAddAccount).toHaveBeenCalledOnce());
     await waitFor(() =>
       expect(screen.getByTestId('location-probe').textContent).toBe('/add-account'),

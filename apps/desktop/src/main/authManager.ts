@@ -4666,7 +4666,11 @@ export async function initialize(options: AuthInitializeOptions = {}): Promise<A
     }
   }
   if (!persistedSession) {
-    return finishColdStartSignedOut('cold-start-no-persisted-session');
+    // An account is optional. Establish the real account-free owner before
+    // releasing startup, without granting cloud access or accepting consent.
+    // Existing credentials and their recovery/error paths above stay intact.
+    await recoverAccountFreeOwnerAtStartup('local', 'cold-start-no-persisted-session');
+    return snapshotAuthState();
   }
   try {
     await loadClientEndpointsForRealm(persistedSession.realm);
