@@ -5,11 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WallpaperSettingsProvider, useWallpaperSettings } from '../useWallpaperSettings';
 import { DEFAULT_APPEARANCE_SETTINGS } from '@/../shared/appearanceSettings';
 
+const customWallpaperUrl = `cindy-media://client-wallpaper/${'b'.repeat(64)}.webp`;
+
 function Controls() {
   const settings = useWallpaperSettings();
   return (
     <>
-      <button onClick={() => settings.setWallpaper('cindy-window')}>Choose</button>
+      <button onClick={() => settings.setWallpaper('custom')}>Choose</button>
       <button onClick={settings.resetWallpaper}>Reset</button>
       <button onClick={() => settings.setMotion('dynamic')}>Animate</button>
       <span data-testid="motion">{settings.wallpaperMotion}</span>
@@ -81,9 +83,8 @@ describe('application wallpaper lifecycle', () => {
     );
     expect(document.documentElement.dataset.wallpaperActive).toBeUndefined();
   });
-  it.each(['cindy-window', 'cindy-studio', 'cindy-dream'] as const)(
-    'keeps %s as one full-window scene across pane and theme changes',
-    async (wallpaperId) => {
+  it('keeps custom artwork as one full-window background across pane and theme changes',
+    async () => {
       let changed: (value: typeof DEFAULT_APPEARANCE_SETTINGS) => void = () => {};
       vi.stubGlobal('electronAPI', {
         appearanceSettings: {
@@ -99,7 +100,7 @@ describe('application wallpaper lifecycle', () => {
           <Controls />
         </WallpaperSettingsProvider>,
       );
-      act(() => changed({ ...DEFAULT_APPEARANCE_SETTINGS, wallpaperId }));
+      act(() => changed({ ...DEFAULT_APPEARANCE_SETTINGS, wallpaperId: 'custom', customWallpaperUrl }));
       const style = document.documentElement.style;
       const artwork = style.getPropertyValue('--app-wallpaper-image');
       const veil = parseFloat(style.getPropertyValue('--app-wallpaper-veil'));
@@ -117,8 +118,36 @@ describe('application wallpaper lifecycle', () => {
       expect(style.getPropertyValue('--app-wallpaper-figure-position')).toBe('');
     },
   );
+  it.each(['cindy-window', 'cindy-studio', 'cindy-dream'] as const)(
+    'does not render retired %s at startup or on another window’s update',
+    (wallpaperId) => {
+      let changed: (value: typeof DEFAULT_APPEARANCE_SETTINGS) => void = () => {};
+      vi.stubGlobal('electronAPI', {
+        appearanceSettings: {
+          getSync: () => ({ ...DEFAULT_APPEARANCE_SETTINGS, wallpaperId,
+            wallpaperMotion: 'dynamic', customWallpaperUrl }),
+          onChanged: (callback: typeof changed) => { changed = callback; return () => {}; },
+        },
+      });
+      render(<WallpaperSettingsProvider><Controls /></WallpaperSettingsProvider>);
+      expect(document.documentElement.dataset.wallpaperActive).toBeUndefined();
+      expect(document.querySelector('video')).toBeNull();
+      act(() => changed({ ...DEFAULT_APPEARANCE_SETTINGS, wallpaperId: 'custom', customWallpaperUrl }));
+      expect(document.documentElement.style.getPropertyValue('--app-wallpaper-image')).toContain(customWallpaperUrl);
+      act(() => changed({ ...DEFAULT_APPEARANCE_SETTINGS, wallpaperId, wallpaperMotion: 'dynamic', customWallpaperUrl }));
+      expect(document.documentElement.dataset.wallpaperActive).toBeUndefined();
+      expect(document.documentElement.style.getPropertyValue('--app-wallpaper-image')).toBe('');
+      expect(document.querySelector('video')).toBeNull();
+    },
+  );
   it('covers the document, including portals, and restores the theme on reset/unmount', () => {
-    vi.stubGlobal('electronAPI', undefined);
+    vi.stubGlobal('electronAPI', {
+      appearanceSettings: {
+        getSync: () => ({ ...DEFAULT_APPEARANCE_SETTINGS, customWallpaperUrl }),
+        onChanged: () => () => {},
+        setPatch: vi.fn().mockResolvedValue(undefined),
+      },
+    });
     const { unmount } = render(
       <WallpaperSettingsProvider>
         <Controls />
@@ -142,7 +171,7 @@ describe('application wallpaper lifecycle', () => {
     const unsubscribe = vi.fn();
     vi.stubGlobal('electronAPI', {
       appearanceSettings: {
-        getSync: () => ({ ...DEFAULT_APPEARANCE_SETTINGS, wallpaperId: 'cindy-studio' }),
+        getSync: () => ({ ...DEFAULT_APPEARANCE_SETTINGS, wallpaperId: 'custom', customWallpaperUrl }),
         onChanged: (fn: typeof changed) => {
           changed = fn;
           return unsubscribe;
@@ -165,7 +194,7 @@ describe('application wallpaper lifecycle', () => {
     const setPatch = vi.fn().mockRejectedValue(new Error('save failed'));
     vi.stubGlobal('electronAPI', {
       appearanceSettings: {
-        getSync: () => DEFAULT_APPEARANCE_SETTINGS,
+        getSync: () => ({ ...DEFAULT_APPEARANCE_SETTINGS, customWallpaperUrl }),
         onChanged: () => () => {},
         setPatch,
       },
@@ -185,7 +214,7 @@ describe('application wallpaper lifecycle', () => {
     const setPatch = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal('electronAPI', {
       appearanceSettings: {
-        getSync: () => ({ ...DEFAULT_APPEARANCE_SETTINGS, wallpaperId: 'cindy-studio' }),
+        getSync: () => ({ ...DEFAULT_APPEARANCE_SETTINGS, wallpaperId: 'custom', customWallpaperUrl }),
         onChanged: (callback: typeof changed) => {
           changed = callback;
           return () => {};
@@ -206,7 +235,8 @@ describe('application wallpaper lifecycle', () => {
     act(() =>
       changed({
         ...DEFAULT_APPEARANCE_SETTINGS,
-        wallpaperId: 'cindy-studio',
+        wallpaperId: 'custom',
+        customWallpaperUrl,
         wallpaperMotion: 'static',
       }),
     );

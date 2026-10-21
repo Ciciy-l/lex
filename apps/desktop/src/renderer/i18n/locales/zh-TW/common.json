@@ -126,7 +126,7 @@
     "remoteHostOfflineNote": "房主電腦持續離線後，共享會自動結束。再次共享需重新開啟並傳送新的邀請連結。",
     "waitingHost": "等待房主處理，你可以繼續傳送訊息。",
     "join": "加入共享任務",
-    "login": "請登入 Cindy 後加入任務",
+    "login": "請登入後加入任務",
     "invitation": "邀請連結或邀請碼",
     "dismiss": "關閉視窗",
     "title": "共享任務",
@@ -184,7 +184,7 @@
     "othersUnaffected": "其他成員與 Agent 的工作不受影響。",
     "viewJoined": "查看我加入的",
     "invalid": "請貼上有效的邀請連結或邀請碼",
-    "invitationDifferentServer": "此邀請屬於其他 Cindy 服務，請用對應的用戶端開啟連結",
+    "invitationDifferentServer": "此邀請屬於其他服務，請用對應的用戶端開啟連結",
     "managementIntro": "管理你發起和加入的共享。",
     "returnToTasks": "返回任務清單",
     "invitationDetected": "發現共享任務邀請",
@@ -839,7 +839,7 @@
       },
       "wallpaper": {
         "title": "桌布",
-        "description": "為整個應用程式選擇 {{appName}} 場景或自己的圖片，主題保持獨立。",
+        "description": "選擇自己的圖片作為應用程式背景，主題保持獨立。",
         "reset": "恢復預設",
         "aria": "桌布選擇",
         "nonePreview": "無",
@@ -1044,8 +1044,8 @@
       "local": {
         "exitFailed": "退出未登入狀態失敗，請重試",
         "name": "未登入",
-        "description": "資料僅儲存在本機，不使用 Cindy 帳號服務",
-        "signIn": "登入 Cindy",
+        "description": "資料僅儲存在本機",
+        "signIn": "登入",
         "exit": "退出未登入狀態"
       },
       "copyUserId": {
@@ -1340,7 +1340,7 @@
       "serviceSource": {
         "label": "語音服務",
         "hint": "預設使用 Cindy 語音服務；也可以連線支援即時 ASR 的服務，並使用獨立的語音憑證。",
-        "localHint": "未登入狀態不使用 Cindy 帳號服務；請連線支援即時 ASR 的服務並配置獨立語音憑證。",
+        "localHint": "未登入時，請連線支援即時 ASR 的服務並配置獨立語音憑證。",
         "ariaLabel": "語音服務來源選擇",
         "options": {
           "cindy": "Cindy 官方服務",
@@ -1737,7 +1737,7 @@
         },
         "logoutConfirm": {
           "title": "斷開 Claude.ai 訂閱？",
-          "description": "中斷後，Cindy 將無法使用這份 Claude 訂閱。",
+          "description": "中斷後，{{appName}} 將無法使用這份 Claude 訂閱。",
           "confirm": "中斷連線",
           "cancel": "取消"
         },
@@ -2558,7 +2558,7 @@
         "badge": "推薦",
         "desc": "官方服務，全部模型開箱即用，無需管理任何 Key。",
         "grantBadge": "新使用者含贈送餘額",
-        "cta": "登入 Cindy"
+        "cta": "登入"
       },
       "menu": {
         "disableProvider": "停用此供應商",
@@ -3274,7 +3274,7 @@
       },
       "emptySlot": "未選擇",
       "customHint": "自訂後只按你選的順序嘗試；都無法使用時不會偷偷換成別的模型。",
-      "signInHint": "登入 Cindy 後可使用自動推薦；未登入時請在自訂中選擇已設定的其他供應商模型。",
+      "signInHint": "登入後可使用自動推薦；未登入時請在自訂中選擇已設定的模型。",
       "chooseAgent": "選擇 Agent",
       "backToAgents": "返回選擇 Agent",
       "searchPlaceholder": "搜尋模型或供應商",
@@ -3950,7 +3950,7 @@
         "allowInboundAria": "切換是否允許 {{name}} 控制本機",
         "peerControlOff": "對方未允許遠端控制",
         "masterOffHint": "需先開啟上方總開關",
-        "controllingThisMac": "已連接到 Cindy"
+        "controllingThisMac": "已連接到 {{appName}}"
       },
       "toast": {
         "revoked": "已撤銷該裝置的訪問權限",
@@ -4028,7 +4028,7 @@
           "toggleFailed": "切換失敗",
           "actionFailed": "操作失敗"
         },
-        "loginRequired": "需要先登入 Cindy 帳號，連線會在登入後自動恢復。",
+        "loginRequired": "需要先登入帳號，連線會在登入後自動恢復。",
         "standbyHint": "本機另一 {{appName}} 例項正在使用 Slack 連線。關閉它後，重新開啟此開關即可接管。",
         "authorizing": "授權中…",
         "transportStatus": "傳輸連線：{{status}}",
@@ -5137,7 +5137,7 @@
         "ignoreRound": "忽略本輪",
         "updateTo": "更新到 v{{version}}",
         "updateAria": "將 {{name}} 更新到 v{{version}}",
-        "createWithCindy": "使用 Cindy 建立",
+        "createWithCindy": "建立插件",
         "createPrompt": "我要建立一個 Cindy 插件。請先呼叫 ghost_forge_guide 獲取手冊目錄，先讀第 0 章「設計對齊」，再用 section 引數讀透相關章節（動手前至少讀完能力總覽、沙箱紅線與打包流程），不要直接開始實現。先從提問開始：優先用帶選項的提問卡片，每張卡片聚焦一個關鍵決策並標註你的推薦項，把我可能不知道的設計選項主動擺出來讓我選——比如介面形態（停靠面板、插件頁內面板、對話卡片還是無介面）、$ 點名詞、啟動模式、後台能力（旁聽事件、應用內輕提示、未讀角標、確認彈窗）、是否聯網、是否需要設定頁、要不要隨包 Node 行程跑重活、要不要圖片影片等媒體能力；並逐步確認插件要解決的問題、目標使用者、互動流程、所需工具與連線、權限邊界和驗收標準。設計確認後，再按規範實現並自檢；最後呼叫 ghost_forge_pack 校驗並產生 .cindy 產物，不要聲稱已安裝。",
         "filterAll": "全部",
         "filtersAria": "按來源篩選插件",
@@ -5179,7 +5179,7 @@
         "conflictAria": "{{name}} 存在插件標識衝突",
         "conflictDescription": "插件標識已被佔用，當前無法安裝",
         "unavailable": "插件市場暫時不可用；已安裝插件仍可正常管理和使用。",
-        "authenticationRequired": "登入 Cindy 後才能檢視插件市場。",
+        "authenticationRequired": "登入後才能檢視插件市場。",
         "notConfigured": "當前環境未配置插件市場；已安裝插件仍可正常管理和使用。",
         "removalNotice": {
           "single": "插件“{{name}}”已被組織移除，本機副本與資料已清理",
@@ -5840,7 +5840,7 @@
         },
         "status": {
           "loading": "正在讀取同步狀態…",
-          "signInRequired": "登入 Cindy 帳號後可在裝置間同步",
+          "signInRequired": "登入後可在裝置間同步",
           "off": "同步已關閉",
           "waiting": "等待其他已開啟同步的桌面裝置上線",
           "syncing": "正在安全同步…",
@@ -7719,7 +7719,7 @@
       "regionCodeDev": "Dev",
       "viewReleaseNotes": "檢視 {{appName}} 版本日誌",
       "reopenUpdateBanner": "有更新待重啟，點選檢視",
-      "downloadMobile": "下載 Cindy 移動端"
+      "downloadMobile": "下載 {{appName}} 移動端"
     },
     "accountSwitcher": {
       "title": "切換帳號",
@@ -7736,16 +7736,16 @@
       "close": "關閉"
     },
     "mobileDownload": {
-      "title": "遠端控制 Cindy",
+      "title": "遠端控制 {{appName}}",
       "subtitle": "移動端連線桌面端",
-      "qrAlt": "Cindy 移動端下載二維碼",
+      "qrAlt": "{{appName}} 移動端下載二維碼",
       "preparing": "正在生成二維碼…",
       "error": "二維碼生成失敗，請稍後重試",
       "openPage": "開啟下載頁面",
       "openFailed": "下載頁面開啟失敗，請檢查系統預設瀏覽器設定",
-      "scanToOpen": "掃碼開啟 Cindy App，並登入同一帳號",
+      "scanToOpen": "掃碼開啟 {{appName}} App，並登入同一帳號",
       "scanAnother": "掃碼新增另一臺裝置",
-      "scanAnotherHint": "在另一臺手機上開啟 Cindy",
+      "scanAnotherHint": "在另一臺手機上開啟 {{appName}}",
       "myDevices": "我的裝置",
       "deviceOffline": "離線",
       "allowControl": "允許同帳號裝置控制本機",
@@ -8573,9 +8573,9 @@
   },
   "onboarding": {
     "homeZeroModel": {
-      "title": "登入 Cindy 繼續使用",
-      "desc": "你還未設定任何模型，登入 Cindy 後即可使用數十種頂級大模型。",
-      "cta": "登入 Cindy",
+      "title": "連接模型，開始使用",
+      "desc": "登入帳號服務，或連接你自己的模型 API。",
+      "cta": "登入",
       "cloudTitle": "使用 Cindy 繼續",
       "cloudDesc": "你還未設定任何模型，開通官方服務即可使用數十種頂級大模型。",
       "cloudCta": "開始使用",
@@ -8588,8 +8588,8 @@
       "cindy": {
         "title": "Cindy AI",
         "desc": "官方服務 · 全部模型 · Claude Code / Codex 通用",
-        "loginTitle": "登入 Cindy",
-        "loginDesc": "登入後自動開通 Cindy AI 官方服務，即可使用全部模型，新使用者含贈送餘額"
+        "loginTitle": "登入",
+        "loginDesc": "選擇帳號服務後連接模型。"
       },
       "othersToggle": "其他供應商({{count}})",
       "presetSub": "填入 API Key 即可連線",
@@ -8598,7 +8598,7 @@
       "banner": {
         "text": "當前沒有可用的模型，連線一個供應商後即可對話。",
         "connectCta": "連線供應商",
-        "loginCta": "登入 Cindy",
+        "loginCta": "登入",
         "dismissAria": "關閉引導"
       },
       "detectedLabel": "已檢測到",
@@ -8881,7 +8881,7 @@
       "viewBalance": "檢視餘額",
       "viewBalanceTitle": "開啟「用量和計費」檢視餘額並充值",
       "credentialSwitchBusy": "Codex 正在其它任務中執行，暫時無法按本任務選擇的模型來源切換（需要重啟共享的 Codex 後臺處理程序）。等它結束後點「重試」即可。",
-      "accountBoundaryPending": "Cindy 正在切換帳號狀態，暫時無法開始這個任務。稍等片刻後點「重試」；如果一直出現，請重新啟動 Cindy。",
+      "accountBoundaryPending": "{{appName}} 正在切換帳號狀態，暫時無法開始這個任務。稍等片刻後點「重試」；如果一直出現，請重新啟動 {{appName}}。",
       "codexThreadStale": "Codex 鑑權模式已切換，當前任務無法繼續 —— 請新建任務後生效。",
       "codexResumeNotReady": "Codex 暫時無法恢復這個任務，請稍後重試",
       "claudeGatewayOpusPlanMismatch": "這次 Opus 請求實際走的是 XD Gateway，不是你的 Claude.ai 訂閱；該閘道器路由拒絕了此模型。可切換到 Claude.ai 訂閱後重試，或換一個模型。",
@@ -11044,7 +11044,7 @@
       "viewerGithub": "GitHub 帳號 @{{login}}",
       "platformUnavailableHint": "當前只顯示本機記錄的提交。在其它裝置上提交過的 Issue、以及它們在 GitHub 上的最新狀態，暫時無法在應用內檢視。",
       "platformUnavailablePartialHint": "在其它裝置上提交過的 Issue 暫時無法在應用內檢視，列表可能不完整。",
-      "notSignedInHint": "登入 Cindy 帳號後，可以看到你提交過的全部 Issue 和它們的最新狀態。",
+      "notSignedInHint": "登入帳號後，可以看到你提交過的全部 Issue 和它們的最新狀態。",
       "fetchFailedHint": "暫時取不到最新狀態，當前只顯示本機記錄的提交，列表可能不完整。",
       "fetchFailedPartialHint": "暫時取不到最新狀態，部分 Issue 的狀態可能顯示不全。",
       "enhancementFailedHint": "暫時沒能讀取你 GitHub 帳號名下的 Issue。可能是 Cindy GitHub 插件的訪問令牌權限不足，可到插件頁檢查。",

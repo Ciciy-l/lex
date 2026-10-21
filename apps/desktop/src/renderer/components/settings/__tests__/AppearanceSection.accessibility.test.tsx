@@ -98,11 +98,12 @@ describe('AppearanceSection accessibility', () => {
       wallpapers.getAllByRole('radio').map((option) => option.getAttribute('aria-label')),
     ).toEqual([
       'settings.appearance.wallpaper.options.none',
-      'settings.appearance.wallpaper.options.cindy-window',
-      'settings.appearance.wallpaper.options.cindy-studio',
-      'settings.appearance.wallpaper.options.cindy-dream',
       'settings.appearance.wallpaper.options.custom',
     ]);
+    expect(wallpapers.getByRole('radio', { name: 'settings.appearance.wallpaper.options.none' })
+      .getAttribute('aria-checked')).toBe('true');
+    expect(wallpapers.getByRole('radio', { name: 'settings.appearance.wallpaper.options.custom' })
+      .getAttribute('aria-checked')).toBe('false');
     expect(
       screen.getByRole('spinbutton', { name: 'settings.appearance.font.uiSize.label' }),
     ).toBeTruthy();

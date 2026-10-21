@@ -170,8 +170,8 @@ describe('UserInfoSection — mobile download entry', () => {
     expect(source).toContain("navigate('/settings?tab=remote-control')");
     expect(source).toContain("const remoteAvailable = mode === 'cloud';");
     expect(source).toContain('remoteAvailable={remoteAvailable}');
-    expect(locale.sidebar.user.downloadMobile).toBe('下载 Cindy 移动端');
-    expect(locale.sidebar.mobileDownload.title).toBe('远程控制 Cindy');
+    expect(locale.sidebar.user.downloadMobile).toBe('下载 {{appName}} 移动端');
+    expect(locale.sidebar.mobileDownload.title).toBe('远程控制 {{appName}}');
   });
 
   it('keeps the same entry and dialog available in the collapsed sidebar', () => {

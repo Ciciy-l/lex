@@ -126,7 +126,7 @@
     "remoteHostOfflineNote": "호스트 컴퓨터가 계속 오프라인 상태이면 공유가 자동으로 종료됩니다. 호스트가 공유를 다시 시작하고 새 초대 링크를 보내야 합니다.",
     "waitingHost": "호스트의 응답을 기다리고 있습니다. 메시지는 계속 보낼 수 있습니다.",
     "join": "공유 세션 참여",
-    "login": "세션에 참가하려면 Cindy에 로그인하세요.",
+    "login": "세션에 참가하려면 로그인하세요.",
     "invitation": "초대 링크 또는 초대 코드",
     "dismiss": "대화 상자 닫기",
     "title": "세션 공유",
@@ -184,7 +184,7 @@
     "othersUnaffected": "다른 멤버와 Agent 작업에는 영향을 주지 않습니다.",
     "viewJoined": "참여한 작업 보기",
     "invalid": "유효한 초대 링크 또는 초대 코드를 붙여넣으세요.",
-    "invitationDifferentServer": "다른 Cindy 서비스의 초대입니다. 해당 앱에서 링크를 여세요.",
+    "invitationDifferentServer": "다른 서비스의 초대입니다. 해당 앱에서 링크를 여세요.",
     "managementIntro": "시작하거나 참여한 공유를 관리합니다.",
     "returnToTasks": "작업 목록으로 돌아가기",
     "invitationDetected": "공유 작업 초대를 찾았습니다",
@@ -839,7 +839,7 @@
       },
       "wallpaper": {
         "title": "배경화면",
-        "description": "앱 전체에 {{appName}} 배경이나 내 이미지를 적용하세요. 테마는 별도로 선택할 수 있습니다.",
+        "description": "내 이미지를 앱 배경으로 설정하세요. 테마는 별도로 선택할 수 있습니다.",
         "reset": "기본값으로 복원",
         "aria": "배경화면 선택",
         "nonePreview": "없음",
@@ -1044,8 +1044,8 @@
       "local": {
         "exitFailed": "로그인하지 않은 상태를 종료하지 못했습니다. 다시 시도해 주세요",
         "name": "로그인하지 않음",
-        "description": "데이터는 이 기기에만 저장되며 Cindy 계정 서비스를 사용하지 않습니다",
-        "signIn": "Cindy 로그인",
+        "description": "데이터는 이 기기에만 저장됩니다",
+        "signIn": "로그인",
         "exit": "로그인하지 않은 상태 종료"
       },
       "copyUserId": {
@@ -1340,7 +1340,7 @@
       "serviceSource": {
         "label": "음성 서비스",
         "hint": "기본적으로 Cindy 음성 서비스를 사용합니다. 실시간 ASR 지원 서비스와 별도의 음성 인증 정보로 전환할 수도 있습니다.",
-        "localHint": "로그인하지 않은 상태에서는 Cindy 계정 서비스를 사용하지 않습니다. 실시간 ASR 지원 서비스와 별도의 음성 인증 정보를 설정하세요.",
+        "localHint": "로그인하지 않은 상태에서는 실시간 ASR 지원 서비스와 별도의 음성 인증 정보를 설정하세요.",
         "ariaLabel": "음성 서비스 소스 선택",
         "options": {
           "cindy": "Cindy 공식 서비스",
@@ -1737,7 +1737,7 @@
         },
         "logoutConfirm": {
           "title": "Claude.ai 구독을 해제할까요?",
-          "description": "Cindy에서 이 Claude 구독을 사용할 수 없게 됩니다.",
+          "description": "{{appName}}에서 이 Claude 구독을 사용할 수 없게 됩니다.",
           "confirm": "연결 해제",
           "cancel": "취소"
         },
@@ -2558,7 +2558,7 @@
         "badge": "추천",
         "desc": "공식 서비스. 모든 모델을 바로 사용할 수 있으며 키 관리가 필요 없습니다.",
         "grantBadge": "신규 사용자 프로모션 잔액 제공",
-        "cta": "Cindy 로그인"
+        "cta": "로그인"
       },
       "menu": {
         "disableProvider": "이 제공자 비활성화",
@@ -3274,7 +3274,7 @@
       },
       "emptySlot": "선택 안 함",
       "customHint": "사용자 지정 후에는 선택한 순서대로만 시도합니다. 모두 사용할 수 없어도 다른 모델로 바꾸지 않습니다.",
-      "signInHint": "Cindy에 로그인하면 자동 추천을 사용할 수 있습니다. 로그인하지 않은 상태에서는 「사용자 지정」에서 설정된 다른 제공자의 모델을 선택하세요.",
+      "signInHint": "로그인하면 자동 추천을 사용할 수 있습니다. 로그인하지 않은 상태에서는 「사용자 지정」에서 설정된 모델을 선택하세요.",
       "chooseAgent": "Agent 선택",
       "backToAgents": "Agent 선택으로 돌아가기",
       "searchPlaceholder": "모델 또는 제공자 검색",
@@ -3950,7 +3950,7 @@
         "allowInboundAria": "{{name}}이(가) 본 기기를 제어하도록 허용할지 전환",
         "peerControlOff": "상대방이 제어를 허용하지 않음",
         "masterOffHint": "먼저 위의 메인 스위치를 켜세요",
-        "controllingThisMac": "Cindy에 연결됨"
+        "controllingThisMac": "{{appName}}에 연결됨"
       },
       "toast": {
         "revoked": "이 기기의 액세스 권한을 철회했습니다",
@@ -4028,7 +4028,7 @@
           "toggleFailed": "전환 실패",
           "actionFailed": "작업에 실패했습니다"
         },
-        "loginRequired": "먼저 Cindy 계정에 로그인하세요. 로그인 후 연결이 자동으로 복구됩니다.",
+        "loginRequired": "먼저 계정에 로그인하세요. 로그인 후 연결이 자동으로 복구됩니다.",
         "standbyHint": "이 컴퓨터의 다른 {{appName}} 인스턴스가 Slack 연결을 사용 중입니다. 해당 인스턴스를 닫은 뒤 이 스위치를 다시 켜면 연결을 이어받을 수 있습니다.",
         "authorizing": "인증 중…",
         "transportStatus": "전송 연결: {{status}}",
@@ -5137,7 +5137,7 @@
         "ignoreRound": "이번은 무시",
         "updateTo": "v{{version}}(으)로 업데이트",
         "updateAria": "{{name}}을(를) v{{version}}(으)로 업데이트",
-        "createWithCindy": "Cindy로 만들기",
+        "createWithCindy": "플러그인 만들기",
         "createPrompt": "Cindy 플러그인을 만들고 싶습니다. 먼저 ghost_forge_guide를 호출해 핸드북 목차를 받고, 우선 0장 「설계 맞추기」를 읽은 뒤 section 매개변수로 관련 장(최소한 샌드박스 금지선과 패키징 장)을 읽고 나서 작업을 시작하세요. 바로 구현을 시작하지 마세요. 질문부터 시작하세요: 선택지가 있는 질문 카드를 우선 사용하고, 카드 한 장에는 핵심 결정 하나만 담아 추천안을 표시하며, 제가 모를 수 있는 설계 옵션(UI 형태: 도킹 패널 / 플러그인 페이지 내 패널 / 채팅 카드 / UI 없음, $ 호출 명령어, 시작 모드, 네트워크 사용 여부, 설정 페이지 필요 여부 등)을 먼저 보여 주고 고르게 해 주세요. 해결할 문제, 대상 사용자, 상호작용 흐름, 필요한 도구와 연결, 권한 경계, 완료 기준을 단계적으로 확인해 주세요. 설계를 확인한 뒤 규격에 따라 구현하고 검증한 다음, 마지막으로 ghost_forge_pack을 호출해 .cindy 패키지를 검증하고 생성하며, 설치된 것으로 안내하지 마세요.",
         "filterAll": "전체",
         "filtersAria": "출처별 플러그인 필터",
@@ -5180,7 +5180,7 @@
         "replaceDescription": "같은 ID의 플러그인이 이미 설치되어 있습니다. 계속하면 이 마켓 버전으로 교체하고 플러그인 데이터는 유지됩니다.",
         "unavailable": "플러그인 마켓을 일시적으로 사용할 수 없습니다. 설치된 플러그인은 계속 사용할 수 있습니다.",
         "customSourcesUnavailable": "다음 사용자 지정 마켓을 일시적으로 사용할 수 없습니다: {{names}}. 다른 마켓에는 영향을 주지 않습니다.",
-        "authenticationRequired": "플러그인 마켓을 보려면 Cindy에 로그인하세요.",
+        "authenticationRequired": "플러그인 마켓을 보려면 로그인하세요.",
         "notConfigured": "이 환경에는 플러그인 마켓이 구성되지 않았습니다. 설치된 플러그인은 계속 사용할 수 있습니다.",
         "removalNotice": {
           "single": "플러그인 “{{name}}”: 조직에서 제거했으며 이 기기의 로컬 사본과 데이터도 정리했습니다.",
@@ -5840,7 +5840,7 @@
         },
         "status": {
           "loading": "동기화 상태 확인 중…",
-          "signInRequired": "기기 간 동기화를 사용하려면 Cindy 계정에 로그인하세요",
+          "signInRequired": "기기 간 동기화를 사용하려면 로그인하세요",
           "off": "동기화 꺼짐",
           "waiting": "동기화를 켠 다른 데스크톱 기기가 온라인이 되기를 기다리는 중",
           "syncing": "안전하게 동기화 중…",
@@ -7719,7 +7719,7 @@
       "regionCodeDev": "Dev",
       "viewReleaseNotes": "{{appName}} 버전 정보 보기",
       "reopenUpdateBanner": "업데이트 준비됨 — 클릭하여 확인",
-      "downloadMobile": "Cindy 모바일 다운로드"
+      "downloadMobile": "{{appName}} 모바일 다운로드"
     },
     "accountSwitcher": {
       "title": "계정 전환",
@@ -7736,16 +7736,16 @@
       "close": "닫기"
     },
     "mobileDownload": {
-      "title": "Cindy 원격 제어",
+      "title": "{{appName}} 원격 제어",
       "subtitle": "모바일에서 데스크톱으로 연결",
-      "qrAlt": "Cindy 모바일 다운로드 QR 코드",
+      "qrAlt": "{{appName}} 모바일 다운로드 QR 코드",
       "preparing": "QR 코드 준비 중…",
       "error": "QR 코드를 만들 수 없습니다. 잠시 후 다시 시도해 주세요.",
       "openPage": "다운로드 페이지 열기",
       "openFailed": "다운로드 페이지를 열 수 없습니다. 시스템 브라우저 설정을 확인해 주세요",
-      "scanToOpen": "스캔하여 Cindy 앱을 열고 같은 계정으로 로그인",
+      "scanToOpen": "스캔하여 {{appName}} 앱을 열고 같은 계정으로 로그인",
       "scanAnother": "다른 기기 스캔",
-      "scanAnotherHint": "다른 휴대폰에서 Cindy 열기",
+      "scanAnotherHint": "다른 휴대폰에서 {{appName}} 열기",
       "myDevices": "내 기기",
       "deviceOffline": "오프라인",
       "allowControl": "동일 계정 기기에서 이 컴퓨터를 제어하도록 허용",
@@ -8573,9 +8573,9 @@
   },
   "onboarding": {
     "homeZeroModel": {
-      "title": "Cindy에 로그인하고 계속하기",
-      "desc": "아직 모델이 없습니다. Cindy에 로그인하면 수십 종의 최상위 모델을 사용할 수 있습니다.",
-      "cta": "Cindy에 로그인",
+      "title": "모델을 연결하고 시작하기",
+      "desc": "계정 서비스에 로그인하거나 내 모델 API를 연결하세요.",
+      "cta": "로그인",
       "cloudTitle": "Cindy로 계속하기",
       "cloudDesc": "아직 모델이 없습니다. 공식 서비스를 켜면 수십 종의 최상위 모델을 사용할 수 있습니다.",
       "cloudCta": "시작하기",
@@ -8588,8 +8588,8 @@
       "cindy": {
         "title": "Cindy AI",
         "desc": "공식 서비스 · 전체 모델 · Claude Code / Codex 지원",
-        "loginTitle": "Cindy 로그인",
-        "loginDesc": "로그인하면 공식 Cindy AI 서비스가 활성화되어 모든 모델을 사용할 수 있습니다. 신규 사용자에게는 프로모션 잔액이 제공됩니다"
+        "loginTitle": "로그인",
+        "loginDesc": "계정 서비스를 선택하여 모델을 연결하세요."
       },
       "othersToggle": "기타 제공자 ({{count}})",
       "presetSub": "API 키를 입력하여 연결",
@@ -8598,7 +8598,7 @@
       "banner": {
         "text": "사용 가능한 모델이 없습니다. 제공자를 연결하면 대화할 수 있습니다.",
         "connectCta": "제공자 연결",
-        "loginCta": "Cindy 로그인",
+        "loginCta": "로그인",
         "dismissAria": "닫기"
       },
       "detectedLabel": "감지됨",
@@ -8882,7 +8882,7 @@
       "viewBalance": "잔액 보기",
       "viewBalanceTitle": "「사용량 및 청구」를 열어 잔액을 확인하고 충전",
       "credentialSwitchBusy": "다른 Codex 작업이 실행 중이어서 이 세션에서 선택한 제공자로 아직 전환할 수 없습니다(공유 Codex 프로세스 재시작 필요). 다른 작업이 끝난 후 ‘재시도’를 눌러 주세요.",
-      "accountBoundaryPending": "Cindy가 계정 상태를 전환하는 중이라 아직 이 작업을 시작할 수 없습니다. 잠시 후 ‘재시도’를 눌러 주세요. 계속 표시되면 Cindy를 다시 시작해 주세요.",
+      "accountBoundaryPending": "{{appName}}가 계정 상태를 전환하는 중이라 아직 이 작업을 시작할 수 없습니다. 잠시 후 ‘재시도’를 눌러 주세요. 계속 표시되면 {{appName}}를 다시 시작해 주세요.",
       "codexThreadStale": "Codex 인증 모드가 변경되었습니다. 이 세션은 계속할 수 없습니다. 새 세션을 시작하세요.",
       "codexResumeNotReady": "Codex에서 현재 이 작업을 재개할 수 없습니다. 잠시 후 다시 시도해 주세요.",
       "claudeGatewayOpusPlanMismatch": "이 Opus 요청은 Claude.ai 구독이 아니라 XD Gateway를 통해 전송되었고, 해당 게이트웨이 경로에서 모델을 거부했습니다. Claude.ai 구독으로 전환해 다시 시도하거나 다른 모델을 선택하세요.",
@@ -11044,7 +11044,7 @@
       "viewerGithub": "GitHub 계정 @{{login}}",
       "platformUnavailableHint": "이 기기에 기록된 제출 항목만 표시합니다. 다른 기기에서 제출한 이슈와 GitHub의 최신 상태는 아직 앱에서 확인할 수 없습니다.",
       "platformUnavailablePartialHint": "다른 기기에서 제출한 이슈는 아직 앱에서 확인할 수 없어 목록이 완전하지 않을 수 있습니다.",
-      "notSignedInHint": "Cindy 계정에 로그인하면 제출한 모든 이슈와 최신 상태를 볼 수 있습니다.",
+      "notSignedInHint": "계정에 로그인하면 제출한 모든 이슈와 최신 상태를 볼 수 있습니다.",
       "fetchFailedHint": "최신 상태를 가져오지 못했습니다. 이 기기에 기록된 제출 항목만 표시하므로 목록이 완전하지 않을 수 있습니다.",
       "fetchFailedPartialHint": "최신 상태를 가져오지 못했습니다. 일부 이슈의 상태가 완전하지 않을 수 있습니다.",
       "enhancementFailedHint": "GitHub 계정으로 등록한 이슈를 읽지 못했습니다. Cindy GitHub 플러그인의 액세스 토큰 권한이 부족할 수 있습니다. 플러그인 페이지에서 확인해 주세요.",

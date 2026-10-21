@@ -4,11 +4,9 @@ import { useState } from 'react';
 import { extractIpcError } from '@/utils/ipcError';
 
 import { Button } from '@/components/ui/button';
-import { SegmentedControl } from '@/components/ui/segmented-control';
 import { Slider } from '@/components/ui/slider';
 import { cn } from '@/lib/utils';
 import { useWallpaperSettings } from '@/hooks/useWallpaperSettings';
-import { getBuiltinWallpaperBackground, isSceneWallpaper } from '@/lib/wallpaper';
 import {
   APPEARANCE_LIMITS,
   DEFAULT_APPEARANCE_SETTINGS,
@@ -17,9 +15,7 @@ import {
 
 const WALLPAPER_OPTIONS: Array<{ id: WallpaperId }> = [
   { id: 'none' },
-  { id: 'cindy-window' },
-  { id: 'cindy-studio' },
-  { id: 'cindy-dream' },
+  { id: 'custom' },
 ];
 
 export function WallpaperSection() {
@@ -33,7 +29,6 @@ export function WallpaperSection() {
     customWallpaperUrl,
     setWallpaper,
     setOverlay,
-    setMotion,
     resetWallpaper,
   } = useWallpaperSettings();
   const chooseImage = async () => {
@@ -107,12 +102,12 @@ export function WallpaperSection() {
         role="radiogroup"
         aria-label={t('settings.appearance.wallpaper.aria')}
       >
-        {[...WALLPAPER_OPTIONS, { id: 'custom' as const }].map((option) => {
+        {WALLPAPER_OPTIONS.map((option) => {
           const selected = wallpaperId === option.id;
           const background =
             option.id === 'custom' && customWallpaperUrl
               ? `url("${customWallpaperUrl}")`
-              : getBuiltinWallpaperBackground(option.id);
+              : undefined;
           return (
             <button
               key={option.id}
@@ -206,27 +201,6 @@ export function WallpaperSection() {
       <div className="h-px bg-[var(--settings-input-border)]" />
 
       <div className="flex flex-col gap-3">
-        {isSceneWallpaper(wallpaperId) && (
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-13 font-medium text-[var(--settings-section-sublabel)]">
-                {t('settings.appearance.wallpaper.motionLabel')}
-              </p>
-              <p className="mt-1 text-12 leading-[1.4] text-[var(--settings-section-sublabel)] opacity-70">
-                {t('settings.appearance.wallpaper.motionHint')}
-              </p>
-            </div>
-            <SegmentedControl
-              aria-label={t('settings.appearance.wallpaper.motionLabel')}
-              value={wallpaperMotion}
-              onValueChange={setMotion}
-              options={[
-                { value: 'static', label: t('settings.appearance.wallpaper.motionStatic') },
-                { value: 'dynamic', label: t('settings.appearance.wallpaper.motionDynamic') },
-              ]}
-            />
-          </div>
-        )}
         <div className="flex items-center gap-3">
           <span className="shrink-0 text-12 text-[var(--settings-section-sublabel)]">
             {t('settings.appearance.wallpaper.overlayLabel')}

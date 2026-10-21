@@ -8,7 +8,11 @@ import { legalLinksForRealm } from '../../../../shared/legalLinks';
 const toast = vi.hoisted(() => ({
   error: vi.fn(),
 }));
-const auth = vi.hoisted(() => ({ serviceRealm: 'global' as 'cn' | 'global' }));
+const auth = vi.hoisted(() => ({
+  serviceRealm: 'global' as 'cn' | 'global',
+  mode: 'local' as 'signed-out' | 'local' | 'cloud',
+  isAuthenticated: false,
+}));
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -22,10 +26,10 @@ vi.mock('@/lib/toast', () => ({
 }));
 
 vi.mock('@/contexts/AuthContext', () => ({
-  useAuth: () => ({ serviceRealm: auth.serviceRealm }),
+  useAuth: () => auth,
 }));
 
-import { CindyLegalPanel, LegalLinksRows } from '../AboutSection';
+import { CindyLegalPanel, CindyServicePanels, LegalLinksRows } from '../AboutSection';
 
 const openExternal = vi.fn();
 
@@ -33,6 +37,8 @@ describe('AboutSection legal links', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     auth.serviceRealm = 'global';
+    auth.mode = 'local';
+    auth.isAuthenticated = false;
     openExternal.mockResolvedValue({ success: true });
     (window as unknown as { electronAPI: unknown }).electronAPI = {
       openExternal,
@@ -40,6 +46,28 @@ describe('AboutSection legal links', () => {
   });
 
   afterEach(() => cleanup());
+
+  it.each(['signed-out', 'local', 'cloud'] as const)(
+    'hides service panels without an authenticated account in %s mode',
+    (mode) => {
+      auth.mode = mode;
+      const { container } = render(<CindyServicePanels />);
+      expect(container.childElementCount).toBe(0);
+    },
+  );
+
+  it('shows the real service information for a cloud account and removes it on sign-out', () => {
+    auth.mode = 'cloud';
+    auth.isAuthenticated = true;
+    const { rerender } = render(<CindyServicePanels />);
+    expect(screen.getByRole('button', { name: 'settings.about.legal.title' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'settings.about.social.title' })).toBeTruthy();
+    auth.mode = 'local';
+    auth.isAuthenticated = false;
+    rerender(<CindyServicePanels />);
+    expect(screen.queryByRole('button', { name: 'settings.about.legal.title' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'settings.about.social.title' })).toBeNull();
+  });
 
   it('keeps Cindy legal information collapsed until the user opens it', () => {
     render(<CindyLegalPanel />);

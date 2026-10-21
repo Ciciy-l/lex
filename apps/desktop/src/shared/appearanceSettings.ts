@@ -52,6 +52,7 @@ export const APPEARANCE_LIMITS = {
   wallpaperOverlay: { min: 0, max: 0.6, step: 0.05 },
 } as const;
 
+// Keep legacy IDs in the wire type for old snapshots; normalize them to no wallpaper.
 export const WALLPAPER_IDS = [
   'none',
   'cindy-window',
@@ -147,9 +148,7 @@ export function normalizeAppearanceSettings(raw: unknown): AppearanceSettings {
 }
 
 function normalizeWallpaperId(value: unknown): WallpaperId {
-  return typeof value === 'string' && (WALLPAPER_IDS as readonly string[]).includes(value)
-    ? (value as WallpaperId)
-    : (DEFAULT_APPEARANCE_SETTINGS.wallpaperId as WallpaperId);
+  return value === 'custom' ? 'custom' : 'none';
 }
 
 function normalizeFamily(value: unknown): string {

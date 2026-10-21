@@ -752,7 +752,7 @@ describe('ProvidersSection — 深链定位', () => {
     expect(wizardSpy).toHaveBeenCalledWith({ kind: 'preset', presetId: 'deepseek' });
   });
 
-  it('目录无 xd(无账号会话)→ 左栏置顶 Cindy 登录引导行,connect=xd 落到该行,CTA 跳 /add-account', async () => {
+  it('目录无 xd(无账号会话)→ 通用登录引导行,connect=xd 落到该行,CTA 跳 /add-account', async () => {
     const { fireEvent } = await import('@testing-library/react');
     providersState.providers = [makeProvider('anthropic', { name: 'Anthropic' })];
     render(
@@ -767,7 +767,7 @@ describe('ProvidersSection — 深链定位', () => {
     // 引导行 + 右栏登录引导(connect=xd 深链选中;列表为空时它也是默认选中)。
     expect(await screen.findByText('settings.providers.xdSignin.badge')).not.toBeNull();
     await waitFor(() =>
-      expect(screen.getByText('settings.providers.xdSignin.desc')).not.toBeNull(),
+      expect(screen.getByText('onboarding.connectProvider.cindy.loginDesc')).not.toBeNull(),
     );
     expect(screen.queryByTestId('wizard-stub')).toBeNull();
 

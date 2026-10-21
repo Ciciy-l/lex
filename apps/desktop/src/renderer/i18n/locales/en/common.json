@@ -126,7 +126,7 @@
     "remoteHostOfflineNote": "Sharing ends automatically if the host computer stays offline. The host must start sharing again and send a new invitation link to resume.",
     "waitingHost": "Waiting for the host to respond. You can continue sending messages.",
     "join": "Join Shared Task",
-    "login": "Sign in to Cindy to join a task.",
+    "login": "Sign in to join a task.",
     "invitation": "Invitation link or code",
     "dismiss": "Close Dialog",
     "title": "Share Task",
@@ -184,7 +184,7 @@
     "othersUnaffected": "Other members and Agent work are not affected.",
     "viewJoined": "View joined tasks",
     "invalid": "Paste a valid invitation link or code.",
-    "invitationDifferentServer": "This invitation belongs to another Cindy service. Open the link in the matching app.",
+    "invitationDifferentServer": "This invitation belongs to another service. Open the link in the matching app.",
     "managementIntro": "Manage the tasks you share and join.",
     "returnToTasks": "Back to Tasks",
     "invitationDetected": "Shared task invitation found",
@@ -839,7 +839,7 @@
       },
       "wallpaper": {
         "title": "Wallpaper",
-        "description": "Choose a {{appName}} scene or your own image for the whole app, independently of the theme.",
+        "description": "Choose your own image for the app background, independently of the theme.",
         "reset": "Reset",
         "aria": "Wallpaper selection",
         "nonePreview": "None",
@@ -1044,8 +1044,8 @@
       "local": {
         "exitFailed": "Failed to exit the not-signed-in state, please try again",
         "name": "Not signed in",
-        "description": "Data stays on this device without Cindy account services",
-        "signIn": "Sign in to Cindy",
+        "description": "Data stays on this device",
+        "signIn": "Sign in",
         "exit": "Exit the not-signed-in state"
       },
       "copyUserId": {
@@ -1340,7 +1340,7 @@
       "serviceSource": {
         "label": "Voice service",
         "hint": "Uses the Cindy voice service by default. You can instead connect a realtime ASR service with separate voice credentials.",
-        "localHint": "Cindy account services are unavailable while not signed in; connect a realtime ASR service with separate voice credentials.",
+        "localHint": "While signed out, connect a realtime ASR service with separate voice credentials.",
         "ariaLabel": "Voice service source",
         "options": {
           "cindy": "Cindy official service",
@@ -1737,7 +1737,7 @@
         },
         "logoutConfirm": {
           "title": "Disconnect Claude.ai subscription?",
-          "description": "Cindy will no longer use this Claude subscription.",
+          "description": "{{appName}} will no longer use this Claude subscription.",
           "confirm": "Disconnect",
           "cancel": "Cancel"
         },
@@ -2559,7 +2559,7 @@
         "badge": "Recommended",
         "desc": "The official service — all models work out of the box, no keys to manage.",
         "grantBadge": "Promotional balance for new users",
-        "cta": "Sign in to Cindy"
+        "cta": "Sign in"
       },
       "menu": {
         "disableProvider": "Disable This Provider",
@@ -3275,7 +3275,7 @@
       },
       "emptySlot": "Not selected",
       "customHint": "A custom chain is tried in this order only. If none of them work, {{appName}} will not switch to another model.",
-      "signInHint": "Sign in to Cindy to use the automatic recommendations. While signed out, choose a configured model from another provider under Custom.",
+      "signInHint": "Sign in to use the automatic recommendations. While signed out, choose a configured model under Custom.",
       "chooseAgent": "Choose an Agent",
       "backToAgents": "Back to Agent selection",
       "searchPlaceholder": "Search models or providers",
@@ -3951,7 +3951,7 @@
         "allowInboundAria": "Toggle whether {{name}} can control this device",
         "peerControlOff": "Remote control not enabled on that device",
         "masterOffHint": "Turn on the master switch above first",
-        "controllingThisMac": "Connected to Cindy"
+        "controllingThisMac": "Connected to {{appName}}"
       },
       "toast": {
         "revoked": "Access revoked for this device",
@@ -4029,7 +4029,7 @@
           "toggleFailed": "Failed to toggle",
           "actionFailed": "Operation failed"
         },
-        "loginRequired": "Sign in to your Cindy account first; the connection resumes automatically after login.",
+        "loginRequired": "Sign in to your account first; the connection resumes automatically after login.",
         "standbyHint": "Another {{appName}} instance on this computer is using the Slack connection. Close it, then turn this switch back on to take over.",
         "authorizing": "Authorizing…",
         "transportStatus": "Transport: {{status}}",
@@ -5138,7 +5138,7 @@
         "ignoreRound": "Ignore this round",
         "updateTo": "Update to v{{version}}",
         "updateAria": "Update {{name}} to v{{version}}",
-        "createWithCindy": "Create with Cindy",
+        "createWithCindy": "Create plugin",
         "createPrompt": "I want to create a Cindy plugin. First call ghost_forge_guide to get the handbook's table of contents, read chapter 0 (design alignment) first, then read the relevant chapters via the section parameter (at minimum the capability overview, sandbox red-lines, and packaging chapters) before writing any code; do not start implementing yet. Begin by asking questions: prefer option-based question cards, one key decision per card with your recommended choice marked, and proactively surface design options I may not know about — such as the UI form (docked panel, panel inside the Plugins page, chat card, or no UI), a $ command word, launch mode, background abilities (event listening, in-app toast notifications, unread badges, confirmation dialogs), network access, whether a settings page is needed, whether a bundled Node process should do heavy lifting, and whether image/video media abilities are needed. Step by step, confirm the problem to solve, target users, interaction flow, required tools and connections, permission boundaries, and acceptance criteria. After I confirm the design, implement and validate it according to the specification, then call ghost_forge_pack to validate and produce the .cindy package; do not claim that it was installed.",
         "filterAll": "All",
         "filtersAria": "Filter plugins by source",
@@ -5181,7 +5181,7 @@
         "replaceDescription": "A plugin with the same ID is already installed. Continuing will replace it with this marketplace version and keep its data.",
         "unavailable": "The plugin market is temporarily unavailable. Installed plugins remain available.",
         "customSourcesUnavailable": "These custom marketplaces are temporarily unavailable: {{names}}. Other marketplaces are unaffected.",
-        "authenticationRequired": "Sign in to Cindy to view the plugin market.",
+        "authenticationRequired": "Sign in to view the plugin market.",
         "notConfigured": "The plugin market is not configured for this environment. Installed plugins remain available.",
         "removalNotice": {
           "single": "The organization removed the plugin “{{name}}”. Its local copy and data on this device have been cleaned up.",
@@ -5842,7 +5842,7 @@
         },
         "status": {
           "loading": "Reading sync status…",
-          "signInRequired": "Sign in to your Cindy account to sync between devices",
+          "signInRequired": "Sign in to sync between devices",
           "off": "Sync is off",
           "waiting": "Waiting for another sync-enabled desktop to come online",
           "syncing": "Syncing securely…",
@@ -7721,7 +7721,7 @@
       "regionCodeDev": "Dev",
       "viewReleaseNotes": "View {{appName}} Version Notes",
       "reopenUpdateBanner": "Update ready — click to review",
-      "downloadMobile": "Download Cindy Mobile"
+      "downloadMobile": "Download {{appName}} Mobile"
     },
     "accountSwitcher": {
       "title": "Switch account",
@@ -7738,16 +7738,16 @@
       "close": "Close"
     },
     "mobileDownload": {
-      "title": "Control Cindy Remotely",
+      "title": "Control {{appName}} Remotely",
       "subtitle": "Connect your phone to this desktop",
-      "qrAlt": "QR code to download Cindy mobile",
+      "qrAlt": "QR code to download {{appName}} mobile",
       "preparing": "Preparing QR code…",
       "error": "Couldn’t create the QR code. Try again later.",
       "openPage": "Open Download Page",
       "openFailed": "Couldn’t open the download page. Check your system browser settings.",
-      "scanToOpen": "Scan to open the Cindy app and sign in with the same account",
+      "scanToOpen": "Scan to open the {{appName}} app and sign in with the same account",
       "scanAnother": "Scan Another Device",
-      "scanAnotherHint": "Open Cindy on another phone",
+      "scanAnotherHint": "Open {{appName}} on another phone",
       "myDevices": "My Devices",
       "deviceOffline": "Offline",
       "allowControl": "Allow same-account devices to control this machine",
@@ -8575,9 +8575,9 @@
   },
   "onboarding": {
     "homeZeroModel": {
-      "title": "Sign in to Cindy to continue",
-      "desc": "You don’t have any models yet. Sign in to Cindy to use dozens of top-tier models.",
-      "cta": "Sign in to Cindy",
+      "title": "Connect a model to get started",
+      "desc": "Sign in to an account service or connect your own model API.",
+      "cta": "Sign in",
       "cloudTitle": "Continue with Cindy",
       "cloudDesc": "You don’t have any models yet. Enable the official service to use dozens of top-tier models.",
       "cloudCta": "Get started",
@@ -8590,8 +8590,8 @@
       "cindy": {
         "title": "Cindy AI",
         "desc": "Official service · all models · works with Claude Code and Codex",
-        "loginTitle": "Sign in to Cindy",
-        "loginDesc": "Sign in to enable the official Cindy AI service with access to all models — new users get a promotional balance"
+        "loginTitle": "Sign in",
+        "loginDesc": "Choose an account service to connect models."
       },
       "othersToggle": "Other providers ({{count}})",
       "presetSub": "Paste an API key to connect",
@@ -8600,7 +8600,7 @@
       "banner": {
         "text": "No models available — connect a provider to start chatting.",
         "connectCta": "Connect a provider",
-        "loginCta": "Sign in to Cindy",
+        "loginCta": "Sign in",
         "dismissAria": "Dismiss"
       },
       "detectedLabel": "Detected",
@@ -8888,7 +8888,7 @@
       "viewBalance": "View balance",
       "viewBalanceTitle": "Open Usage & Billing to check your balance and add funds",
       "credentialSwitchBusy": "Another Codex task is still running, so the provider for this session can't be applied yet (the shared Codex process needs a restart). Retry after those tasks finish.",
-      "accountBoundaryPending": "Cindy is still switching account state, so this task can't start yet. Wait a moment, then press Retry. If this keeps happening, restart Cindy.",
+      "accountBoundaryPending": "{{appName}} is still switching account state, so this task can't start yet. Wait a moment, then press Retry. If this keeps happening, restart {{appName}}.",
       "codexThreadStale": "Codex auth mode changed — this session can't continue. Start a new session to apply it.",
       "codexResumeNotReady": "Codex can't resume this task right now. Try again in a little while.",
       "claudeGatewayOpusPlanMismatch": "This Opus request went through XD Gateway, not your Claude.ai subscription. That gateway route rejected the model. Switch to your Claude.ai subscription and retry, or choose another model.",
@@ -11060,7 +11060,7 @@
       "viewerGithub": "GitHub account @{{login}}",
       "platformUnavailableHint": "Showing only submissions recorded on this device. Issues you filed on other devices, and their live status on GitHub, aren't available in the app yet.",
       "platformUnavailablePartialHint": "Issues you filed on other devices aren't available in the app yet, so this list may be incomplete.",
-      "notSignedInHint": "Sign in to your Cindy account to see every issue you've filed, along with its current status.",
+      "notSignedInHint": "Sign in to your account to see every issue you've filed, along with its current status.",
       "fetchFailedHint": "Couldn't load the latest status. Showing only submissions recorded on this device, so this list may be incomplete.",
       "fetchFailedPartialHint": "Couldn't load the latest status, so some issues may show incomplete status.",
       "enhancementFailedHint": "Couldn't read the issues filed from your GitHub account. The Cindy GitHub plugin's access token may not have enough permissions — check it on the plugin page.",

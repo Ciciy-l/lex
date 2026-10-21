@@ -60,10 +60,30 @@ describe('profile-wide wallpaper preference', () => {
       wallpaperId: 'none',
       customWallpaperUrl: urlB,
     });
-    await writeAppearanceSettingsPatch({ wallpaperId: 'cindy-dream' });
+    await writeAppearanceSettingsPatch({ wallpaperId: 'custom' });
     h.owner = 'a';
-    expect(readAppearanceSettings().wallpaperId).toBe('cindy-dream');
+    expect(readAppearanceSettings().wallpaperId).toBe('custom');
   });
+
+  it.each(['cindy-window', 'cindy-studio', 'cindy-dream'])(
+    'reads an existing %s selection as none without changing files or losing custom artwork',
+    async (wallpaperId) => {
+      await customWallpaperStore.writePatchAtomic({ url: urlA });
+      const target = path.join(h.dir, 'appearance-settings.json');
+      const original = JSON.stringify({ wallpaperId, wallpaperOverlay: 0.35, uiSize: 18 });
+      fs.writeFileSync(target, original);
+      for (const owner of ['a', 'b', '']) {
+        h.owner = owner;
+        expect(readAppearanceSettings()).toMatchObject({
+          wallpaperId: 'none', customWallpaperUrl: urlA, wallpaperOverlay: 0.35, uiSize: 18,
+        });
+      }
+      expect(fs.readFileSync(target, 'utf8')).toBe(original);
+      expect(readCustomWallpaperUrl()).toBe(urlA);
+      await writeAppearanceSettingsPatch({ wallpaperId: 'custom' });
+      expect(readAppearanceSettings().customWallpaperUrl).toBe(urlA);
+    },
+  );
 
   it('preserves unreadable shared settings until an explicit reset', async () => {
     const target = path.join(h.dir, 'custom-wallpaper.json');

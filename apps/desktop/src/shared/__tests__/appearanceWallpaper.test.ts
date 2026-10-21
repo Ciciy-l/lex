@@ -48,12 +48,16 @@ describe('wallpaper catalog compatibility', () => {
     },
   );
   it.each(['cindy-window', 'cindy-studio', 'cindy-dream'])(
-    'preserves both display modes for %s',
+    'disables retired scene %s and preserves the custom image and display preferences',
     (wallpaperId) => {
       for (const wallpaperMotion of ['static', 'dynamic']) {
-        expect(normalizeAppearanceSettings({ wallpaperId, wallpaperMotion })).toMatchObject({
-          wallpaperId,
+        const customWallpaperUrl = `cindy-media://client-wallpaper/${'b'.repeat(64)}.webp`;
+        expect(normalizeAppearanceSettings({ wallpaperId, wallpaperMotion, customWallpaperUrl,
+          wallpaperOverlay: 0.35 })).toMatchObject({
+          wallpaperId: 'none',
           wallpaperMotion,
+          wallpaperOverlay: 0.35,
+          customWallpaperUrl,
         });
       }
     },
