@@ -73,6 +73,8 @@ describe('shared worktree recycling', () => {
   it('limits simultaneous recycling of distinct resources to one', async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
+    let entered!: () => void;
+    const firstCheck = new Promise<void>((resolve) => { entered = resolve; });
     let active = 0;
     let peak = 0;
     let checked = 0;
@@ -81,14 +83,22 @@ describe('shared worktree recycling', () => {
       state.registry.set(candidate.sessionId, candidate);
       return recycleManagedWorktree(candidate, { canRemove: async () => {
         active++; peak = Math.max(peak, active); checked++;
+        entered();
         try { await gate; return false; } finally { active--; }
       } });
     });
+    const completed = Promise.all(jobs);
     try {
-      await vi.waitFor(() => expect(active).toBe(1));
+      // Lock/journal I/O can outlast waitFor's default poll window on Windows.
+      await Promise.race([firstCheck, completed]);
+      expect(active).toBe(1);
       expect(checked).toBe(1);
-    } finally { release(); }
-    expect(await Promise.all(jobs)).toEqual(Array(12).fill(false));
+    } finally {
+      release();
+      // A failed assertion must not leak this batch into the next fixture.
+      await Promise.allSettled(jobs);
+    }
+    expect(await completed).toEqual(Array(12).fill(false));
     expect(checked).toBe(12); expect(peak).toBe(1);
   });
 
