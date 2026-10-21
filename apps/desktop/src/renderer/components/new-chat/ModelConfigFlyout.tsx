@@ -2,6 +2,7 @@ import { useModelContextLimit } from '@/hooks/useModelContextLimit';
 import { localizedModelName } from '@/lib/modelDisplayNames';
 import { Star, Zap } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import type { ReactNode } from 'react';
 
 import { formatContextWindow, type UnifiedModelEntry } from '@cindy/model-providers';
 
@@ -29,6 +30,8 @@ export interface ModelConfigFlyoutProps {
   state: ModelConfigFlyoutState;
   /** 来源供应商展示名。 */
   sourceLabel: string;
+  /** Optional channel selector, displayed once beneath the model name. */
+  sourceControl?: ReactNode;
   price: ModelPricePresentation | null;
   /** 档位 → 显示文案(按当前选中引擎取,i18n)。 */
   effortLabelOf: (agent: AgentKind, effort: Effort) => string;
@@ -64,6 +67,7 @@ export function ModelConfigFlyout({
   config,
   state,
   sourceLabel,
+  sourceControl,
   price,
   effortLabelOf,
   justFavorited = false,
@@ -120,7 +124,7 @@ export function ModelConfigFlyout({
       <div className="flex items-start gap-2">
         <span
           title={displayName}
-          className="line-clamp-2 min-w-0 flex-1 text-14 font-semibold leading-[1.35] text-[var(--model-item-text)]"
+          className="line-clamp-2 min-w-0 flex-1 break-words text-15 font-medium leading-[1.35] text-[var(--model-item-text)]"
         >
           {displayName}
         </span>
@@ -150,17 +154,16 @@ export function ModelConfigFlyout({
         </button>
       </div>
 
-      <div className="truncate border-b border-[var(--model-dropdown-border)] pb-2.5 pt-[3px] text-12 text-[var(--text-tertiary)]">
-        {sourceLabel}
+      <div className="flex min-w-0 flex-col gap-1.5 border-b border-[var(--model-dropdown-border)] pb-2.5 pt-2 text-12 text-[var(--text-tertiary)]">
+        {sourceControl ?? <span className="truncate" title={sourceLabel}>{sourceLabel}</span>}
         {contextWindow > 0 && (
-          <>
-            {' · '}
+          <span>
             {t('newChat.modelSelector.meta.context', {
               value: codexDefaultContext
                 ? codexContext ? formatContextWindow(codexContext.contextWindow) : t('settings.providers.models.advanced.codexContextUnknown')
                 : formatContextWindow(contextWindow),
             })}
-          </>
+          </span>
         )}
       </div>
 

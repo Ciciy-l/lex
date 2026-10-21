@@ -109,6 +109,7 @@ describe('login initialization ownership', () => {
         return { success: true, state: identifierState, realm: 'global' };
       });
       render(<Harness addAccount={addAccount} />);
+      if (addAccount) fireEvent.click(screen.getByRole('button', { name: 'Cindy' }));
 
       await screen.findByTestId('login-panel-error');
       const back = screen.getByRole('button', { name: 'login.back' }) as HTMLButtonElement;
@@ -129,6 +130,8 @@ describe('login initialization ownership', () => {
 
   it('opens add-account login without an invalidated load or a false failure', async () => {
     render(<Harness addAccount />);
+    expect(auth.beginAddAccount).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Cindy' }));
 
     await screen.findByTestId('login-panel-identifier');
     await waitFor(() => expect(auth.beginAddAccount).toHaveBeenCalledOnce());
@@ -159,6 +162,7 @@ describe('login initialization ownership', () => {
       return { success: false, code: state.code, state, realm: 'global' };
     });
     render(<Harness addAccount />);
+    fireEvent.click(screen.getByRole('button', { name: 'Cindy' }));
 
     await screen.findByTestId('login-panel-error');
     expect(screen.getByTestId('login-error-retry')).toBeTruthy();

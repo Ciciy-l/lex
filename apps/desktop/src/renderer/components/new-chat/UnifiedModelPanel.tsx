@@ -1231,14 +1231,20 @@ export function UnifiedModelPanel({
                 : 'recommended';
             return (
               <div>
-                {!target.favorite && providerChannelChoices(target.entry, entries, providers).length > 0 && (
-                  <label className="flex flex-col gap-1 border-b border-[var(--border-default)] p-3 text-12 text-[var(--text-secondary)]">
-                    {t('models.channels.channelAndProtocol')}
+                <ModelConfigFlyout
+                entry={target.entry}
+                config={config}
+                state={state}
+                sourceLabel={channelLabel(target.entry.providerId)}
+                sourceControl={!target.favorite && providerChannelChoices(target.entry, entries, providers).length > 0 ? (
+                  <label className="block min-w-0">
+                    <span className="sr-only">{t('models.channels.channelAndProtocol')}</span>
                     <select
                       aria-label={t('models.channels.channelAndProtocol')}
+                      title={channelLabel(target.entry.providerId)}
                       value={target.entry.providerId}
                       disabled={interactionDisabled || actionPending}
-                      className="min-h-8 rounded-full border border-[var(--settings-input-border)] bg-[var(--settings-input-bg)] px-2 text-13 text-[var(--text-primary)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring-soft)]"
+                      className="h-8 w-full min-w-0 truncate rounded-full border border-[var(--settings-input-border)] bg-[var(--settings-input-bg)] px-3 text-12 text-[var(--text-primary)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring-soft)]"
                       onChange={(event) => {
                         const entry = entries.find(
                           (candidate) =>
@@ -1283,12 +1289,7 @@ export function UnifiedModelPanel({
                       })}
                     </select>
                   </label>
-                )}
-                <ModelConfigFlyout
-                entry={target.entry}
-                config={config}
-                state={state}
-                sourceLabel={channelLabel(target.entry.providerId)}
+                ) : undefined}
                 price={priceOf(
                   target.entry.providerId,
                   config.wireModelId ?? target.entry.modelId,

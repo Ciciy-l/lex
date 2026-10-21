@@ -6179,6 +6179,10 @@
     "backToLogin": "Back to sign-in"
   },
   "login": {
+    "serviceSelection": {
+      "title": "Choose a sign-in service",
+      "description": "Choose an account service to sign in. Local Agents are available without an account."
+    },
     "title": "Welcome to {{appName}}",
     "subtitle": "Choose a secure way to sign in",
     "phonePlaceholder": "Enter your phone number",

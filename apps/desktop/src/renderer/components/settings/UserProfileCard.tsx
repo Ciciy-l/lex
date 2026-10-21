@@ -8,6 +8,7 @@ import { toast } from '@/lib/toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { useOptionalConfirmDialog } from '@/components/ui/confirm-dialog-provider';
 import { useLogout } from '@/hooks/useLogout';
+import { useSignInToCindy } from '@/hooks/useSignInToCindy';
 import { ProfileEditDialog } from './ProfileEditDialog';
 
 const ORGANIZATION_ROLE_I18N_KEYS = {
@@ -32,7 +33,8 @@ function abbreviateUserId(id: string): string {
 }
 
 export function UserProfileCard() {
-  const { user, mode, exitLocalMode } = useAuth();
+  const { user, mode } = useAuth();
+  const handleLocalSignIn = useSignInToCindy();
   const confirmDialog = useOptionalConfirmDialog();
   const { handleLogout } = useLogout();
   const navigate = useNavigate();
@@ -56,16 +58,6 @@ export function UserProfileCard() {
   useEffect(() => {
     setOrgLogoError(false);
   }, [orgLogoUrl]);
-
-  const handleLocalSignIn = async () => {
-    try {
-      await exitLocalMode();
-    } catch {
-      // Continue to the login recovery surface; main remains fail closed while
-      // the durable owner transition is incomplete.
-    }
-    navigate('/login');
-  };
 
   if (!user && mode === 'local') {
     return (

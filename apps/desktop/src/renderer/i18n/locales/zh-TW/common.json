@@ -6177,6 +6177,10 @@
     "backToLogin": "返回登入方式"
   },
   "login": {
+    "serviceSelection": {
+      "title": "選擇登入服務",
+      "description": "選擇用於登入的帳號服務。未登入時仍可使用本機 Agent。"
+    },
     "title": "歡迎使用 {{appName}}",
     "subtitle": "選擇一種方式安全登入",
     "phonePlaceholder": "請輸入手機號碼",

@@ -4,7 +4,7 @@
  * ConnectProviderCard — 零可用模型首屏引导卡关键不变量:
  *   1. 零已连接来源 → 渲染:Cindy AI 推荐行置顶 + 内置 OAuth 行(目录序);
  *      任一来源已连接 / loading 中 → 渲染 null,且连接后自动清 dismiss key。
- *   2. local(跳过登录)模式 → 推荐行变「登录 Cindy」,点击落 /login。
+ *   2. local(跳过登录)模式 → 推荐行变「登录 Cindy」,点击落 /add-account。
  *   3. 点 OAuth 行落 /settings?tab=providers&connect=<id>;「我有 API key」落 wizard=1;
  *      「其他供应商」展开后点预设行落 connect=<presetId>。
  *   4. dismiss → 卡片消失且 localStorage key 写入(与 banner 共享)。
@@ -231,15 +231,15 @@ describe('ConnectProviderCard', () => {
     expect(screen.getByTestId('location').textContent).toBe('/settings?tab=providers&wizard=1');
   });
 
-  it('local(跳过登录)模式 → 推荐行为「登录 Cindy」,点击落 /login', async () => {
+  it('local(跳过登录)模式 → 推荐行为「登录 Cindy」,点击落 /add-account', async () => {
     authState.mode = 'local';
     await renderCardSettled();
 
     const loginRow = screen.getByText('onboarding.connectProvider.cindy.loginTitle');
     fireEvent.click(loginRow.closest('button')!);
-    // local 模式登录必须先 exitLocalMode(GuestRoute 对 local 一律弹回首页)再进 /login。
-    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/login'));
-    expect(exitLocalModeMock).toHaveBeenCalledTimes(1);
+    // 选择账号服务期间保留当前访客 owner；登录成功才切换。
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/add-account'));
+    expect(exitLocalModeMock).not.toHaveBeenCalled();
   });
 
   it('「其他供应商」懒加载预设,展开后点预设行落 connect=<presetId>', async () => {

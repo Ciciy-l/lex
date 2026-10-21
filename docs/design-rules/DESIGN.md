@@ -1497,6 +1497,13 @@ The execution rulebook for subsequent desktop / mobile UI updates. Sources: the 
 
 ## 16. Login Flow (登录链路)
 
+**Lex Desktop 0.1.7 入口调整**：无持久登录会话的正常冷启动先通过 Main 既有 owner
+边界进入「未登录」主界面，不再以登录页作为默认首页。应用内主动登录先显示账号服务
+选择（本轮仅 Cindy），再复用现有 Cindy 登录；取消保留原 owner 并返回原页面。
+已有有效账号仍正常恢复；凭据恢复失败与 owner 未稳定时保留既有 fail-closed 恢复路径。
+默认进入未登录主界面不等于同意隐私协议或启用统计；登录授权与协议确认仍沿原合同。
+该入口使用 §4/5 的普通页面、容器与胶囊按钮；下述 Cindy 登录品牌画布与字段规格不变。
+
 > 本节是登录全链路的设计系统规范。逐参数权威 = 同目录的 [`figma-component-spec.md`](./figma-component-spec.md)（组件 / 色板速查，nodeId 溯源）与 [`token-decision-table.md`](./token-decision-table.md)（token / 尺寸决策）——两份自 2026-07-24 起随 `docs/design-rules/` 入仓维护；`DESIGN-login`（逐屏规格）、`flow-map`（状态机）、`fidelity-matrix`（保真度验收矩阵）仍为设计阶段工作文件，不入仓库。本节不重复抄全表，只钉死设计规则与组件契约，逐参数值以 Figma 组件库及本节色板表为准。
 >
 > **交付状态**：**亮色** as-built 已合并入 main；**深色**为目标规格（色值经 Figma 组件库 Dark symbol 逐个核验，见 §16.1 双态表 / §16.5），token 已注册但 dark 槽位当前为 light 占位值，待实现 PR 填入真实深色值。两模式均受 §10「Light / Dark 双模式交付门槛」约束——非可选愿景。

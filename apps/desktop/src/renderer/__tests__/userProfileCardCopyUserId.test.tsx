@@ -238,7 +238,8 @@ describe('UserProfileCard copy user ID', () => {
 
     fireEvent.click(signInButton);
 
-    return waitFor(() => expect(mocks.authState.exitLocalMode).toHaveBeenCalledOnce());
+    expect(mocks.authState.exitLocalMode).not.toHaveBeenCalled();
+    return waitFor(() => expect(screen.getByTestId('location-probe').textContent).toBe('/add-account'));
   });
 
   it('shows the organization name and role only for an organization membership', () => {

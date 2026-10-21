@@ -6177,6 +6177,10 @@
     "backToLogin": "返回登录方式"
   },
   "login": {
+    "serviceSelection": {
+      "title": "选择登录服务",
+      "description": "选择用于登录的账号服务。未登录时仍可使用本机 Agent。"
+    },
     "title": "欢迎使用 {{appName}}",
     "subtitle": "选择一种方式安全登录",
     "phonePlaceholder": "请输入手机号",

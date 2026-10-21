@@ -6177,6 +6177,10 @@
     "backToLogin": "ログイン方法に戻る"
   },
   "login": {
+    "serviceSelection": {
+      "title": "ログインサービスを選択",
+      "description": "ログインするアカウントサービスを選びます。ローカル Agent はログインせずに使えます。"
+    },
     "title": "{{appName}} へようこそ",
     "subtitle": "安全なログイン方法を選択してください",
     "phonePlaceholder": "電話番号を入力",
