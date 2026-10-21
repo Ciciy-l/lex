@@ -1,4 +1,4 @@
-import type { AgentKind } from '@cindy/maker-core';
+import { AgentPresentationBusyError, type AgentKind } from '@cindy/maker-core';
 
 import { MAKER_INVOKE } from './channels.js';
 import type { IpcHandlerRegistry } from './ipcHandlerRegistry.js';
@@ -93,6 +93,9 @@ export function registerMakerSessionCreateHandler<TSession extends MakerSessionC
       try {
         bootstrapped = await deps.bootstrapSession(o);
       } catch (err) {
+        if (err instanceof AgentPresentationBusyError) {
+          throwIpcError('SESSION_RUNNING', err.message);
+        }
         if (isCredentialModeSwitchBusyError(err)) {
           // 独立 code:新建会话撞上凭证切换忙(别的会话在跑),不是"本会话在跑"。
           // renderer 据此走 ipcError.CREDENTIAL_SWITCH_BUSY 专属文案。

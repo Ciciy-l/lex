@@ -9,6 +9,7 @@ import type { ClaudeNativeRuntimeOptions } from './native-runtime.js';
 import { AgentPresentationRuntime } from '../presentation.js';
 import { createClaudeNativeSession } from './native-session.js';
 import { ClaudeCodeAgent } from './index.js';
+import { Session } from '../../session.js';
 
 const mocks = vi.hoisted(() => ({ query: vi.fn(), runtime: vi.fn() }));
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({ query: mocks.query, forkSession: vi.fn() }));
@@ -49,6 +50,42 @@ async function fixture() {
 }
 
 describe('Claude production agent native factory selection', () => {
+  it.each([false, true])('confirms frozen startup directory grants without terminating native onboarding (populated=%s)', async populated => {
+    const f = await fixture();
+    const extraDirs = populated ? [path.join(f.root, 'reference')] : [];
+    const writableDirs = populated ? [path.join(f.root, 'output')] : [];
+    const handle = await f.start({ extraDirs, writableDirs });
+    const session = new Session({ id: 'business-task', agentKind: 'claude-code', workDir: f.root,
+      logger, handle, capabilities: f.agent.capabilities, turnStallMs: 0 });
+    expect(f.launch().launch.additionalDirectories).toEqual([...extraDirs, ...writableDirs]);
+    await session.setExtraDirs([...extraDirs]);
+    await session.setWritableDirs([...writableDirs]);
+    await expect(session.setExtraDirs([path.join(f.root, 'new-reference')])).rejects.toThrow('extraDirs');
+    await expect(session.setWritableDirs([path.join(f.root, 'new-output')])).rejects.toThrow('writableDirs');
+    // Failed changes have not mutated either snapshot; the atomic grant
+    // transaction can restore the old policy without closing the live task.
+    await session.setExtraDirs([...extraDirs]);
+    await session.setWritableDirs([...writableDirs]);
+    expect(f.runtime.close).not.toHaveBeenCalled();
+    expect(f.runtime.submit).not.toHaveBeenCalled();
+    expect(f.runtime.command).not.toHaveBeenCalled();
+    expect(handle.presentation).toBe(f.runtime.presentation);
+    await handle.close();
+    await expect(handle.setExtraDirs!([...extraDirs])).rejects.toThrow('not active');
+  });
+
+  it('keeps ordinary SDK creation until the host explicitly selects a native presentation', async () => {
+    const f = await fixture();
+    f.deps.useLocalClaudeNativePresentation = options => options.nativePresentation === true;
+    mocks.query.mockImplementationOnce(() => { throw new Error('SDK selected'); });
+    await expect(f.start()).rejects.toThrow('SDK selected');
+    expect(f.factory).not.toHaveBeenCalled();
+    const id = '76de74f7-694a-45bd-8337-8a5f837c9e13';
+    const handle = await f.start({ nativePresentation: true, resumeSessionId: id });
+    expect(handle.presentation).toBe(f.runtime.presentation);
+    expect(handle.id).toBe(id); expect(f.factory).toHaveBeenCalledOnce();
+    expect(mocks.query).toHaveBeenCalledOnce();
+  });
   it('shares the route-resolved usage tracker with the native runtime before the first provider reply', async () => {
     const f = await fixture(); f.deps.resolveModelContextLimit = () => 64000;
     const handle = await f.start();

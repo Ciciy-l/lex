@@ -1523,6 +1523,38 @@ describe('native GUI user message receipts', () => {
     } finally { f.sqlite.close(); }
   });
 
+  it('links an authenticated OMP extension receipt without treating a Claude bridge name as OMP authority', async () => {
+    const f = fixture();
+    try {
+      f.source.engine = 'omp';
+      expect(await f.link(f.source)).toBe(false);
+      f.source.origin.name = 'lex-omp-native-bridge'; f.source.bridge!.pluginName = 'lex-omp-native-bridge';
+      expect(await f.link(f.source)).toBe(true);
+      expect(JSON.parse(f.read().agent_meta)).toMatchObject({ uuid: 'native-uuid', sdkSessionId: 'native-session', nativeSource: { engine: 'omp' } });
+      f.retire(); expect(await f.link(f.source)).toBe(false);
+      expect(f.sqlite.prepare('SELECT count(*) AS n FROM messages').get()).toEqual({ n: 1 });
+    } finally { f.sqlite.close(); }
+  });
+  it('binds a host-admitted OMP submission to a later native row without forging plugin provenance', async () => {
+    const f = fixture();
+    const source: NativeMessageSource = { version: 1, engine: 'omp', sessionId: 'native-session',
+      messageId: 'real-omp-row', origin: { kind: 'native' } };
+    const link = captureNativeUserMessageLink({ sessionId: 's1', clientId: 'gui-row', nativeSessionId: 'native-session',
+      expectedUuid: 'host-uuid', expectedClearBoundaryMs: null, origin: 'native', isCurrent: () => true });
+    try {
+      // A submission is not a native UUID before OMP emits its journal row.
+      f.sqlite.exec("UPDATE messages SET agent_meta = json_set(json_remove(agent_meta, '$.uuid'), '$.nativeSubmissionId', 'host-uuid')");
+      expect(await f.link(source)).toBe(false);
+      expect(await link({ ...source, engine: 'claude-code' })).toBe(false);
+      expect(await link(source)).toBe(true);
+      expect(JSON.parse(f.read().agent_meta)).toMatchObject({ uuid: 'real-omp-row', nativeSource: source, delivery: 'turn' });
+      expect(JSON.parse(f.read().agent_meta)).not.toHaveProperty('nativeSubmissionId');
+      expect(await link({ ...source, messageId: 'other-row' })).toBe(false);
+      f.sqlite.exec('UPDATE sessions SET cleared_at = 1');
+      expect(await link(source)).toBe(false);
+    } finally { f.sqlite.close(); }
+  });
+
   it.each(['clear', 'rewind', 'delete', 'role', 'uuid', 'runtime', 'account', 'source', 'submission'])
     ('ignores a late receipt after %s changes', async change => {
       const f = fixture();

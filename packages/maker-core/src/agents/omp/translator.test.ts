@@ -237,6 +237,29 @@ describe('OmpTranslator terminal and error frames', () => {
     expect(snapshot.contextTokens).toBe(106);
     expect(snapshot.outputTokens).toBe(20);
   });
+
+  it('reports native usage once per turn, including caches, with the last request context', () => {
+    const instance = translator();
+    instance.translate({ type: 'agent_start' });
+    const first = { type: 'message_end', message: { id: 'first-request', role: 'assistant',
+      usage: { input: 20, output: 5, cacheRead: 3, cacheWrite: 2 }, cost: { total: 0.125 } } };
+    instance.translate(first); instance.translate(first); // Duplicate delivery is not another API request.
+    instance.translate({ type: 'message_end', message: { id: 'tool-followup', role: 'assistant',
+      usage: { input: 10, output: 7, cacheRead: 4, cacheWrite: 1 }, cost: { total: 0.25 } } });
+    expect(events(instance.translate({ type: 'agent_end', isTerminal: true }))[1]?.data).toMatchObject({
+      usage: { inputTokens: 30, outputTokens: 12, cacheReadTokens: 7, cacheCreateTokens: 3 },
+    });
+    expect(instance.getUsageSnapshot()).toMatchObject({ tokenUsage: 42, contextTokens: 15, costUsd: 0.375 });
+    expect(instance.translate({ type: 'agent_end', isTerminal: true }).kind).toBe('ignored');
+    instance.translate({ type: 'agent_start' });
+    expect(instance.getUsageSnapshot()).toMatchObject({ tokenUsage: 0, contextTokens: 15, costUsd: 0.375 });
+    instance.translate({ type: 'message_end', message: { id: 'next-turn', role: 'assistant',
+      usage: { input: 8, output: 2, cacheRead: 1, cacheWrite: 0 }, cost: { total: 0.125 } } });
+    expect(events(instance.translate({ type: 'agent_end', isTerminal: true }))[1]?.data).toMatchObject({
+      usage: { inputTokens: 8, outputTokens: 2, cacheReadTokens: 1, cacheCreateTokens: 0 },
+    });
+    expect(instance.getUsageSnapshot()).toMatchObject({ tokenUsage: 10, contextTokens: 9, costUsd: 0.5 });
+  });
 });
 
 describe('OmpTranslator helpers', () => {

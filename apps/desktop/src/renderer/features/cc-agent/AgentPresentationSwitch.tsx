@@ -1,16 +1,19 @@
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
+import type { AgentPresentationStatus } from '../../../shared/agentPresentation';
 
-export function AgentPresentationUnavailable() {
+export function AgentPresentationUnavailable({ reason }: { reason?: Extract<AgentPresentationStatus, { supported: false }>['reason'] }) {
   const { t } = useTranslation();
-  const description = t('ccAgent.presentation.startupUnavailable.startup');
+  const description = t(reason === 'task-busy' ? 'ccAgent.presentation.startupUnavailable.busy'
+    : reason === 'unsupported-service' ? 'ccAgent.presentation.startupUnavailable.unsupported' : 'ccAgent.presentation.startupUnavailable.startup');
   return <span role="status" title={description} aria-label={description} className="shrink-0 text-11 text-[var(--text-secondary)]">
     {t('ccAgent.presentation.startupUnavailable.label')}
   </span>;
 }
 
-export function AgentPresentationSwitch({ mode, onChange }: {
+export function AgentPresentationSwitch({ mode, onChange, tuiUnavailable }: {
   mode: 'gui' | 'tui'; onChange(mode: 'gui' | 'tui'): void;
+  tuiUnavailable?: string;
 }) {
   const { t } = useTranslation();
   const labels = { gui: t('ccAgent.presentation.gui'), tui: t('ccAgent.presentation.tui') };
@@ -21,7 +24,9 @@ export function AgentPresentationSwitch({ mode, onChange }: {
       {(['gui', 'tui'] as const).map((item) => (
         <button key={item} type="button" aria-pressed={mode === item}
           aria-label={descriptions[item]}
-          onClick={() => onChange(item)}
+          aria-disabled={item === 'tui' && !!tuiUnavailable || undefined}
+          title={item === 'tui' ? tuiUnavailable : undefined}
+          onClick={() => { if (item !== 'tui' || !tuiUnavailable) onChange(item); }}
           className={cn('min-h-7 min-w-10 rounded-full px-2 text-11 font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
             mode === item ? 'bg-[var(--text-primary)] text-[var(--panel-bg)]' : 'text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]')}>
           {labels[item]}

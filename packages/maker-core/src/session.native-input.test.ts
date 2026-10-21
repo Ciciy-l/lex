@@ -237,6 +237,27 @@ describe('native input through the product Session', () => {
 });
 
 describe('adapter native input binding', () => {
+  it('admits an OMP pre-journal submission without asserting a native message ID', async () => {
+    const f = fixture({ agentKind: 'omp' }, { agentKind: 'omp' });
+    const resolve = vi.mocked(f.handle.setNativeInputResolver!).mock.calls[0]![0];
+    const input: AgentNativeInputRequest = { ...f.input, submissionId: 'bridge-submission', signal: new AbortController().signal };
+    f.session.onNativeInput(async held => {
+      expect(held.submissionId).toBe('bridge-submission');
+      expect(held.nativeMessageId).toBeUndefined(); expect(held.source).toBeUndefined();
+      await f.session.acceptNativeInput(held, { signal: held.signal });
+    });
+    await resolve(input); expect(f.accept).toHaveBeenCalledOnce(); expect(f.handle.send).not.toHaveBeenCalled();
+  });
+  it('does not permit a pre-journal submission to bypass another engine or become a steer', async () => {
+    for (const engine of ['claude-code', 'omp'] as const) {
+      const f = fixture({ agentKind: engine }, { agentKind: engine });
+      const resolve = vi.mocked(f.handle.setNativeInputResolver!).mock.calls[0]![0], listener = vi.fn();
+      f.session.onNativeInput(listener);
+      await expect(resolve({ ...f.input, submissionId: 'bridge-submission', signal: new AbortController().signal,
+        ...(engine === 'omp' ? { nativeTurnId: 'existing-turn' } : {}) })).rejects.toThrow('identity changed');
+      expect(listener).not.toHaveBeenCalled(); expect(f.accept).not.toHaveBeenCalled();
+    }
+  });
   function bindingFixture() {
     const f = fixture();
     const resolver = vi.mocked(f.handle.setNativeInputResolver!).mock.calls[0]![0];
@@ -308,8 +329,9 @@ describe('adapter native input binding', () => {
   it('rejects mismatched provenance and a callback that never admits the input', async () => {
     const f = bindingFixture(), listener = vi.fn<AgentNativeInputResolver>(async () => {});
     f.session.onNativeInput(listener);
-    await expect(f.resolver({ ...f.input, source: { version: 1, engine: 'claude-code',
-      sessionId: 'foreign', messageId: 'native-row', origin: { kind: 'user' } } })).rejects.toThrow('identity changed');
+    const foreignSource: NonNullable<AgentNativeInputRequest['source']> = { version: 1, engine: 'claude-code',
+      sessionId: 'foreign', messageId: 'native-row', origin: { kind: 'user' } };
+    await expect(f.resolver({ ...f.input, source: foreignSource })).rejects.toThrow('identity changed');
     expect(listener).not.toHaveBeenCalled();
     await expect(f.resolver(f.input)).rejects.toThrow('not admitted');
     expect(f.accept).not.toHaveBeenCalled();

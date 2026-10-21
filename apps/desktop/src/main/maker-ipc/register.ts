@@ -1,9 +1,11 @@
 import type { AgentNativeInputRequest } from '@cindy/maker-core';
 import { createCodexNativeMediaImporter } from '../maker-host/codexNativeMedia.js';
+import { createPiNativeMediaImporter } from '../maker-host/piNativeMedia.js';
 import { bindNativeSessionRuntime, type NativeRuntimeBindingDeps } from './nativeRuntimeBinding.js';
 import { bindNativeSessionStop, type NativeStopBindingDeps } from './nativeStopBinding.js';
 import { assertNotRetiredCompanionSession } from '../localDb/retiredCompanions.js';
 import { createAgentPresentationHandler, AGENT_PRESENTATION_CHANNEL } from './agentPresentationHandlers.js';
+import { hasLocalNativePresentation } from '../../shared/agentPresentation.js';
 import { resolveSafe as resolveCindyMediaUrl } from '../cindy-media/blobStore.js';
 import { getSessionFsSnapshot } from '../localDb/ipc/sessions.js';
 import { isModelSelectableForNewRoute } from '@cindy/model-providers';
@@ -4763,15 +4765,15 @@ export function wireSessionToIpc(
       ...nativeDeps,
       isCurrent,
       captureConsumption: (current, input) => captureNativeInputConsumption({
-        sessionId: current.id, clientId: input.nativeMessageId,
+        sessionId: current.id, clientId: input.nativeMessageId ?? input.submissionId,
         nativeSessionId: input.nativeSessionId, nativeTurnId: input.nativeTurnId!,
         isCurrent: () => isCurrent(current) && current.sdkSessionId === input.nativeSessionId,
       }),
       importMedia: async input => {
-        if (!isCurrent(session) || !['claude-code', 'codex'].includes(session.agentKind) || input.sessionId !== session.sdkSessionId) {
+        if (!isCurrent(session) || !['claude-code', 'codex', 'pi'].includes(session.agentKind) || input.sessionId !== session.sdkSessionId) {
           throwIpcError('PRECONDITION_FAILED', 'Native attachment no longer belongs to this task');
         }
-        importMedia ??= (session.agentKind === 'codex' ? createCodexNativeMediaImporter : createClaudeNativeMediaImporter)({ sessionId: session.id, nativeSessionId: input.sessionId,
+        importMedia ??= (session.agentKind === 'codex' ? createCodexNativeMediaImporter : session.agentKind === 'pi' ? createPiNativeMediaImporter : createClaudeNativeMediaImporter)({ sessionId: session.id, nativeSessionId: input.sessionId,
           isCurrent: () => isCurrent(session) && session.sdkSessionId === input.sessionId });
         return importMedia(input);
       },
@@ -6974,9 +6976,13 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (snapshot.status !== 'ready') sshCodexHostConnectionChanged = true;
     }) ?? (() => undefined);
     const sessionBeforeCreate = o.id ? maker.getSession(o.id) : undefined;
-    // All ordinary local GUI-first/TUI-first starts reserve the same capable
-    // host before cache lookup. Utility, Review, Orca and SSH keep legacy hosts.
-    o.nativePresentation = o.agentKind === 'codex' && !o.remoteHostId && !o.reviewMode && !o.orcaRole;
+    // Codex GUI/TUI shares its host from creation. Other interactive adapters
+    // enter only on explicit selection; their ordinary GUI/utility SDK stays intact.
+    const localNative = hasLocalNativePresentation(o.agentKind) && !o.remoteHostId && !o.reviewMode && !o.orcaRole;
+    if (o.requireNativePresentation === true && !localNative) {
+      throwIpcError('UNSUPPORTED_CAPABILITY', 'This task has no native presentation transport');
+    }
+    o.nativePresentation = localNative && (o.agentKind === 'codex' || o.requireNativePresentation === true);
     let session: Awaited<ReturnType<typeof maker.createSession>> | undefined;
     try {
       assertSshCodexOwnerCurrent();
@@ -12728,13 +12734,13 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       enqueueDurableWrite(`pi-entry-link:${sessionId}:${clientId}`, () =>
         patchMessageAgentMeta(sessionId, clientId, { piEntryId }),
       ),
-    captureNativeUserMessageLink: ({ session, clientId, expectedUuid, expectedClearBoundaryMs }) => {
+    captureNativeUserMessageLink: ({ session, clientId, expectedUuid, expectedClearBoundaryMs, origin }) => {
       const coordinator = agentInputCoordinatorHolder;
       const generation = coordinator?.getGeneration(session.id);
       const nativeSessionId = session.sdkSessionId;
       if (!nativeSessionId || nativeSessionId === '<pending>') return async () => false;
       const link = captureNativeUserMessageLink({ sessionId: session.id, clientId, expectedUuid, nativeSessionId,
-        expectedClearBoundaryMs, isCurrent: () => maker.getSession(session.id) === session
+        expectedClearBoundaryMs, origin, isCurrent: () => maker.getSession(session.id) === session
           && session.sdkSessionId === nativeSessionId && session.getStatus?.() === 'active'
           && agentInputCoordinatorHolder === coordinator
           && (!coordinator || (generation !== undefined && coordinator.isGenerationCurrent(session.id, generation))),

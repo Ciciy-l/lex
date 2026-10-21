@@ -13,23 +13,40 @@ interface Controls { acquire(takeOver?: boolean): Promise<void>; suspend(): void
 type Operation = AgentPresentationRequest extends infer R ? R extends { sessionId: string } ? Omit<R, 'sessionId'> : never : never;
 
 /** A task's original native display. This component never creates a process. */
-export function AgentNativeTerminal({ sessionId, active, invoke }: {
+export function AgentNativeTerminal({ sessionId, active, invoke, onReconnect }: {
   sessionId: string; active: boolean; invoke: PresentationInvoke;
+  /** Explicit retry may resume this exact task through its existing owner. */
+  onReconnect?: () => Promise<void>;
 }) {
   const { t } = useTranslation();
   const host = useRef<HTMLDivElement>(null);
   const activeRef = useRef(active); activeRef.current = active;
   const controls = useRef<Controls | null>(null);
   const [connection, setConnection] = useState(0);
+  const connectionEpoch = useRef(0);
+  const retrying = useRef(false);
   const [status, setStatus] = useState<'connecting' | 'viewing' | 'controlling' | 'exited' | 'unavailable' | 'gap'>('connecting');
   const statusText = {
     connecting: t('ccAgent.presentation.connecting'), viewing: t('ccAgent.presentation.viewing'),
     controlling: t('ccAgent.presentation.controlling'), exited: t('ccAgent.presentation.exited'),
     unavailable: t('ccAgent.presentation.unavailable'), gap: t('ccAgent.presentation.gap'),
   };
+  const retry = async () => {
+    if (retrying.current || !activeRef.current) return;
+    retrying.current = true;
+    const epoch = connectionEpoch.current;
+    setStatus('connecting');
+    try {
+      await onReconnect?.();
+      if (epoch === connectionEpoch.current) setConnection(value => value + 1);
+    } catch {
+      if (epoch === connectionEpoch.current) setStatus('unavailable');
+    } finally { retrying.current = false; }
+  };
 
   useEffect(() => {
     if (!host.current) return;
+    connectionEpoch.current++;
     let disposed = false, attachmentId: string | undefined, control: AgentTerminalControl | null = null;
     let sequence = 0, inputSequence = 0, writeChain = Promise.resolve();
     let controlRevision = 0, pendingInputBytes = 0;
@@ -156,6 +173,7 @@ export function AgentNativeTerminal({ sessionId, active, invoke }: {
       }
     })().catch(fail);
     return () => {
+      connectionEpoch.current++;
       disposed = true; controls.current = null; release();
       for (const resolve of renderWaiters) resolve();
       if (attachmentId) void send({ action: 'detach', attachmentId }).catch(() => {});
@@ -177,7 +195,7 @@ export function AgentNativeTerminal({ sessionId, active, invoke }: {
             className="min-h-7 rounded-full bg-[var(--surface-chip)] px-3 focus-visible:ring-2 focus-visible:ring-ring">
             {t('ccAgent.presentation.takeControl')}
           </button>}
-          {(status === 'unavailable' || status === 'gap') && <button type="button" onClick={() => setConnection(value => value + 1)}
+          {(status === 'unavailable' || status === 'gap' || status === 'exited') && <button type="button" onClick={() => void retry()}
             className="min-h-7 rounded-full bg-[var(--surface-chip)] px-3 focus-visible:ring-2 focus-visible:ring-ring">
             {t('ccAgent.presentation.retry')}
           </button>}

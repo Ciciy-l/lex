@@ -186,7 +186,8 @@ import {
   assertReviewMessageContentPaths,
   buildReviewReadGrants } from '../shared/review-read-scope.js';
 import { resolveAgentCredentialMode } from '../credential-mode.js';
-import { PiRpcProcess, type PiRpcEvent } from './rpc-client.js';
+import { PiRpcProcess, type PiRpcEvent, type PiRpcSpawnOptions } from './rpc-client.js';
+import { PiNativeSessionControl, type PiSessionControl } from './native-session.js';
 import { createPiStdioTransport, type PiTransport } from './transport.js';
 import type { PiRemoteFileOps } from '../base-agent.js';
 import {
@@ -1618,7 +1619,7 @@ function piExtraDirsPrompt(readOnlyDirs: readonly string[], writableDirs: readon
 }
 
 interface FailedPiStartupCleanup {
-  proc: PiRpcProcess;
+  proc: PiSessionControl;
   promise: Promise<void> | null;
   cleanupLocal?: () => void;
   confirmStopped: () => void;
@@ -2543,6 +2544,9 @@ export class PiAgent extends BaseAgent {
     }
     assertRemotePiContextProfileAvailable(opts.remoteHostId, opts.model, opts.providerId);
     const reviewMode = opts.reviewMode === true;
+    const nativePresentation = opts.nativePresentation === true;
+    if (nativePresentation && (!opts.sessionId || opts.remoteHostId || reviewMode || opts.vendorOptions?.orcaRole || !this.deps.createLocalPiNativeSession))
+      throw new Error('Pi native presentation requires the ordinary local interactive host');
     const sessionMemoryEnabled = !reviewMode
       && (opts.makerMemoryEnabled ?? this.deps.runtimeConfig.makerMemoryEnabled ?? false) === true
       && (this.memoryOverride ?? true);
@@ -4857,7 +4861,8 @@ export class PiAgent extends BaseAgent {
     // proc 构造即 spawn 子进程 —— spawn 参数非法等会**同步**抛。此刻 ctx 已在
     // preparePiExtraSpawnConfig 注册、但 handle 尚未交出,close() 不会跑 → 单独
     // 兜底注销 ctx 再抛(构造失败没有 proc 可关)。catch 必抛,故其后 proc 恒已赋值。
-    let proc: PiRpcProcess;
+    let proc: PiSessionControl;
+    let nativeControl: PiNativeSessionControl | undefined;
     // Pi owns automatic threshold and overflow compaction. Cindy only records a
     // deterministic native failure so Desktop can rebuild before the next send.
     let nativeAutoCompactNeedsRollover = false;
@@ -5378,26 +5383,7 @@ export class PiAgent extends BaseAgent {
       durableSpawnEnv = spawnEnv;
       const initialHostProxyForward = nativeProviderById.get(initialProvider)?.hostProxyForward;
       piSpawnStartedAt = Date.now();
-      const { transport } = await this.createTransport(
-        {
-          args,
-          cwd: opts.workingDir,
-          env: spawnEnv,
-          sessionId: opts.sessionId,
-          hostProxyForwards: initialHostProxyForward ? [initialHostProxyForward] : [],
-        },
-        (pid) =>
-          this.deps.registerLocalAgentProcess?.({
-            pid,
-            kind: 'pi',
-            role: 'task-host',
-          }),
-        opts.remoteHostId,
-        effectivePiBinaryPath,
-      );
-      sessionTransport = transport;
-      proc = new PiRpcProcess({
-        transport,
+      const processCallbacks: Omit<PiRpcSpawnOptions, 'transport'> = {
         logger: this.deps.logger,
         onEvent: (event: PiRpcEvent) => {
           if (event.type === 'agent_start' || event.type === 'agent_settled') {
@@ -5603,6 +5589,11 @@ export class PiAgent extends BaseAgent {
         },
         onExit: ({ code, signal }) => {
           const hostAbortRequested = isCurrentTurnHostAbortRequested(ctx, true);
+          // Ctrl+D / /exit is normal only for a settled interactive frontend.
+          // Capture both admission and translator state before disposal resets
+          // the latter; code=0 alone cannot settle an in-flight input.
+          const nativeIdleExit = nativeControl?.exitedCleanlyWhileIdle === true
+            && !ctx.isStreaming && ctx.pendingHostTurnStartToken === null;
           piProcessExited = true;
           clearPiSubagentRefreshTimer();
           void deferProxyDisposalForDetachedRuns();
@@ -5616,7 +5607,7 @@ export class PiAgent extends BaseAgent {
           runtimeCapabilityListeners.clear();
           if (!closed) {
             // 非用户 close 的进程死亡:terminal error + 收尾,避免 UI 永久 running。
-            if (!rpcDisconnected) queue.push(hostAbortRequested ? {
+            if (!rpcDisconnected && !nativeIdleExit) queue.push(hostAbortRequested ? {
               type: 'done',
               data: { status: 'cancelled' },
               source: 'pi',
@@ -5658,7 +5649,32 @@ export class PiAgent extends BaseAgent {
           }
           queue.end();
         },
-      });
+      };
+      if (nativePresentation) {
+        // All runtime/model/auth/Skill/package/permission preparation above is
+        // shared. Main changes only the frontend and adds its task extension.
+        const terminalEnv: Record<string, string> = {};
+        for (const [key, value] of Object.entries(spawnEnv)) {
+          if (value !== undefined) terminalEnv[key] = value;
+        }
+        nativeControl = await this.deps.createLocalPiNativeSession!({
+          ...processCallbacks, sessionId: opts.sessionId!, executable: effectivePiBinaryPath,
+          args, cwd: opts.workingDir, env: terminalEnv,
+          extensionPath: path.join(extensionsDir, 'lex-native-presentation.ts'),
+          model: initialWireModel, provider: initialProvider, hostProviderId: mutableProviderId, resumeSessionId: opts.resumeSessionId,
+          registerProcess: pid => this.deps.registerLocalAgentProcess?.({ pid, kind: 'pi', role: 'task-host' }),
+        });
+        proc = nativeControl;
+        await nativeControl.start();
+      } else {
+        const { transport } = await this.createTransport({
+          args, cwd: opts.workingDir, env: spawnEnv, sessionId: opts.sessionId,
+          hostProxyForwards: initialHostProxyForward ? [initialHostProxyForward] : [],
+        }, pid => this.deps.registerLocalAgentProcess?.({ pid, kind: 'pi', role: 'task-host' }),
+        opts.remoteHostId, effectivePiBinaryPath);
+        sessionTransport = transport;
+        proc = new PiRpcProcess({ ...processCallbacks, transport });
+      }
       logPiStartupStage(this.deps.logger, startupTraceId, 'pi-spawn', piSpawnStartedAt, 'ok');
       piSpawnLogged = true;
     } catch (err) {
@@ -5671,6 +5687,21 @@ export class PiAgent extends BaseAgent {
         disposeSessionRegistrations();
       } catch {
         /* best-effort:注销失败不掩盖原始构造错误 */
+      }
+      // A native extension may fail after its PTY starts. Retain the same
+      // runtime files and task-keyed cleanup fence until that exact child exits.
+      if (nativeControl) {
+        try { await nativeControl.close(); }
+        catch (cleanupError) {
+          configHomeCleanupDeferredToQuarantine = true;
+          let confirmStopped!: () => void;
+          const whenStopped = new Promise<void>(resolve => { confirmStopped = resolve; });
+          this.failedStartupCleanups.set(startupCleanupKey, {
+            proc: nativeControl, promise: null, confirmStopped,
+            cleanupLocal: () => { void cleanupConfigHome(); cleanupRuntimeFiles(); },
+          });
+          throw new AgentStartupCleanupPendingError('Pi native startup cleanup remains unconfirmed', { cause: cleanupError, whenStopped });
+        }
       }
       // 轮 42 P1:远端失败也不清理 runtime 文件(可能与并发存活会话共享/复用)。
       if (!remote) {
@@ -6389,6 +6420,13 @@ export class PiAgent extends BaseAgent {
         }
       }
       const needsRefresh = configChanged || envChanged || adaptersChanged || gatewayCredentialChanged;
+      // Keep a stable ordinary task on this interactive process. Only an actual
+      // route/configuration change goes through same-history prepared rebuild;
+      // never dispatch a private slash command as an unassociated user prompt.
+      if (nativeControl) return { action: sameRoute && !needsRefresh ? 'hot' : 'rebuild', targetContextWindow,
+        windowVerified: sameRoute && !needsRefresh && targetContextWindow === ctx.contextWindow,
+        ...(!sameRoute || needsRefresh ? { reason: 'Pi interactive model changes reload the prepared task runtime' } : {}),
+      };
       const inspected = await queryNativeRuntime('inspect');
       if (!inspected.ok || !liveRuntimeSettings) {
         return { action: 'unavailable', targetContextWindow, windowVerified: false,
@@ -7597,7 +7635,8 @@ export class PiAgent extends BaseAgent {
           if (enabled === planModeActive) return;
           let resp: Awaited<ReturnType<typeof proc.request>>;
           try {
-            resp = await runExclusivePiRpc(() => proc.request({ type: 'prompt', message: '/plan' }));
+            resp = await runExclusivePiRpc(() => proc.request(nativeControl
+              ? { type: 'native_plan', enabled } : { type: 'prompt', message: '/plan' }));
           } catch (error) {
             // transport 超时/断线不能证明命令未到达 Pi；它可能已经完成 toggle。
             // 旧 boolean 此后不再可信，下次调用必须先从持久 entry 重同步。
@@ -7826,8 +7865,20 @@ export class PiAgent extends BaseAgent {
       },
     };
 
+    const result = nativeControl ? nativeControl.bindHandle(handle, async (message, sendOptions) => {
+      rejectIfCancelled(sendOptions, 'send');
+      handle.validateSendOptions?.(sendOptions);
+      await writeRequestPrefs();
+      rejectIfCancelled(sendOptions, 'send');
+      if (closed || piProcessExited || proc.isClosed) throw new TurnDispatchRejectedError('Pi native task is unavailable');
+      activeTurnPermissionPolicy = sendOptions.turnPermissionPolicy ?? null;
+      setAutoReviewIntent(appendAutoReviewUserIntent(priorAutoReviewIntent(), message.content, sendOptions), { authority: autoReviewContext() });
+      const { text, images } = await buildPiPrompt(message, { remote: false });
+      assertImageInputSupported(images);
+      return { text: composePiPromptText(text, piExtraDirsPrompt(mutableExtraDirs, mutableWritableDirs), runtimeCapabilityManifest), images };
+    }) : handle;
     configHomeLifecycleTransferred = true;
-    return handle;
+    return result;
     } finally {
       if (
         !remote
@@ -8113,7 +8164,7 @@ export class PiAgent extends BaseAgent {
    */
   private handleExtensionUiRequest(
     event: PiRpcEvent,
-    proc: PiRpcProcess,
+    proc: Pick<PiSessionControl, 'send'>,
     getPermissionCtx: () => {
       resolver: InteractionResolver | null;
       permissionMode: 'ask' | 'auto' | 'bypassPermissions';

@@ -6,6 +6,11 @@ import { REMOTE_VIEWER } from '../shared/remoteDesktopViewer';
 
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import {
+  COMPOSER_DRAFT_LOAD, COMPOSER_DRAFT_SAVE,
+  type ComposerDraftSnapshot, type ComposerDraftWrite,
+} from '../shared/composerDraft';
+import { composerDraftEntriesSchema } from '../shared/composerDraftValidation';
 import { DESKTOP_LOCAL, type RemoteDesktopApi } from '../shared/remoteDesktop';
 import { DEVICE_LINK_PUSH } from '../shared/deviceLinkIpc';
 import {
@@ -5036,6 +5041,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }): Promise<ReviewPushResult> => ipcRenderer.invoke('git-review:push', params),
   },
 
+  composerDrafts: {
+    loadSnapshot: (stamp: DataOwnerPushStamp): ComposerDraftSnapshot | null => {
+      const value: unknown = ipcRenderer.sendSync(COMPOSER_DRAFT_LOAD, stamp);
+      if (!isDataOwnerPushStamp(value) || !('entries' in value)) return null;
+      const entries = composerDraftEntriesSchema.safeParse(value.entries);
+      return entries.success ? {
+        dataOwnerId: value.dataOwnerId, ownerGeneration: value.ownerGeneration, entries: entries.data,
+      } : null;
+    },
+    save: (request: ComposerDraftWrite): Promise<void> => ipcRenderer.invoke(COMPOSER_DRAFT_SAVE, request),
+  },
+
   // Sidebar identity state is owner-scoped in main and every mutation/push is generation-fenced.
   sidebarSettings: {
     claimLegacyRendererOwner: (): SidebarLegacyRendererOwnerClaim => {
@@ -6253,6 +6270,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }> => ipcRenderer.invoke('maker:at-context:list', params),
 
     createSession: (opts: {
+      requireNativePresentation?: boolean;
       /** 可选: 复用外部 sessionId(本端 chat 用 local-db:sessions:create 拿到的 id) */
       id?: string;
       agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';

@@ -3,6 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { readCreateSessionOpts, withCreateSessionStderr } from '../sessionRequest';
 
 describe('session IPC request parsing', () => {
+  it('accepts only a boolean explicit native selection without changing the legacy engine or resume identity', () => {
+    const input = { id: 'legacy-task', agentKind: 'claude-code', workingDir: '/fixture', model: 'fixture-model',
+      resumeSessionId: 'original-native-session', requireNativePresentation: true };
+    expect(readCreateSessionOpts(input)).toMatchObject(input);
+    expect(() => readCreateSessionOpts({ ...input, requireNativePresentation: 'true' })).toThrow('[INVALID_PARAMS]');
+  });
   it('reads create-session required fields and preserves opaque options', () => {
     const opts = readCreateSessionOpts({
       agentKind: 'codex',

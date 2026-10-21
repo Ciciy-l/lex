@@ -2,6 +2,12 @@ import type { NativeMessageSource } from '@cindy/maker-shared/message-presentati
 import type { UserContentBlock, UserMessage } from '../types/common.js';
 import type { SendOptions } from './base-agent.js';
 
+/** The product binding outlives an individual bridge HTTP request. */
+export interface AgentNativeInputOwnership {
+  readonly signal: AbortSignal;
+  isCurrent(): boolean;
+}
+
 /** Host-only continuation for an input held before the native provider starts. */
 export interface AgentNativeInput {
   readonly nativeSessionId: string;
@@ -9,17 +15,25 @@ export interface AgentNativeInput {
   readonly nativeTurnId?: string;
   readonly message: UserMessage;
   /** Install the prepared bytes in this input; never submit a second prompt. */
-  accept(message: UserMessage, opts: SendOptions): Promise<void>;
+  accept(message: UserMessage, opts: SendOptions, ownership?: AgentNativeInputOwnership): Promise<void>;
 }
 
-/** One native row, delivered by the adapter rather than an IPC caller. */
-export interface AgentNativeInputRequest extends AgentNativeInput {
-  readonly nativeMessageId: string;
-  readonly source?: NativeMessageSource;
+/** Adapter-owned input identity; never supplied by an IPC caller. */
+export type AgentNativeInputRequest = AgentNativeInput & {
   readonly signal: AbortSignal;
   /** Adapter-owned observation; an accepted steer is not necessarily consumed. */
   readonly consumption?: AgentNativeInputConsumption;
-}
+} & ({
+  readonly nativeMessageId: string;
+  readonly source?: NativeMessageSource;
+  readonly submissionId?: never;
+} | {
+  /** OMP prepares context before it assigns a journal row. This is a bridge
+   * submission, not a native message ID; the real receipt arrives before HTTP. */
+  readonly submissionId: string;
+  readonly nativeMessageId?: never;
+  readonly source?: never;
+});
 
 export type AgentNativeInputResolver = (input: AgentNativeInputRequest) => Promise<void>;
 

@@ -279,11 +279,11 @@ export function createStorageIpcHandlers(deps: StorageIpcDeps) {
         // 执行时重新取证:扫描→确认之间用户可能又粘了图/发了排队消息。
         const live = await collectLive(deps, params.draftUrls ?? []);
         const zeroRef = await recycler.deleteZeroRefBlobs(
-          { hashes: params.zeroRefHashes ?? [], live },
+          { hashes: params.zeroRefHashes ?? [], live, getDraftUrls: deps.getRegisteredDraftUrls },
           deps.db,
         );
         const cacheEvicted = await recycler.evictCacheBlobs(
-          { hashes: params.evictCacheHashes ?? [], live },
+          { hashes: params.evictCacheHashes ?? [], live, getDraftUrls: deps.getRegisteredDraftUrls },
           deps.db,
         );
         const deadDirs = await legacyDeadDirs.cleanDeadDirs(

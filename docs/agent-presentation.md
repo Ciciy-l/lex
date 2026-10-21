@@ -73,6 +73,117 @@ support the existing GUI semantics, including streaming and permissions.
 - Retire right-workbench Agent CLI quick launch only after left-pane acceptance;
   retain ordinary shell terminals and compatible restoration of saved layouts.
 
+### Ordinary Pi window evidence, Windows, 2026-10-20
+
+The ordinary Pi entry now selects the original interactive Pi 1.2.0 with its
+official extension API, not the RPC UI. On `7949150` the isolated ordinary page
+completed TUI-first input before any GUI message, semantic GUI continuation,
+both live drafts and focus, GUI Stop without automatic continuation, and one
+explicit subsequent native input. Actual native journal row IDs reconcile with
+the same task's persisted GUI history. Usage advanced 25 → 50 → 70 → 95.
+
+Exiting the idle original CLI exposed a separate recovery defect: the retry
+button only reattached a terminal view to the closed Session. Explicit retry
+now checks live status and, when needed, uses that task's existing owner-checked
+prepare/resume path before attaching. A live process is only reattached; busy
+or uncertain work is not replaced, and no input is replayed. Late owner results
+cannot prepare another task. The existing isolated window loaded this Renderer
+change through HMR, without a Desktop restart.
+
+`rc1-pi-window2/pi-ui28-retry-ready-readonly.json` and
+`pi-ui29-one-explicit-input-after-history-recovery.json` record recovery of the
+original session file, then exactly one new native input and GUI result. The
+provider count stayed 21 through recovery and became 22 only after that input;
+the actual row `a9da6f9e` appears in both native and product history, with usage
+120. The earlier failed reconnect and a premature focus assertion during
+startup remain recorded. A clean idle CLI exit projected an inaccurate
+unexpected-exit error. The adapter now distinguishes a confirmed idle, clean
+native exit from a pending admission, active turn, signal or nonzero exit.
+That correction is covered by focused lifecycle tests; the running window has
+not loaded the new Main/Core code yet.
+
+A separate ordinary GUI-first Pi task was created through the product page,
+with a real RPC input and no native presentation metadata. Switching that idle
+task to TUI retired the original RPC process and resumed its exact JSONL file
+in the interactive process. The provider stayed at request 23 through the
+switch; one explicit native continuation produced request 24 and native row
+`563da637`. Both earlier GUI history and the unsent GUI draft remained when
+switching back. `rc1-pi-window2/pi-sdk-ui32-ordinary-gui-rpc-first.json`,
+`pi-sdk-ui33-upgrade-original-rpc-history.json`,
+`pi-sdk-ui34-same-history-native-continuation.json` and
+`pi-sdk-after-native-upgrade.json` retain the actual process, file and result.
+This verifies the SDK-only production upgrade path on current code; an actual
+pre-release user profile was not available in the isolated environment.
+
+The zero-GUI Claude entry exposed a different startup defect: automatic Library
+directory synchronization called an absent native handle setter, and failure
+of both apply and rollback terminated the new CLI before any prompt. Native
+directory controls now confirm only the exact frozen launch/policy snapshot.
+Actual changes reject without altering either side; a rollback to the original
+snapshot remains valid. Hot directory changes still require explicit same-task
+reopening, and this startup correction has not yet passed a new window check.
+The failed empty task and zero model requests remain recorded.
+
+OMP previously projected live context but never persisted native turn token
+totals in the Desktop usage pipeline. The terminal event now carries actual
+per-turn token/cache facts; Main records them once, without inferring a bill.
+Context remains the latest request and any reported cost remains cumulative.
+Focused translator/pipeline checks cover the correction; the current window
+still runs the earlier Main/Core code, so a live usage-total fix is not claimed.
+
+These results use a Windows isolated profile and loopback model. They do not
+establish real-provider, packaged or other-platform acceptance, native advanced
+command parity, or restoration of unsent GUI drafts across Desktop restarts.
+
+### Durable local GUI drafts, awaiting candidate window acceptance
+
+The previous composer Map was process-local, so a Desktop restart discarded
+unsent GUI content. Main now owns `owners/<owner-key>/composer-drafts.json`,
+using the verified active account/generation and an opaque task key. The new
+task composer has its own key. Signed-out, stale-owner, transitioning-account
+and untrusted-frame requests cannot read or mutate another account's drafts.
+This is local UI state; no Device Link channel, account sync or agent input
+replay is added. A draft-storage failure affects that local draft write, not
+the running task, its transport, or another controller.
+
+Owner hydration reads a bounded snapshot synchronously before editor restore.
+Locally edited or explicitly cleared keys win if bootstrap storage was
+temporarily unavailable. Text/quotes, attachment metadata, annotations and
+browser comments survive; one-shot focus and capability handoff flags do not.
+Successful send and explicit discard use the existing clear paths. Ordered,
+atomic Main writes prevent an older accepted save from following its clear;
+unreadable files are preserved rather than replaced with an empty snapshot.
+The existing quit lifecycle drains accepted writes, and Renderer reload
+flushes the typing debounce. Abrupt termination can still lose an edit that
+has not reached Main or finished writing; this is not a crash-proof journal.
+The bounded local file holds up to 1,000 drafts / 32 MiB, with 8 MiB per draft;
+a rejected write keeps the live editor and does not truncate older storage.
+
+Attachments remain in the existing media/staging lifecycle, without copying
+bytes into a new store. The media recycler includes disk-only draft URLs and
+pending additions before a Renderer mounts; pending deletion releases its
+protection only after the atomic clear succeeds. Corrupt draft storage blocks
+that cleanup rather than guessing which media is unused.
+Because blob bytes are shared across owners, the Host retention census reads
+every existing 20-hex owner namespace, including drafts never loaded in this
+process, rather than using only the active account or an in-memory registry.
+It returns only media retention references internally; Renderer hydration
+still reads exactly the verified active owner. Every accepted pending save
+remains protected until it settles, even after a later save/clear or owner
+switch. Atomic-writer artifacts, changed/incomplete directories, unreadable,
+malformed or oversized files abort cleanup instead of yielding a partial set.
+The bounded census refuses more than 1,000 namespace entries or 128 MiB of
+draft files. Deletion rechecks these references across asynchronous ledger
+operations. The original current-owner-only omission and its synthetic
+regression are retained; no real-user media deletion has been reproduced.
+
+Focused tests cover durable round trips, account/task and generation fences,
+newer edits, send/discard ordering, annotations, attachment protection and
+corrupt-file preservation. The earlier window does not load these Main/preload
+changes. Cross-Desktop-restart acceptance and the new Claude startup, Pi idle
+exit and OMP token-total fixes require the fixed candidate to be manually
+started through the formal isolated entry; no new window pass is claimed.
+
 ## Incremental delivery and acceptance
 
 Commit contract/probes, each engine adapter, common ownership/recovery, shared
@@ -598,6 +709,81 @@ labels WebSocket transport experimental and unsupported; native version and
 protocol compatibility must therefore remain explicit product gates.
 
 ## Pi and OMP native gates: Windows, 2026-10-18
+
+### Pi ordinary product adapter, 2026-10-20 (implementation; window acceptance pending)
+
+Explicit local Pi presentation now selects Main's original interactive Pi after
+the existing model/provider, auth, package/Skill, project-resource and permission
+preparation. The existing RPC GUI path stays available until that selection.
+The task-owned official extension sends GUI input with `sendUserMessage`, and
+binds each user input to its actual already-persisted Pi journal row before
+provider context is released through Core admission. Structured native events
+reuse the production Pi translator; only `agent_settled` ends the turn. Stop
+uses `ctx.abort`, never a synthetic continuation. Missing history and unknown
+command outcomes cannot create a replacement task or replay input.
+
+Cindy's private extension UI requests use the same task's Host permission
+policy; native and user-package dialogs retain Pi's original UI. Runtime files
+remain until confirmed process exit. Host model/source changes use the existing
+same-history controlled rebuild; in-turn GUI steering and GUI extension commands
+without a consumed user row remain unimplemented. Interactive input during an
+active product turn remains in its editor for a later explicit submission.
+Native model-menu changes are not yet synchronized with the product route;
+select the model in GUI before sending. A changed native route is fenced before
+the provider request. Original Pi APIs/tools are not reimplemented.
+Focused regressions and types are required before
+ordinary-window acceptance; no Pi product-window success is claimed here.
+
+### OMP ordinary product adapter, 2026-10-20 (Windows loopback window accepted)
+
+Explicit local OMP presentation now selects the ordinary Main PTY factory after
+the same managed model/provider, prompt, permission, Skill and host-tool startup
+preparation as RPC. The original interactive OMP loads a task-scoped official
+extension. GUI sends use `sendUserMessage`. In OMP 18.10.4, provider context is
+prepared before the input events allocate a journal row. The context hook first
+admits a distinct bridge submission through Core Session and installs the
+host-prepared bytes. The official `before_provider_request` hook then requires
+the unique matching real journal row before permitting the original request;
+it does not rewrite provider payloads. Native and GUI receipts bind that real
+row to the existing product message, without presenting a submission ID as a
+native ID or native input as plugin input. Stop uses `ctx.abort`,
+and extension `agent_end.willContinue` determines the final product boundary.
+History resume requires the existing absolute session file; missing history or
+an unconfirmed command never falls back to another task or automatically replays.
+Launch files and leases remain until the exact native process has exited.
+
+OMP 18.10.4 automatic recap reuses these hooks through `runEphemeralTurn`
+without a user journal row and caused an observed task disconnect. New and
+resumed native processes now append a private `--config` overlay containing
+only `recap.enabled: false`, after the original managed settings file. RPC
+configuration and real global/project settings are unchanged; auto compaction,
+Advisor and cache warming are not disabled. An explicit native runtime setting
+can override this overlay, so turning recap back on reintroduces the known risk.
+The rejected ambient `isIdle()` hook bypass is withdrawn: main inputs still
+require owner admission, the real journal receipt and the shared eight-second
+budget. The failing side/main preflight interleaving remains archived as
+evidence against that bypass, not a fixed concurrency regression. This limited
+workaround prevents the observed automatic recap trigger; `/btw`, `/omfg` and
+other auxiliary concurrency remain unverified. It does not establish all-side
+safety. Ordinary-window verification after loading this candidate is pending.
+
+This connects an adapter to the ordinary product entry, not just the earlier
+probe. Focused tests cover Session admission, continuation, unknown outcomes,
+same-file resume, host-tool ownership and Main cleanup. The Windows isolated
+ordinary Desktop at `c465054de` passed same-file history recovery, original-TUI
+input and GUI result return, GUI semantic continuation, running-process dual
+drafts/focus, and Stop followed by one explicit new native input without an
+automatic continuation. A fresh unnamed task also completed its first input
+directly from TUI and returned the same history to GUI. SQLite receipts matched
+the real native journal IDs, and each explicit input produced one loopback
+provider request. Evidence is retained under `rc1-omp-window4` outside the repo.
+The model was simulated: real suppliers, native tool approval and other
+platforms are not covered. Native journal usage was present, but persisted
+product total usage remained zero and is a separate observed gap. Model/source
+changes use the existing managed-route rebuild;
+the native permission mode remains fixed for this process. Pi's production
+interactive extension adapter is separate work above; this does not complete
+all four engines or establish SSH, Device Link or non-Windows acceptance.
 
 Run `node scripts/agent-presentation/extension-native-probe.mjs --engine=pi` or
 `--engine=omp` explicitly. Tested managed Pi `1.2.0` and OMP `18.10.4` inside

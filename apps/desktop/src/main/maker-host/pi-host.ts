@@ -3,6 +3,7 @@ import { listCindyManagedSkills } from './managed-skills.js';
 import { readCachedGenericOAuthAccessToken } from './generic-oauth.js';
 import { providerPresetModelRecord, providerModelAdapterId } from '@cindy/model-providers';
 import { readDisabledSkillPaths } from '../skillhub/activationPreferences';
+import { createPiNativeHostSession } from './pi-native-host.js';
 import { subscriptionAccountKind, subscriptionAccountState, isXaiSubscriptionProviderId } from './subscription-account-auth.js';
 /**
  * pi agent 的 desktop host 装配 —— auth / runtimeConfig / 二进制解析 / 构造,
@@ -81,6 +82,12 @@ import {
   shouldApplyQwen38Overlay,
 } from '../local-model-runtime/qwenProfile.js';
 import { readCustomProviderKey } from '../secrets/providerSecretStore.js';
+import { activeOwnerScopeKey, isAppSessionBoundaryPending } from '../appSessionState.js';
+import {
+  getProviderRouteCredentialRevision,
+  isProviderRouteMutationInProgress,
+  resolveProviderRouteById,
+} from './provider-route.js';
 import {
   buildUserProviderChannels,
   projectChannelRuntimes,
@@ -806,8 +813,40 @@ class DesktopPiAuthAdapter implements AuthAdapter {
     }
     if (providerId) {
       const storageProviderId = storedCustomProviderId(providerId);
+      const owner = activeOwnerScopeKey();
+      const revision = getProviderRouteCredentialRevision(providerId);
+      const isCurrent = () => !isAppSessionBoundaryPending() &&
+        activeOwnerScopeKey() === owner && !isProviderRouteMutationInProgress(providerId) &&
+        getProviderRouteCredentialRevision(providerId) === revision;
+      if (!isCurrent()) return { authenticated: false, errorReason: 'pi_native_auth_changed' };
       try {
-        const custom = (await listCustomProvidersWithSecureHeaders()).find(
+        const configs = await listCustomProvidersWithSecureHeaders();
+        if (!isCurrent()) return { authenticated: false, errorReason: 'pi_native_auth_changed' };
+        const selected = getActiveCatalog().providers.find(provider => provider.id === providerId);
+        if (selected?.channel) {
+          // Channel ids, protocol-specific ids and legacy aliases must use the same
+          // host-only credentials and route as actual Pi requests, not runtimes.pi.
+          if (!isAnthropicCompatProxyHandleReady()) {
+            return { authenticated: false, errorReason: 'pi_native_proxy_unavailable' };
+          }
+          const route = await resolveProviderRouteById(providerId, 'pi');
+          if (!isCurrent() || route?.isCurrent?.() === false) {
+            return { authenticated: false, errorReason: 'pi_native_auth_changed' };
+          }
+          if (!route || route.routing.disabled || route.routing.headerOverrideState === 'unknown') {
+            return { authenticated: false, errorReason: 'pi_native_route_unavailable' };
+          }
+          const strategy = route.routing.authStrategy;
+          const hasCredential = strategy === 'none' ||
+            (strategy === 'api-key-header' && Boolean(route.apiKey ||
+              Object.keys(route.routing.headerOverride ?? {}).length)) ||
+            ((strategy === 'oauth-token' || strategy === 'provider-oauth-header') && Boolean(route.oauthToken));
+          return hasCredential
+            ? { authenticated: true, identity: selected.name,
+              authSource: strategy === 'oauth-token' || strategy === 'provider-oauth-header' ? 'oauth' : 'api-key' }
+            : { authenticated: false, errorReason: 'pi_native_credential_unavailable' };
+        }
+        const custom = configs.find(
           (provider) => provider.id === storageProviderId && provider.runtimes.pi,
         );
         if (custom) {
@@ -835,6 +874,7 @@ class DesktopPiAuthAdapter implements AuthAdapter {
           providerId,
           message: err instanceof Error ? err.message : String(err),
         });
+        return { authenticated: false, errorReason: 'pi_native_auth_unavailable' };
       }
     }
     const key = readClaudeApiKey();
@@ -1968,6 +2008,7 @@ export function buildPiAgent(opts: BuildPiAgentOpts): PiAgent | null {
   }
   log.info('pi agent enabled', { binaryPath });
   return new PiAgent({
+    createLocalPiNativeSession: createPiNativeHostSession,
     getDisabledSkillPaths: readDisabledSkillPaths,
     getManagedSkills: listCindyManagedSkills,
     scanLocalCustomizations,

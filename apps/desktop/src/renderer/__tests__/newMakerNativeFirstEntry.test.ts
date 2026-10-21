@@ -28,8 +28,11 @@ describe('new-task native entry', () => {
     for (const setting of ['effectiveFastMode', 'effectivePlanMode', 'chatInitialPermissionMode', 'chatInitialProviderId', 'effectiveExtraDirs', 'effectiveWritableDirs']) {
       expect(handler).toContain(setting);
     }
-    const eligibility = route.slice(route.indexOf('const canOpenDraftNative ='), route.indexOf('const handleDraftPresentation ='));
-    for (const guard of ['!isDeviceLinkDraft', '!isRemoteProjectDraft', '!effectiveCollab.enabled', '!wtEnabled']) expect(eligibility).toContain(guard);
+    const eligibility = route.slice(route.indexOf('const canShowDraftNative ='), route.indexOf('const handleDraftPresentation ='));
+    for (const guard of ['!isDeviceLinkDraft', '!isRemoteProjectDraft', '!effectiveRemoteHostId', '!effectiveCollab.enabled', '!wtEnabled', '!!draftInitialModel', '!showProviderOnboardingCard']) expect(eligibility).toContain(guard);
+    expect(eligibility).toContain('const canOpenDraftNative = canShowDraftNative && hasLocalNativePresentation(persistedAgentKind)');
+    expect(handler).toContain("if (mode !== 'tui' || !canOpenDraftNative || sendInFlightRef.current) return");
+    expect(route).toContain('{canShowDraftNative && (');
     expect(route).toContain('disabled={nativeDraftOpening}');
     expect(route).toContain('<AgentPresentationSwitch mode="gui"');
   });

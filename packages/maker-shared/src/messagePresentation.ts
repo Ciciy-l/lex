@@ -58,7 +58,7 @@ export function nativeMessageConsumptionLabel(status: NativeMessageConsumption['
 /** Host-authored provenance of one accepted native input, persisted with its GUI row. */
 export interface NativeMessageSource {
   version: 1;
-  engine: 'claude-code';
+  engine: 'claude-code' | 'pi' | 'omp';
   sessionId: string;
   messageId: string;
   origin: { kind: string; name?: string };

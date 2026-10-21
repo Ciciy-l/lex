@@ -1,5 +1,6 @@
 import { AgentNativeTerminal } from './AgentNativeTerminal';
 import { AgentPresentationSwitch, AgentPresentationUnavailable } from './AgentPresentationSwitch';
+import { hasLocalNativePresentation } from '../../../shared/agentPresentation';
 import { useAgentPresentation } from './useAgentPresentation';
 import { useAgentPresentationFocus } from './useAgentPresentationFocus';
 import { enableCollabFromForm } from './enableCollabFromForm';
@@ -4397,12 +4398,13 @@ export function CCAgentSessionView({
   }, [sessionId]);
 
   const prepareNativePresentation = useCallback(async () => {
-    if (!sessionId || !session?.workingDir || session.agentKind !== 'codex' || session.remoteHostId || session.orcaRole) {
+    if (!sessionId || !session?.workingDir || !hasLocalNativePresentation(session.agentKind) || session.remoteHostId || session.orcaRole) {
       throw new Error('Native task startup is unavailable');
     }
     const createOpts = { id: sessionId, ...buildCreateOptsForCurrentSession(sessionId, session.model,
       session.effort ?? undefined, session.permissionMode ?? 'ask', session.workingDir),
-      agentKind: 'codex' as const, extraDirs: session.extraDirs ?? [], writableDirs: session.writableDirs ?? [] };
+      agentKind: dbToMakerAgentKind(session.agentKind), requireNativePresentation: true,
+      extraDirs: session.extraDirs ?? [], writableDirs: session.writableDirs ?? [] };
     if (remoteDeviceId) await window.electronAPI.deviceLink.invoke(remoteDeviceId, 'maker:create-session', [createOpts]);
     else await window.electronAPI.maker.createSession(createOpts);
   }, [sessionId, session, remoteDeviceId]);
@@ -4411,7 +4413,7 @@ export function CCAgentSessionView({
     initialMode: nativePresentationIntent && !!sessionId &&
       nativePresentationIntent.sessionId === sessionId && nativePresentationIntent.ownerId !== undefined &&
       nativePresentationIntent.ownerId === dataOwnerId ? 'tui' : undefined,
-    prepare: session?.agentKind === 'codex' && !session.remoteHostId && !session.orcaRole && !!session.workingDir
+    prepare: hasLocalNativePresentation(session?.agentKind) && !session?.remoteHostId && !session?.orcaRole && !!session?.workingDir
       ? prepareNativePresentation : undefined });
   useAgentPresentationFocus(containerRef, presentation.mode,
     JSON.stringify([dataOwnerId, remoteDeviceId, sessionId]),
@@ -4472,8 +4474,9 @@ export function CCAgentSessionView({
                   {/* Left: workingDir — 点击在系统文件管理器中打开;
                   click 区域宽度与文本一致(不拉伸到整行) */}
                   <div className="flex min-w-0 items-center gap-3">
-                    {presentation.selectable && <AgentPresentationSwitch mode={presentation.mode} onChange={presentation.change} />}
-                    {!presentation.supported && presentation.unavailableReason && <AgentPresentationUnavailable />}
+                    {!readOnly && session && <AgentPresentationSwitch mode={presentation.mode} onChange={presentation.change}
+                      tuiUnavailable={!presentation.selectable ? t('ccAgent.presentation.startupUnavailable.unsupported') : undefined} />}
+                    {!presentation.supported && presentation.unavailableReason && <AgentPresentationUnavailable reason={presentation.unavailableReason} />}
                   {worktreeCreation?.status === 'creating' ? (
                     <div className="flex min-w-0 items-center gap-1.5">
                       <Spinner size={12} className="text-[var(--workingdir-icon)]" />
@@ -5416,7 +5419,7 @@ export function CCAgentSessionView({
         </div>
         {presentation.supported && sessionId && (
           <div className={presentation.mode === 'tui' ? 'min-h-0 flex-1' : 'hidden'}>
-            <AgentNativeTerminal key={presentation.generation} sessionId={sessionId} active={presentation.mode === 'tui' && viewVisible} invoke={presentation.invoke} />
+            <AgentNativeTerminal key={presentation.generation} sessionId={sessionId} active={presentation.mode === 'tui' && viewVisible} invoke={presentation.invoke} onReconnect={presentation.reconnect} />
           </div>
         )}
         {presentation.mode === 'tui' && <div className="shrink-0 px-3 pb-3">{conversationFooter}</div>}

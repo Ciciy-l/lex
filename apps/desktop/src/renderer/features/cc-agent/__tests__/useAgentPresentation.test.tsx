@@ -93,6 +93,19 @@ it('keeps GUI available when explicit task startup fails', async () => {
   expect(ui.result.current.mode).toBe('gui'); expect(prepare).toHaveBeenCalledOnce();
 });
 
+it('keeps a busy legacy task in GUI and permits one explicit retry after its response ends', async () => {
+  invoke.mockResolvedValue({ supported: false });
+  const prepare = vi.fn().mockRejectedValueOnce(new Error('[SESSION_RUNNING] input still active'))
+    .mockImplementationOnce(async () => { invoke.mockResolvedValue(available('resumed-original-task')); });
+  const ui = renderHook(useAgentPresentation, { initialProps: { ...args, prepare } });
+  act(() => ui.result.current.change('tui'));
+  await waitFor(() => expect(ui.result.current.unavailableReason).toBe('task-busy'));
+  expect(ui.result.current.mode).toBe('gui'); expect(prepare).toHaveBeenCalledOnce();
+  act(() => ui.result.current.change('tui'));
+  await waitFor(() => expect(ui.result.current.mode).toBe('tui'));
+  expect(ui.result.current.generation).toBe('resumed-original-task'); expect(prepare).toHaveBeenCalledTimes(2);
+});
+
 it('consumes a routed TUI selection once after task hydration, without a message or a second startup', async () => {
   invoke.mockResolvedValue({ supported: false });
   const prepare = vi.fn(async () => { invoke.mockResolvedValue(available('routed-task')); });
@@ -120,4 +133,66 @@ it('does not apply an old routed TUI selection to a different owner before hydra
   await act(async () => {});
   expect(prepare).not.toHaveBeenCalled();
   expect(ui.result.current.mode).toBe('gui');
+});
+
+it('explicitly resumes an exited task once even while its old view generation is cached', async () => {
+  invoke.mockResolvedValue(available('original'));
+  let release!: () => void;
+  const prepare = vi.fn(() => new Promise<void>(resolve => { release = resolve; }));
+  const ui = renderHook(useAgentPresentation, { initialProps: { ...args, prepare } });
+  await waitFor(() => expect(ui.result.current.generation).toBe('original'));
+  act(() => ui.result.current.change('tui'));
+  invoke.mockResolvedValue({ supported: true, state: { generation: 'original', status: 'exited' } });
+  let retry!: Promise<void>;
+  act(() => { retry = ui.result.current.reconnect(); expect(ui.result.current.reconnect()).toBe(retry); });
+  await waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+  invoke.mockResolvedValue(available('resumed-original-task'));
+  await act(async () => { release(); await retry; });
+  expect(ui.result.current.generation).toBe('resumed-original-task');
+  expect(ui.result.current.mode).toBe('tui');
+  expect(invoke.mock.calls.every(([request]) => request.action === 'status' && request.sessionId === 'task')).toBe(true);
+});
+
+it('reattaches a live task without preparing or sending work after an uncertain terminal write', async () => {
+  invoke.mockResolvedValue(available('still-live'));
+  const prepare = vi.fn(async () => {});
+  const ui = renderHook(useAgentPresentation, { initialProps: { ...args, prepare } });
+  await waitFor(() => expect(ui.result.current.supported).toBe(true));
+  await act(async () => { await ui.result.current.reconnect(); });
+  expect(prepare).not.toHaveBeenCalled();
+  expect(ui.result.current.generation).toBe('still-live');
+  expect(invoke.mock.calls.every(([request]) => request.action === 'status')).toBe(true);
+});
+
+it('does not prepare from a late reconnect status after the view owner changes', async () => {
+  invoke.mockResolvedValue(available('original'));
+  const prepare = vi.fn(async () => {});
+  const ui = renderHook(useAgentPresentation, { initialProps: { ...args, prepare } });
+  await waitFor(() => expect(ui.result.current.supported).toBe(true));
+  let resolve!: (value: unknown) => void;
+  invoke.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+  let retry!: Promise<unknown>;
+  act(() => { retry = ui.result.current.reconnect().catch(error => error); });
+  await waitFor(() => expect(resolve).toBeTypeOf('function'));
+  invoke.mockResolvedValue(available('other-owner'));
+  ui.rerender({ ...args, prepare, ownerId: 'other' });
+  await waitFor(() => expect(ui.result.current.generation).toBe('other-owner'));
+  await act(async () => { resolve({ supported: false }); await retry; });
+  expect(prepare).not.toHaveBeenCalled();
+  expect(ui.result.current.generation).toBe('other-owner');
+  expect(ui.result.current.mode).toBe('gui');
+});
+
+it('keeps unknown or busy work in GUI when the owner rejects explicit recovery', async () => {
+  invoke.mockResolvedValue(available('original'));
+  const prepare = vi.fn(async () => { throw new Error('[SESSION_RUNNING] previous input is unsettled'); });
+  const ui = renderHook(useAgentPresentation, { initialProps: { ...args, prepare } });
+  await waitFor(() => expect(ui.result.current.supported).toBe(true));
+  act(() => ui.result.current.change('tui'));
+  invoke.mockResolvedValue({ supported: false });
+  await act(async () => { await expect(ui.result.current.reconnect()).rejects.toThrow('previous input is unsettled'); });
+  expect(ui.result.current.mode).toBe('gui');
+  expect(ui.result.current.unavailableReason).toBe('task-busy');
+  expect(prepare).toHaveBeenCalledOnce();
+  expect(invoke.mock.calls.every(([request]) => request.action === 'status')).toBe(true);
 });

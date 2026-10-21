@@ -26,30 +26,8 @@ import type { AttachedFile } from './fileTypes';
 /** `# Browser comments:` 段头 —— 一条消息里只出现一次。 */
 export const BROWSER_COMMENTS_SECTION_HEADER = '# Browser comments:';
 
-/** 草稿里的一条页面评论(提交后、发送前的中间态)。 */
-export interface BrowserCommentDraftItem {
-  /** 稳定 id(逐条删除用)。 */
-  id: string;
-  /** marker 编号(1 起,与页面上的蓝色圆点、截图文件名一致)。 */
-  markerNumber: number;
-  /** 评论时刻的页面 URL(不可信页面证据)。 */
-  pageUrl: string;
-  /** guest 采集的目标信息(kind / 坐标 / selector / 选区文本等)。 */
-  target: BrowserCommentTargetInfo;
-  /** 用户评论文字;「立即添加」时为空串。 */
-  comment: string;
-  /**
-   * 带 marker 的页面截图,已缓存为会话私有 xdt-image://,形态即 AttachedFile
-   * —— 发送时直接并入 filesToSend,无需再转换。
-   */
-  screenshot: AttachedFile;
-  /**
-   * 样式反馈(Phase 3 styling feedback):气泡样式编辑器里改过的属性
-   * (old → new,已在页面上实时预览过,截图即预览后效果)。非空时该评论
-   * 序列化为 `## Requested annotation N` 块。
-   */
-  styleChanges?: BrowserCommentStyleChange[];
-}
+import type { BrowserCommentDraftItem } from '../../shared/composerDraft';
+export type { BrowserCommentDraftItem } from '../../shared/composerDraft';
 
 /**
  * 组装单条 `## Comment N` 块(不含 section 头)。字段行仅在有值时输出,并按

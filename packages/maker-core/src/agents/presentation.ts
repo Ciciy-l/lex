@@ -65,7 +65,15 @@ export interface AgentPresentationOwner {
   isCurrent(): boolean;
 }
 export type AgentPresentationUnavailableReason =
-  | 'unsupported-service' | 'invalid-thread-receipt' | 'owner-changed' | 'startup-failed';
+  | 'unsupported-service' | 'invalid-thread-receipt' | 'owner-changed' | 'startup-failed' | 'task-busy';
+
+/** A view selection may retry after the existing turn settles; it must not stop it. */
+export class AgentPresentationBusyError extends Error {
+  constructor() {
+    super('Native presentation is waiting for the current task input to finish');
+    this.name = 'AgentPresentationBusyError';
+  }
+}
 export type AgentPresentationInitialization =
   | { status: 'ready' }
   | { status: 'unavailable'; reason: AgentPresentationUnavailableReason };

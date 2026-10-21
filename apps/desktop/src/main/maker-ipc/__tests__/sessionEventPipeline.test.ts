@@ -9,6 +9,7 @@ import { SessionTurnActivityTracker } from '../sessionTurnActivityTracker.js';
 import { ProductTurnWallClockTracker, ProductTurnUsageTargetTracker } from '../turnWallClock.js';
 import { ClaudeOutputLagTimingGuard } from '../../usage/modelUsageDelta.js';
 import { createWorkerTurnStartSequencer } from '../workerTurnStartSequencer.js';
+import * as broadcastTap from '../../device-link/broadcast-tap.js';
 
 const effects = vi.hoisted(() => {
   const calls: string[] = [];
@@ -962,6 +963,47 @@ describe('provider turn observer on real Session.send', () => {
 });
 
 describe('usage through the production event pipeline', () => {
+  it('persists OMP native turn tokens and cache details without inferring a bill', async () => {
+    const h = harness();
+    effects.fn('consumeLastAssistantPersistId').mockReturnValue('omp-assistant-row');
+    h.emit(event('status', { status: 'Done', isRunning: false, tokenUsage: 42, contextTokens: 15, contextWindow: 1000000 }, { source: 'omp' }));
+    expect(effects.fn('recordSessionTurnTokens')).not.toHaveBeenCalled();
+    h.emit(event('done', { usage: { inputTokens: 30, outputTokens: 12, cacheReadTokens: 7, cacheCreateTokens: 3 } }, { source: 'omp' }));
+    await microtasks();
+    expect(effects.fn('recordSessionTurnTokens')).toHaveBeenCalledExactlyOnceWith('task', 52);
+    expect(effects.fn('recordTurnUsageOnMessage')).toHaveBeenCalledWith({ sessionId: 'task', clientId: 'omp-assistant-row',
+      turnUsageDetails: { inputTokens: 30, outputTokens: 12, cacheReadTokens: 7, cacheCreateTokens: 3,
+        totalTokens: 52, cacheHitRate: 7 / 40, model: 'test-model' } });
+    expect(effects.fn('recordTurnSpend')).not.toHaveBeenCalled();
+    expect(effects.fn('recordSessionTurnSpend')).not.toHaveBeenCalled();
+    expect(h.deps.turnUsageContextBySession.has('task')).toBe(false);
+    expect(h.deps.turnModelPromiseBySession.has('task')).toBe(false);
+    await h.dispose();
+  });
+
+  it('does not turn missing or malformed OMP usage into a zero fact', async () => {
+    const h = harness();
+    h.emit(event('done', { usage: { inputTokens: -1, outputTokens: 'not a number' } }, { source: 'omp' }));
+    await microtasks();
+    expect(effects.fn('recordSessionTurnTokens')).not.toHaveBeenCalled();
+    expect(effects.fn('recordTurnUsageOnMessage')).not.toHaveBeenCalled();
+    await h.dispose();
+  });
+
+  it('does not persist a late OMP message usage under a replacement owner', async () => {
+    const h = harness(), model = deferred<string>();
+    effects.fn('consumeLastAssistantPersistId').mockReturnValue('original-assistant-row');
+    h.deps.turnModelPromiseBySession.set('task', model.promise);
+    const current = vi.spyOn(broadcastTap, 'isDataOwnerBroadcastScopeCurrent').mockReturnValue(false);
+    try {
+      h.emit(event('done', { usage: { inputTokens: 20, outputTokens: 5 } }, { source: 'omp' }));
+      model.resolve('original-model');
+      await microtasks();
+      expect(effects.fn('recordSessionTurnTokens')).toHaveBeenCalledExactlyOnceWith('task', 25);
+      expect(effects.fn('recordTurnUsageOnMessage')).not.toHaveBeenCalled();
+    } finally { current.mockRestore(); await h.dispose(); }
+  });
+
   const tokens = { inputTokens: 100, outputTokens: 20, cacheReadTokens: 10, cacheCreateTokens: 0 };
   const segment = { ...tokens, model: 'test-model', priceVariant: 'standard' };
   function usage(source: 'codex' | 'pi') {

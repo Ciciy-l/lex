@@ -19,6 +19,7 @@ vi.mock('../../cindy-media/blobStore.js', () => ({
   resolveSafe: () => ({ absPath: path.resolve('owned-store', 'image.png'), mimeType: 'image/png' }),
 }));
 import { createClaudeNativeMediaImporter } from '../claudeNativeMedia.js';
+import { createPiNativeMediaImporter } from '../piNativeMedia.js';
 
 const data = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC';
 const url = `cindy-media://blobs/${'a'.repeat(64)}.png`;
@@ -36,6 +37,16 @@ beforeEach(() => {
 });
 
 describe('Claude native image ownership', () => {
+  it('decodes original Pi image framing through the same task-owned media boundary', async () => {
+    const load = createPiNativeMediaImporter({ sessionId: 'pi-task', nativeSessionId: 'native', isCurrent: () => state.current });
+    expect(await load(request({ type: 'image', data, mimeType: 'image/png' }))).toMatchObject({ managedUrl: url, pathOrigin: 'desktop-host' });
+    expect(state.ingest).toHaveBeenCalledWith(expect.objectContaining({ refs: [{ refKind: 'session-attachment', refId: 'pi-task', originSessionId: 'pi-task', originKind: 'user' }] }), state.db);
+    await expect(load(request({ type: 'image', path: '/untrusted/image.png' }))).rejects.toThrow('supported image bytes');
+    await expect(load(request({ type: 'image', data, mimeType: 'image/jpeg' }))).rejects.toThrow('does not match');
+    state.current = false;
+    await expect(load(request({ type: 'image', data, mimeType: 'image/png' }))).rejects.toThrow('task changed');
+    expect(state.ingest).toHaveBeenCalledOnce();
+  });
   it('pins exact native bytes before returning a managed URL and host-only path', async () => {
     expect(await importer()(request())).toEqual({ type: 'image', path: path.resolve('owned-store', 'image.png'),
       managedUrl: url, mimeType: 'image/png', pathOrigin: 'desktop-host' });

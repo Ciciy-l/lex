@@ -9613,7 +9613,9 @@
     "presentation": {
       "startupUnavailable": {
         "label": "TUI Unavailable",
-        "startup": "TUI could not connect to this task. Continue in GUI."
+        "startup": "TUI could not connect to this task. Continue in GUI.",
+        "busy": "Wait for the current response to finish, then select TUI again. Your input is preserved.",
+        "unsupported": "This engine or task environment has no same-task TUI connection yet. Continue in GUI."
       },
       "nativeFileApproval": {
         "header": "File changes",

@@ -152,6 +152,31 @@ function commandTypes(process: FakeOmpProcess): string[] {
 }
 
 describe('OMP upstream session identity', () => {
+  it('selects the ordinary interactive factory only after preparing the same managed runtime', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'omp-native-selection-'));
+    const fake = fakeOmpProcess(path.join(root, 'original.jsonl'));
+    const close = vi.fn(async () => {});
+    const native = vi.fn<NonNullable<AgentDeps['createLocalOmpNativeSession']>>(async options => ({
+      id: options.resumeSessionId!, model: options.model, agentKind: 'omp',
+      send: vi.fn(), steer: vi.fn(), abort: vi.fn(), events: async function* () {}, close,
+      setInteractionResolver: vi.fn(),
+      getUsageSnapshot: () => ({ tokenUsage: 0, contextTokens: 0, contextWindow: 0, costUsd: 0 }),
+    }));
+    try {
+      const agent = agentFor(root, fake, undefined, { createLocalOmpNativeSession: native });
+      const original = path.join(root, 'original.jsonl');
+      const handle = await agent.startSession({ sessionId: 'business-task', sessionInstanceId: 'native-instance',
+        model: 'fixture-model', providerId: 'actual-source', workingDir: root, resumeSessionId: original, nativePresentation: true, permissionMode: 'ask' });
+      expect(native).toHaveBeenCalledOnce();
+      expect(native.mock.calls[0]![0]).toMatchObject({ sessionId: 'business-task', resumeSessionId: original, providerId: 'actual-source', permissionMode: 'ask',
+        plan: { approvalMode: 'always-ask', environment: { PI_CODING_AGENT_DIR: expect.any(String) } } });
+      expect((await readFile(native.mock.calls[0]![0].plan.roots.settingsFile, 'utf8'))).toContain('approvalMode: always-ask');
+      expect(commandTypes(fake)).toEqual([]);
+      expect(handle.id).toBe(original);
+      await handle.close();
+      await native.mock.calls[0]![0].releaseResources();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
   it('uses an empty host-tool roster for a host-owned ephemeral probe only', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'omp-session-identity-'));
     const provider: McpProvider = {

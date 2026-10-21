@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { AgentPresentationBusyError } from '@cindy/maker-core';
 
 import { MAKER_INVOKE } from '../channels';
 import { registerMakerSessionCreateHandler } from '../sessionCreateHandler';
@@ -33,6 +34,14 @@ function createDeps(overrides: Record<string, unknown> = {}) {
 }
 
 describe('maker session CREATE_SESSION IPC handler', () => {
+  it('returns a recoverable busy selection error without creating, retrying or broadcasting a replacement task', async () => {
+    const harness = new IpcHarness();
+    const deps = createDeps({ bootstrapSession: vi.fn(async () => { throw new AgentPresentationBusyError(); }) });
+    registerMakerSessionCreateHandler(harness, deps);
+    await expect(harness.invoke(MAKER_INVOKE.CREATE_SESSION, { id: 'legacy-task', agentKind: 'codex', workingDir: '/fixture',
+      model: 'fixture-model', requireNativePresentation: true })).rejects.toThrow('[SESSION_RUNNING]');
+    expect(deps.bootstrapSession).toHaveBeenCalledOnce(); expect(deps.broadcastSessionCreated).not.toHaveBeenCalled();
+  });
   it('bootstraps a session and returns the public create-session payload', async () => {
     const harness = new IpcHarness();
     const deps = createDeps();

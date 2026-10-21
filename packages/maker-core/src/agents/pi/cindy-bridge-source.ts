@@ -1,3 +1,4 @@
+import { PI_NATIVE_HOST_UI_SOURCE } from './native-extension-source.js';
 import { PI_NATIVE_PROVIDER_ADAPTER_SOURCE } from './native-provider-adapter-source.js';
 /**
  * cindy-bridge —— 写进 pi agentHome/extensions/ 的扩展源码(字符串常量)。
@@ -3156,7 +3157,7 @@ function registerCindyQuestionTool(pi: any): void {
         if (signal?.aborted) { cancelled = true; break; }
         const answer = q.options
           ? await ctx.ui.select(q.question, q.options)
-          : await ctx.ui.input(q.question);
+          : await cindyHostUi(ctx).input(q.question);
         if (signal?.aborted || typeof answer !== 'string' || !answer.trim()) {
           cancelled = true;
           break;
@@ -3190,6 +3191,7 @@ function astraResponsesPayload(payload, model) {
   return out;
 }
 
+${PI_NATIVE_HOST_UI_SOURCE}
 ${PI_NATIVE_PROVIDER_ADAPTER_SOURCE}
 
 function nativeFastPayload(payload, model) {
@@ -3220,7 +3222,7 @@ export default async function cindyBridge(pi: any) {
       let mutationStarted = false;
       let runtimeSettings;
       try {
-        const raw = await ctx.ui.input('cindy:provider-refresh', JSON.stringify({ nonce }));
+        const raw = await cindyHostUi(ctx).input('cindy:provider-refresh', JSON.stringify({ nonce }));
         let inspect = false;
         try { const request = JSON.parse(raw); inspect = request?.nonce === nonce && request?.operation === 'inspect'; }
         catch { /* The normal snapshot parser rejects invalid JSON. */ }
@@ -3243,7 +3245,7 @@ export default async function cindyBridge(pi: any) {
       // RPC prompt swallows extension command exceptions. The host must see an
       // explicit, nonce-bound receipt before accepting a refreshed catalog.
       try {
-        await ctx.ui.input('cindy:provider-refresh-ack', JSON.stringify(
+        await cindyHostUi(ctx).input('cindy:provider-refresh-ack', JSON.stringify(
           code ? { nonce, ok: false, code } : { nonce, ok: true, runtimeSettings },
         ));
       } catch { /* A missing receipt forces the host to retire this process. */ }
@@ -3488,7 +3490,7 @@ export default async function cindyBridge(pi: any) {
         ) {
           throw new Error('Pi extension source is required.');
         }
-        const response = await ctx.ui.input(
+        const response = await cindyHostUi(ctx).input(
           PI_PACKAGE_MANAGEMENT_TITLE,
           JSON.stringify({
             action: input.action,
@@ -3597,7 +3599,7 @@ export default async function cindyBridge(pi: any) {
         // Internal synchronization point: the host snapshots only the target file for
         // known-path writes. The result is deliberately ignored; capture must never turn
         // an observability failure into a tool-execution failure.
-        await ctx.ui.confirm(
+        await cindyHostUi(ctx).confirm(
           TURN_CHANGE_CAPTURE_TITLE,
           JSON.stringify({
             toolName: event.toolName,
@@ -3711,7 +3713,7 @@ export default async function cindyBridge(pi: any) {
       // input() is used as a private request/response envelope rather than a
       // visible text box. Unlike confirm(), it can return why Cindy denied the
       // request, so an automatic review block is not misreported as a user click.
-      decision = await ctx.ui.input(
+      decision = await cindyHostUi(ctx).input(
         PERMISSION_TITLE,
         JSON.stringify({
           toolName: permissionToolName,
@@ -3757,7 +3759,7 @@ export default async function cindyBridge(pi: any) {
     const captureInput = gatewayCall?.args ?? event.input ?? {};
     if (!isCindyShellTool(captureToolName) && !String(captureToolName ?? '').startsWith('mcp__')) return;
     try {
-      await ctx.ui.confirm(
+      await cindyHostUi(ctx).confirm(
         TURN_CHANGE_CAPTURE_TITLE,
         JSON.stringify({
           toolName: captureToolName,

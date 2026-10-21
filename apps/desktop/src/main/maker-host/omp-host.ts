@@ -47,6 +47,7 @@ import { isLocalOmpRuntimePending, peekOmpRuntimeSnapshot, resolveOmpBinaryPath 
 import { deriveOmpProxySessionToken } from './omp-proxy-session-token.js';
 import { readOmpHarnessSettings, ompNativeMemoryPath, acquireOmpMemoryLease } from './omp-harness-settings.js';
 import { readMemorySettings } from './memory-settings-store.js';
+import { createOmpNativeHostSession } from './omp-native-host.js';
 
 const log = createLogger('omp-host');
 
@@ -370,6 +371,7 @@ export function buildOmpAgent(opts: BuildOmpAgentOpts): OmpAgent | null {
     : { allowRemoteOnlyRuntime: true };
 
   const agentDeps: AgentDeps = {
+    createLocalOmpNativeSession: createOmpNativeHostSession,
     auth: desktopOmpAuthAdapter,
     runtimeConfig: buildDesktopOmpRuntimeConfig(),
     acquireOmpMemoryLease,

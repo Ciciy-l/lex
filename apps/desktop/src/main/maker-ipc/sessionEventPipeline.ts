@@ -23,6 +23,7 @@ import {
   recordSessionPiTurnUsage,
   type RecordSessionPiTurnUsageDeps,
 } from './sessionPiTurnUsage.js';
+import { recordSessionOmpTurnUsage } from './sessionOmpTurnUsage.js';
 
 export type SessionEventDependencies = PrepareSessionEventDeps &
   PersistSessionStreamEventDeps &
@@ -54,4 +55,5 @@ export function handleSessionEvent(
   );
   recordSessionCodexTurnUsage(deps, session, event, terminal.turnAssistantPersistId);
   recordSessionPiTurnUsage(deps, session, event, terminal.turnAssistantPersistId);
+  recordSessionOmpTurnUsage(deps, session, event, terminal.turnAssistantPersistId);
 }

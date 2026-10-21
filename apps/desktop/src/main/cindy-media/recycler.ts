@@ -10,8 +10,8 @@
  *
  * ⚠️ "零引用 ≠ 无主"(§4 钉死的不变量):粘贴=零引用草稿、生成=零引用入仓,
  * 四类暂存区里的 blob 可以长期合法零引用。本模块的对策:
- *   (1) 输入框草稿托盘 —— renderer 内存,main 读不到;清理请求由设置页发起,
- *       renderer 随参把全部草稿附件 URL 带上(collectLiveHashes.draftUrls);
+ *   (1) 输入框草稿托盘 —— renderer 活引用与 Main 所有 owner 的持久草稿/
+ *       待写引用取并集;共享字节不能只保护当前 owner。执行时跨 await 重新取证;
  *   (2) busy 排队消息 —— main 内存,AgentInputCoordinator 注入序列化文本;
  *   (3) 崩溃恢复持久队列 —— localDb 快照表全量 payload 文本扫描;
  *   (4) 生成→落库在途窗口 —— 缓冲期(创建与最后访问都超过 BUFFER 才候选)
@@ -116,19 +116,31 @@ export interface DeleteResult {
   skipped: number;
 }
 
+interface DeletionLiveReferences {
+  live: Set<string>;
+  /** Host-only fresh durable/pending draft census across asynchronous ledger work.
+   * Any census failure skips deletion; an old successful scan is not a fallback. */
+  getDraftUrls?: () => string[];
+}
+
+function isLiveForDeletion(hash: string, params: DeletionLiveReferences): boolean {
+  if (params.live.has(hash)) return true;
+  return (params.getDraftUrls?.() ?? []).some(url => extractBlobHashes(url).has(hash));
+}
+
 /**
  * 执行零引用删除。每个指纹独立走"条件删账 → 复查 → 删字节",单个失败不
  * 影响其余;活引用集在执行时重新生效(扫描与确认之间用户可能又粘了图)。
  */
 export async function deleteZeroRefBlobs(
-  params: { hashes: string[]; live: Set<string>; bufferMs?: number },
+  params: DeletionLiveReferences & { hashes: string[]; bufferMs?: number },
   db?: LedgerDb,
 ): Promise<DeleteResult> {
   const cutoff = Date.now() - (params.bufferMs ?? ZERO_REF_BUFFER_MS);
   const result: DeleteResult = { deleted: 0, freedBytes: 0, skipped: 0 };
   for (const hash of params.hashes) {
     try {
-      if (params.live.has(hash)) {
+      if (isLiveForDeletion(hash, params)) {
         result.skipped++;
         continue;
       }
@@ -137,6 +149,7 @@ export async function deleteZeroRefBlobs(
         result.skipped++;
         continue;
       }
+      if (isLiveForDeletion(hash, params)) { result.skipped++; continue; }
       const removed = await ledger.deleteZeroRefBlobRecord(hash, cutoff, db);
       if (!removed) {
         result.skipped++;
@@ -147,6 +160,7 @@ export async function deleteZeroRefBlobs(
         result.skipped++;
         continue;
       }
+      if (isLiveForDeletion(hash, params)) { result.skipped++; continue; }
       await blobStore.deleteBlobFile(hash, info.ext);
       result.deleted++;
       result.freedBytes += info.bytes;
@@ -199,13 +213,13 @@ export async function scanCache(
 
 /** 执行 cache 逐出(条件删账 deleteCacheBlobRecord 复查 pin 与引用,同款安全顺序)。 */
 export async function evictCacheBlobs(
-  params: { hashes: string[]; live: Set<string> },
+  params: DeletionLiveReferences & { hashes: string[] },
   db?: LedgerDb,
 ): Promise<DeleteResult> {
   const result: DeleteResult = { deleted: 0, freedBytes: 0, skipped: 0 };
   for (const hash of params.hashes) {
     try {
-      if (params.live.has(hash)) {
+      if (isLiveForDeletion(hash, params)) {
         result.skipped++;
         continue;
       }
@@ -214,6 +228,7 @@ export async function evictCacheBlobs(
         result.skipped++;
         continue;
       }
+      if (isLiveForDeletion(hash, params)) { result.skipped++; continue; }
       const removed = await ledger.deleteCacheBlobRecord(hash, db);
       if (!removed) {
         result.skipped++;
@@ -223,6 +238,7 @@ export async function evictCacheBlobs(
         result.skipped++;
         continue;
       }
+      if (isLiveForDeletion(hash, params)) { result.skipped++; continue; }
       await blobStore.deleteBlobFile(hash, info.ext);
       result.deleted++;
       result.freedBytes += info.bytes;

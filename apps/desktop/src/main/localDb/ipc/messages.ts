@@ -1941,34 +1941,41 @@ export function captureNativeUserMessageLink(target: {
   nativeSessionId: string;
   expectedUuid?: string;
   expectedClearBoundaryMs?: number | null;
+  /** Only a host-admitted OMP submission can receive a later native journal ID. */
+  origin?: 'native';
   isCurrent(): boolean;
 }): (source: NativeMessageSource) => Promise<boolean> {
-  const { sessionId, clientId, nativeSessionId, expectedUuid, expectedClearBoundaryMs, isCurrent } = target;
+  const { sessionId, clientId, nativeSessionId, expectedUuid, expectedClearBoundaryMs, origin, isCurrent } = target;
   const owner = getCurrentDbClientSnapshot();
   const scope = captureOwnerBroadcastScope();
   const current = () => Boolean(owner && owner === getCurrentDbClientSnapshot()
     && !isAppSessionBoundaryPending() && isOwnerBroadcastScopeCurrent(scope) && isCurrent());
   return async source => {
-    if (!current() || !owner || source.version !== 1 || source.engine !== 'claude-code'
-      || source.sessionId !== nativeSessionId || !source.messageId || source.messageId.length > 256
-      || source.origin.kind !== 'plugin' || source.origin.name !== 'lex-native-bridge'
+    const bridgeName = source.engine === 'claude-code' ? 'lex-native-bridge'
+      : source.engine === 'omp' ? 'lex-omp-native-bridge' : source.engine === 'pi' ? 'lex-pi-native-bridge' : undefined;
+    if (!current() || !owner || source.version !== 1 || !bridgeName
+      || source.sessionId !== nativeSessionId || !source.messageId || source.messageId.length > 256) return false;
+    if (origin === 'native' ? (source.engine !== 'omp' || !expectedUuid || source.origin.kind !== 'native'
+      || source.bridge !== undefined) : (source.origin.kind !== 'plugin' || source.origin.name !== bridgeName
       || source.bridge?.sessionId !== nativeSessionId || source.bridge.messageId !== source.messageId
       || source.bridge.pluginName !== source.origin.name || !source.bridge.submissionId
-      || (expectedUuid !== undefined && source.bridge.submissionId !== expectedUuid)) return false;
+      || (expectedUuid !== undefined && source.bridge.submissionId !== expectedUuid))) return false;
     const serialized = JSON.stringify(source);
     const meta = sql`CASE WHEN json_valid(${messages.agentMeta})
       AND json_type(${messages.agentMeta}) = 'object' THEN ${messages.agentMeta} ELSE '{}' END`;
     const [row] = await owner.client.drizzle.update(messages).set({
       // Merge in SQLite, not a read/modify/write that could erase delivery,
       // review or usage metadata written while the native receipt was in flight.
-      agentMeta: sql`json_set(${meta}, '$.uuid', ${source.messageId},
+      agentMeta: sql`json_set(json_remove(${meta}, '$.nativeSubmissionId'), '$.uuid', ${source.messageId},
         '$.sdkSessionId', ${nativeSessionId}, '$.nativeSource', json(${serialized}))`,
     }).where(and(
       eq(messages.sessionId, sessionId), eq(messages.clientId, clientId), eq(messages.role, 'user'),
       isNull(messages.rewindAt),
       or(
         and(sql`json_extract(${meta}, '$.nativeSource') IS NULL`,
-          sql`json_extract(${meta}, '$.uuid') IS ${expectedUuid ?? null}`),
+          origin === 'native'
+            ? sql`json_extract(${meta}, '$.uuid') IS NULL AND json_extract(${meta}, '$.nativeSubmissionId') = ${expectedUuid}`
+            : sql`json_extract(${meta}, '$.uuid') IS ${expectedUuid ?? null}`),
         and(sql`json_extract(${meta}, '$.nativeSource') = ${serialized}`,
           sql`json_extract(${meta}, '$.uuid') = ${source.messageId}`,
           sql`json_extract(${meta}, '$.sdkSessionId') = ${nativeSessionId}`),

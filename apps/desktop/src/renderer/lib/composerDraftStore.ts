@@ -9,10 +9,10 @@
  * session A leaks into session B when the user clicks B in the sidebar.
  *
  * Scope:
- * - In-memory only. The Map lives for the lifetime of the renderer process.
- * - NOT persisted across app restart (intentional — matches current product
- *   expectation that "session-scoped draft" is a soft convenience, not durable
- *   state).
+ * - The Map is the live UI mirror. Main persists content by verified account
+ *   and task so an ordinary Desktop restart can restore unsent input.
+ * - Owner hydration is synchronous and happens before editor restoration;
+ *   there is no late async snapshot that can overwrite new user edits.
  *
  * Lifecycle:
  * - `saveDraft` is called by `useAttachments` (when sessionId changes, before
@@ -41,6 +41,8 @@ import {
 import type { JSONContent } from '@tiptap/core';
 import { createLogger } from '@/lib/logger';
 import { cleanupStagedChatAttachmentFiles } from './chatAttachmentStageCleanup';
+import { getDataOwnerGeneration } from '../contexts/dataOwnerGeneration';
+import type { ComposerDraftContent } from '../../shared/composerDraft';
 import {
   insertComposerDocumentForRestore,
   normalizeComposerDocumentJSON,
@@ -49,7 +51,7 @@ import {
 
 const log = createLogger('ComposerDraftStore');
 
-export interface ComposerDraft {
+export interface ComposerDraft extends ComposerDraftContent {
   /** Tiptap JSON document. `null` means "no text draft saved" (treat as empty). */
   text: JSONContent | null;
   /** Snapshot of attachments at save time. Empty array means no attachments. */
@@ -221,9 +223,46 @@ const remoteOptimisticRecoveryBatchSnapshots = new WeakMap<
 >();
 let remoteOptimisticAttachmentUrls: string[] = [];
 let activeDataOwnerId: string | null = null;
+const hydratedOwners = new Set<string>();
+const locallyChangedDrafts = new Set<string>();
+
+function currentDraftOwnerStamp() {
+  const owner = getDataOwnerGeneration();
+  if (!activeDataOwnerId || owner.dataOwnerId !== activeDataOwnerId) return null;
+  return { dataOwnerId: activeDataOwnerId, ownerGeneration: owner.generation };
+}
+
+function hydrateOwnerDrafts(): void {
+  const stamp = currentDraftOwnerStamp();
+  if (!stamp || hydratedOwners.has(stamp.dataOwnerId) || typeof window === 'undefined') return;
+  try {
+    const snapshot = window.electronAPI?.composerDrafts?.loadSnapshot(stamp);
+    if (!snapshot || snapshot.dataOwnerId !== stamp.dataOwnerId ||
+        snapshot.ownerGeneration !== stamp.ownerGeneration) return;
+    hydratedOwners.add(stamp.dataOwnerId);
+    for (const { key, content } of snapshot.entries) {
+      const scopedKey = draftKey(key);
+      // Also protect local writes made before preload/auth became available.
+      if (locallyChangedDrafts.has(scopedKey) || drafts.has(scopedKey)) continue;
+      drafts.set(scopedKey, content);
+      recomputeDraftPresence(key);
+    }
+    syncDraftUrlsToMain();
+  } catch { log.warn('Composer draft restore did not complete'); }
+}
+
+function persistDraft(sessionId: string, content: ComposerDraftContent | null): void {
+  locallyChangedDrafts.add(draftKey(sessionId));
+  const stamp = currentDraftOwnerStamp();
+  if (!stamp || typeof window === 'undefined') return;
+  try {
+    const write = window.electronAPI?.composerDrafts?.save({ ...stamp, key: sessionId, content });
+    void write?.catch(() => log.warn('Composer draft save did not complete'));
+  } catch { log.warn('Composer draft save did not complete'); }
+}
 
 /**
- * Composer keys are process-local, so a renderer owner switch must not reuse
+ * The live composer Map must not let a renderer owner switch reuse
  * the previous owner's in-flight draft (especially the global New Maker slot).
  * Keep the raw session id at call sites while namespacing the backing store.
  */
@@ -237,6 +276,7 @@ function draftKey(sessionId: string): string {
 
 export function setComposerDraftOwner(ownerId: string | null): void {
   activeDataOwnerId = ownerId;
+  hydrateOwnerDrafts();
 }
 
 /**
@@ -341,6 +381,7 @@ function recomputeDraftPresence(sessionId: string): void {
  * composer".
  */
 export function getDraft(sessionId: string): ComposerDraft | undefined {
+  hydrateOwnerDrafts();
   return drafts.get(draftKey(sessionId));
 }
 
@@ -406,6 +447,7 @@ export function saveDraft(
   draft: ComposerDraft,
   opts?: { silent?: boolean; preserveRemoteOptimisticRecovery?: boolean },
 ): void {
+  hydrateOwnerDrafts();
   const key = draftKey(sessionId);
   if (!opts?.silent && !opts?.preserveRemoteOptimisticRecovery) {
     remoteOptimisticRecoveries.delete(key);
@@ -419,6 +461,12 @@ export function saveDraft(
         }
       : draft;
   drafts.set(key, withQuotes);
+  // Quotes have already been promoted to document nodes. One-shot capability
+  // and focus intents remain process-local and are never replayed on restart.
+  persistDraft(sessionId, draftHasContent(withQuotes) ? {
+    text: withQuotes.text, attachments: withQuotes.attachments,
+    browserComments: withQuotes.browserComments,
+  } : null);
   if (!opts?.silent) {
     const set = listeners.get(key);
     if (set)
@@ -444,8 +492,10 @@ export function saveDraft(
  * - When a session is deleted or archived (avoid Map leak).
  */
 export function clearDraft(sessionId: string): void {
+  hydrateOwnerDrafts();
   const key = draftKey(sessionId);
   drafts.delete(key);
+  persistDraft(sessionId, null);
   remoteOptimisticRecoveries.delete(key);
   recomputeDraftPresence(sessionId);
   syncDraftUrlsToMain();
@@ -458,6 +508,7 @@ export function clearDraft(sessionId: string): void {
  * the attachment paths.
  */
 export function discardDraft(sessionId: string): void {
+  hydrateOwnerDrafts();
   const key = draftKey(sessionId);
   const draft = drafts.get(key);
   if (draft) cleanupStagedChatAttachmentFiles(draft.attachments);
@@ -487,6 +538,7 @@ export function discardDraft(sessionId: string): void {
  * has no entry, so it skips the re-save.
  */
 export function clearDraftAndNotify(sessionId: string): void {
+  hydrateOwnerDrafts();
   const key = draftKey(sessionId);
   const set = listeners.get(key);
   if (set && set.size > 0) {
@@ -502,6 +554,7 @@ export function clearDraftAndNotify(sessionId: string): void {
     }
   }
   drafts.delete(key);
+  persistDraft(sessionId, null);
   remoteOptimisticRecoveries.delete(key);
   recomputeDraftPresence(sessionId);
   syncDraftUrlsToMain();
@@ -728,8 +781,8 @@ export function restoreRemoteOptimisticDraft(
 /**
  * 媒体回收器活引用取证(recycler.ts 的输入框草稿暂存区):全部会话草稿附件的
  * URL。草稿附件和尚未受理的远程乐观发送都是合法的零引用 blob，而这些状态
- * 只在 renderer 内存，main 读不到——存储清理由设置页发起时把这份清单随 IPC
- * 带给 main，回收器把它们当活引用豁免。宁可多报(混着老 xdt-image 地址也
+ * 仍可能尚未落盘——存储清理由设置页发起时把这份清单随 IPC 带给 main，
+ * 与 Main 的持久草稿清单一起供回收器作活引用豁免。宁可多报(混着老 xdt-image 地址也
  * 没关系，main 侧只抽 cindy-media 指纹)。
  */
 export function getAllDraftAttachmentUrls(): string[] {

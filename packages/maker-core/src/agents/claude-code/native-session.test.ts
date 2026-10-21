@@ -5,6 +5,7 @@ import { TurnDispatchRejectedError, TurnDispatchUnconfirmedError, type AgentSess
 import type { ClaudeNativeRuntimeOptions } from './native-runtime.js';
 import type { ClaudeNativeUserMessage } from './native-messages.js';
 import { createClaudeNativeSession } from './native-session.js';
+import { ClaudeNativeEvents } from './native-events.js';
 
 const mocked = vi.hoisted(() => ({ create: vi.fn() }));
 vi.mock('./native-runtime.js', () => ({ createClaudeNativeRuntime: mocked.create }));
@@ -279,6 +280,35 @@ describe('Claude native Maker handle', () => {
     expect(f.handle.isTurnRunning?.()).toBe(false);
   });
 
+  it('settles a real aborted terminal before admitting the next explicit native input', async () => {
+    const f = await fixture(), terminal = vi.fn(), history = vi.fn();
+    f.session.setTurnLifecycleObserver({ beforeProviderStart() {}, onUndispatched() {}, onTerminal: terminal });
+    const projected = new ClaudeNativeEvents('native', event => f.callbacks.onAgentEvent!(event));
+    f.runtime.submit.mockImplementation(async input => {
+      await f.start(f.row('actual', input.messageId)); return { nativeMessageId: 'actual' };
+    });
+    expect(await f.session.send('GUI', { onAccepted: history })).toEqual({ accepted: true });
+    projected.accept({ sequence: 1, kind: 'turn.start', value: { turnId: 'turn' } });
+    projected.accept({ sequence: 2, kind: 'step-start', value: { turnId: 'turn', index: 0 } });
+    await f.session.abort();
+    const stopped = { turnId: 'turn', reason: 'aborted', isAborted: true };
+    projected.accept({ sequence: 3, kind: 'turn.complete', value: stopped });
+    f.callbacks.onEvent({ sequence: 2, kind: 'turn.complete', value: stopped });
+    await vi.waitFor(() => expect(terminal).toHaveBeenCalledOnce());
+    expect(terminal.mock.calls[0]![0].event.data).not.toHaveProperty('silentStop');
+    expect(f.session.isTurnRunning()).toBe(false);
+    f.session.onNativeInput(async input => {
+      expect(await f.session.acceptNativeInput(input, { onAccepted: history })).toEqual({ accepted: true });
+    });
+    const accepted = vi.fn(async () => {});
+    await f.callbacks.onNativeInput!({ nativeSessionId: 'native', nativeMessageId: 'after-stop',
+      message: { type: 'user', content: 'explicit new input' }, signal: new AbortController().signal, accept: accepted });
+    await f.start(f.row('after-stop'), 'next'); f.finish('next');
+    await vi.waitFor(() => expect(terminal).toHaveBeenCalledTimes(2));
+    expect(accepted).toHaveBeenCalledOnce(); expect(history).toHaveBeenCalledTimes(2);
+    expect(f.runtime.submit).toHaveBeenCalledOnce(); expect(f.runtime.close).not.toHaveBeenCalled();
+  });
+
   it('retains the exact accepted aborted input when Stop precedes the first model step', async () => {
     const f = await fixture(); let message!: ClaudeNativeUserMessage;
     f.runtime.submit.mockImplementation(async input => {
@@ -290,7 +320,9 @@ describe('Claude native Maker handle', () => {
     f.callbacks.onEvent({ sequence: 2, kind: 'turn.complete', value: { turnId: 'stopped', reason: 'aborted', isAborted: true } });
     const events = f.handle.events()[Symbol.asyncIterator]();
     const first = await events.next();
-    expect(first.value.type === 'session_id' ? await events.next() : first).toMatchObject({ value: { type: 'done', data: { silentStop: true, nativeTurnId: 'stopped' } } });
+    const terminal = first.value.type === 'session_id' ? await events.next() : first;
+    expect(terminal).toMatchObject({ value: { type: 'done', data: { nativeTurnId: 'stopped', nativeTurnReason: 'aborted' } } });
+    expect(terminal.value.data).not.toHaveProperty('silentStop');
     expect(f.handle.isTurnRunning?.()).toBe(false); expect(f.runtime.close).not.toHaveBeenCalled();
   });
 });

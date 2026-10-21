@@ -148,6 +148,38 @@ describe('maker SEND transaction', () => {
       persistUserMessage: { clientId: 'native-input', content: 'from TUI', sdkSessionId: 'native-session', delivery: 'turn' } };
     return { deps, session, input, sendOpts, transaction: createMakerSendTransaction(deps) };
   }
+  it('captures the later OMP native journal receipt against the existing admitted product row', async () => {
+    const f = nativeFixture(), link = vi.fn(async () => true), capture = vi.fn(() => link);
+    f.session.agentKind = 'omp'; f.deps.captureNativeUserMessageLink = capture;
+    const source = { version: 1 as const, engine: 'omp' as const, sessionId: f.input.nativeSessionId,
+      messageId: 'actual-omp-journal-row', origin: { kind: 'native' } };
+    vi.mocked(f.input.accept).mockImplementation(async (_message, options) => {
+      expect(f.deps.createDbMessage).toHaveBeenCalledOnce();
+      await options.onNativeUserMessage?.(source);
+    });
+    await f.transaction.acceptNativeInput(f.session, f.input, f.sendOpts);
+    expect(capture).toHaveBeenCalledWith({ session: f.session, clientId: 'native-input', expectedUuid: 'native-row',
+      expectedClearBoundaryMs: null, origin: 'native' });
+    expect(link).toHaveBeenCalledExactlyOnceWith(source);
+    const written = vi.mocked(f.deps.createDbMessage).mock.calls[0]![1];
+    expect(written.agentMeta).toMatchObject({ nativeSubmissionId: 'native-row', sdkSessionId: f.input.nativeSessionId });
+    expect(written.agentMeta).not.toHaveProperty('uuid'); expect(written.agentMeta).not.toHaveProperty('nativeSource');
+    expect(f.session.send).not.toHaveBeenCalled(); expect(f.input.accept).toHaveBeenCalledOnce();
+  });
+  it('captures OMP semantic GUI receipts through the existing row without native-origin authority', async () => {
+    const link = vi.fn(async () => true), capture = vi.fn(() => link);
+    const { deps, session } = createDeps({ captureNativeUserMessageLink: capture });
+    session.agentKind = 'omp';
+    const source = { version: 1 as const, engine: 'omp' as const, sessionId: 'native', messageId: 'omp-row',
+      origin: { kind: 'plugin', name: 'lex-omp-native-bridge' } };
+    vi.mocked(session.send).mockImplementation(async (_message, options) => {
+      await options?.onAccepted?.(); await options?.onNativeUserMessage?.(source); return { accepted: true };
+    });
+    await createMakerSendTransaction(deps).sendToAgentAccepted(session.id, 'GUI OMP', undefined, { messageUuid: 'gui-submission',
+      persistUserMessage: { clientId: 'gui-row', content: 'GUI OMP', expectedClearBoundaryMs: null } });
+    expect(capture).toHaveBeenCalledWith({ session, clientId: 'gui-row', expectedUuid: 'gui-submission', expectedClearBoundaryMs: null });
+    expect(link).toHaveBeenCalledExactlyOnceWith(source); expect(session.send).toHaveBeenCalledOnce();
+  });
 
   it('admits a held native input through real normalization, history and final fences without resubmission', async () => {
     const f = nativeFixture(), order: string[] = [];

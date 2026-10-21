@@ -8,8 +8,8 @@
 <p align="center"><strong>A local workspace for conversations, four Agent engines, files, Git, and Workers.</strong></p>
 
 <p align="center">
-  A community desktop and mobile distribution based on <a href="https://github.com/makecindy/cindy">Cindy</a>.<br>
-  Keep the conversation that understands your work, and give Claude Code, Codex, Pi, and OMP a real workspace.
+  Plan in conversation, work with your tools, and keep the result in view.<br>
+  Bring Claude Code, Codex, Pi, and OMP together with a local developer workspace.
 </p>
 
 <p align="center">
@@ -28,16 +28,17 @@
 
 ## What is Lex?
 
-Lex keeps Cindy's conversation, agent loop, plugins, remote access, and online-service
-integration, then adds a desktop-native developer workspace. It is designed for people
-who want to talk through a task and keep the tools doing that task visible in the same
+Lex is an open-source desktop and mobile workspace for working with AI. Talk through
+a task, run an Agent, inspect files and Git changes, and follow Workers from the same
 window.
 
-Claude Code, Codex, Pi, and OMP are first-class Agent engines in that workspace, whether
-you work locally or on a configured SSH host.
+Use Claude Code, Codex, Pi, or OMP for desktop tasks. Switch between the graphical
+conversation (GUI) and the engine's native terminal (TUI) while continuing the same
+task and history. Files and terminals also support configured SSH hosts.
 
 Lex is independently maintained and is not affiliated with or endorsed by XD Inc. or
-the Cindy project. The desktop product, website, installer, and update channel are
+the Cindy project. It builds on the open-source [Cindy](https://github.com/makecindy/cindy)
+client. The desktop product, website, installer, and update channel are
 **Lex**. Cindy-backed accounts and online services deliberately retain the **Cindy**
 name.
 
@@ -45,7 +46,9 @@ name.
 
 | Area | What you can do |
 | --- | --- |
-| **Content tabs** | Open terminals, files, the browser, Worker conversations, and the Git workspace (Git Graph / Review) in Cindy's existing content area. Lex does not create a second competing workspace. |
+| **Content tabs** | Open terminals, files, the browser, Worker conversations, and the Git workspace (Git Graph / Review) beside your conversation. |
+| **GUI / TUI** | Start a local task directly in TUI, switch views with its history, and explicitly send a new message after stopping a generation. Available advanced features vary by engine and view. |
+| **Saved drafts** | Keep task and new-task drafts separate. Saved text, attachments, and image annotations restore after a desktop restart; sending or discarding clears the draft. |
 | **CLI launch** | Use the `+` menu to start Claude Code, Codex, Pi, OMP, or an installed local Shell in a dedicated tab. Shell choices are detected from the computer instead of being hard-coded. |
 | **Terminal layout** | Split panes, resize or drag them into place, rename tabs, search output, and temporarily maximize the pane that needs attention. |
 | **Long-running work** | Hide a pane, switch tabs, or collapse the workspace without terminating its PTY. Stopping a process remains an explicit action. |
@@ -55,6 +58,25 @@ name.
 
 Lex continues to support Cindy plugins, Skill Hub resources, and `.cindy` files so the
 existing Cindy community ecosystem remains useful.
+
+## 0.1.7-rc.2 preview
+
+This preview improves ordinary GUI/TUI sending and task recovery across Claude Code,
+Codex, Pi, and OMP, preserves saved drafts across desktop restarts, fixes Pi's normal
+idle exit reporting, and improves OMP's cumulative usage display. See the
+[release notes](release-notices/0.1.7-rc.2.md) for details. RC updates remain beta-only;
+the website's default downloads continue to select the published stable release.
+
+OMP native sessions temporarily disable automatic recap to avoid the observed idle
+disconnect. Explicit TUI settings can re-enable it. `/btw`, `/omfg`, and other auxiliary
+concurrency remain unverified. GUI/TUI features are not identical. This release's
+interactive checks used a dedicated simulated model on Windows; they do not establish
+live-provider or macOS/Linux acceptance. Draft recovery applies to saved edits; the
+last edits not yet saved are not guaranteed to survive a hard interruption.
+
+## Coming soon
+
+Lex's self-hosted relay service is in development. Stay tuned.
 
 ## Download and install
 
@@ -157,9 +179,9 @@ See [CONTRIBUTING.en.md](CONTRIBUTING.en.md) for the complete development workfl
 - Prereleases update only the beta channel; stable Releases update both the stable and beta channels so RC installs can graduate.
 - Signing is selected from configured repository secrets without creating a separate
   installer identity or release flow.
-- The `upstream-sync` workflow regularly checks Cindy and opens a reviewable sync PR.
-  Cindy security fixes and general improvements are integrated while Lex-specific
-  product identity and workspace behavior remain explicit.
+- The `upstream-sync` workflow runs on explicit maintainer request and opens a
+  reviewable sync PR. Security, stability, and compatibility fixes are adopted
+  selectively; weekly automatic synchronization is disabled.
 
 Maintainer instructions live in [docs/RELEASING-LEX.md](docs/RELEASING-LEX.md).
 

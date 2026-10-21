@@ -4387,6 +4387,12 @@ interface ElectronAPI {
     }) => Promise<import('@/lib/gitReview.types').ReviewPushResult>;
   };
 
+  composerDrafts: {
+    loadSnapshot: (stamp: import('../shared/dataOwnerPush').DataOwnerPushStamp) =>
+      import('../shared/composerDraft').ComposerDraftSnapshot | null;
+    save: (request: import('../shared/composerDraft').ComposerDraftWrite) => Promise<void>;
+  };
+
   sidebarSettings: {
     claimLegacyRendererOwner: () => import('../shared/sidebarSettings').SidebarLegacyRendererOwnerClaim;
     loadSnapshot: () => import('../shared/sidebarSettings').SidebarSettingsSnapshot;
@@ -5580,6 +5586,7 @@ interface ElectronAPI {
     }>;
 
     createSession: (opts: {
+      requireNativePresentation?: boolean;
       /** 可选: 复用外部 sessionId(本端 chat 用 local-db:sessions:create 拿到的 id) */
       id?: string;
       agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
