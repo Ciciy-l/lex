@@ -23,6 +23,10 @@ describe('locale 品牌名插值', () => {
       'settings.auxiliaryModels.customHint',
       'settings.shortcuts.workLouderCodex.models.creatorMicro2.connection.descriptions.connecting',
       'chatgptAuthRecovery.reloginRiskTitle',
+      'settings.connections.claude.logoutConfirm.description',
+      'settings.remoteControl.myDevices.controllingThisMac',
+      'chat.errorBanner.accountBoundaryPending',
+      'sidebar.mobileDownload.title',
     ]) {
       const rendered = i18n.t(key, { lng });
       expect(rendered).not.toBe(key);
@@ -37,7 +41,19 @@ describe('locale 品牌名插值', () => {
       'onboarding.homeZeroModel.title',
       'onboarding.homeZeroModel.desc',
       'onboarding.homeZeroModel.cta',
+      'settings.userProfile.local.signIn',
+      'onboarding.connectProvider.cindy.loginTitle',
+      'settings.remoteControl.hook.loginRequired',
+      'settings.ghosts.market.authenticationRequired',
+      'issueTracker.mine.notSignedInHint',
+    ]) {
+      const rendered = i18n.t(key, { lng });
+      expect(rendered).not.toBe(key);
+      expect(rendered).not.toContain('Cindy');
+    }
+    for (const key of [
       'onboarding.homeZeroModel.cloudTitle',
+      'onboarding.connectProvider.cindy.title',
     ]) {
       expect(i18n.t(key, { lng })).toContain('Cindy');
     }

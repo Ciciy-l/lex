@@ -24,7 +24,6 @@ import { channelProtocolProviderId, type ProviderWireProtocol } from '@cindy/mod
 import {
   Check,
   Copy,
-  Gift,
   GripVertical,
   KeyRound,
   LogOut,
@@ -33,6 +32,7 @@ import {
   Plus,
   RefreshCw,
   Trash2,
+  UserRound,
 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -1812,13 +1812,13 @@ function CindySigninRow({ selected, onSelect }: { selected: boolean; onSelect: (
           color: 'var(--settings-integration-avatar-icon)',
         }}
       >
-        <XDIncMark size={14} />
+        <UserRound size={14} />
       </div>
       <span
         className="min-w-0 flex-1 truncate text-13 font-medium"
         style={{ color: 'var(--settings-section-title)' }}
       >
-        {t('settings.providers.xd.title')}
+        {t('onboarding.connectProvider.cindy.loginTitle')}
       </span>
       {/* 徽标不大写不加字距:224px 窄栏里 en「RECOMMENDED」会把行名挤成「Cin…」。 */}
       <span
@@ -2726,9 +2726,7 @@ export function ProvidersSection() {
               长清单滚动时供应商名称、连接状态与工具行不随之滚走(2026-07 定稿)。 */}
           <div className="flex min-w-0 flex-1 flex-col">
             {cindySigninActive ? (
-              /* 登录引导是 brand-scale surface(DESIGN §3):48px 标识 → 24px 名字 →
-                 一行价值主张 → 赠送余额徽标 → 黑 CTA,间距走 8px 系统。底部留白比
-                 顶部多,视觉重心才落在上三分之一。 */
+              /* Generic sign-in entry; service selection follows the explicit action. */
               <div className="flex flex-1 flex-col items-center justify-center px-10 pb-14 pt-8 text-center">
                 <div
                   className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl"
@@ -2738,31 +2736,19 @@ export function ProvidersSection() {
                     color: 'var(--settings-integration-avatar-icon)',
                   }}
                 >
-                  <XDIncMark size={24} />
+                  <UserRound size={24} />
                 </div>
                 <span
                   className="mt-4 text-24 font-medium leading-[1.2]"
                   style={{ color: 'var(--settings-section-title)' }}
                 >
-                  {t('settings.providers.xd.title')}
+                  {t('onboarding.connectProvider.cindy.loginTitle')}
                 </span>
                 <span
                   className="mt-3 max-w-[380px] text-14 leading-[1.5]"
                   style={{ color: 'var(--text-secondary)' }}
                 >
-                  {t('settings.providers.xdSignin.desc')}
-                </span>
-                {/* 赠送余额是一个安静的事实标签,不是促销文案:灰阶 chip、不写金额
-                    (CN / Global 金额不同且服务端可调,数字只在计费页出现)。 */}
-                <span
-                  className="mt-4 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-12 font-medium"
-                  style={{
-                    backgroundColor: 'var(--surface-chip)',
-                    color: 'var(--text-secondary)',
-                  }}
-                >
-                  <Gift size={13} />
-                  {t('settings.providers.xdSignin.grantBadge')}
+                  {t('onboarding.connectProvider.cindy.loginDesc')}
                 </span>
                 <CtaPillButton
                   size="lg"

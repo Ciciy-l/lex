@@ -167,9 +167,20 @@ export function AboutSection() {
       <StorageManagementCard />
 
       <LexContactPanel />
+      <CindyServicePanels />
+    </div>
+  );
+}
+
+export function CindyServicePanels() {
+  const { mode, isAuthenticated } = useAuth();
+  if (mode !== 'cloud' || !isAuthenticated) return null;
+
+  return (
+    <>
       <CindyLegalPanel />
       <CindyCommunityPanel />
-    </div>
+    </>
   );
 }
 

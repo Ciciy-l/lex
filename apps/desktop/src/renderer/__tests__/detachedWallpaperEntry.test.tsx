@@ -65,11 +65,11 @@ afterEach(async () => {
 });
 
 it.each(['sidebar', 'plugin'] as const)(
-  'boots %s with a wallpaper using its read-only bridge and follows live changes',
+  'disables retired artwork in %s using its read-only bridge and follows custom image changes',
   async (kind) => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
-    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
     vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
     document.body.innerHTML = '<div id="root"></div>';
     let changed!: (settings: AppearanceSettings) => void;
@@ -103,36 +103,18 @@ it.each(['sidebar', 'plugin'] as const)(
     expect(document.body.textContent).toContain(
       kind === 'sidebar' ? 'sidebar host' : 'plugin host',
     );
-    expect(document.documentElement.dataset.wallpaperActive).toBe('true');
-    expect(document.querySelectorAll('video')).toHaveLength(1);
-    if (kind === 'sidebar') {
-      expect(play).not.toHaveBeenCalled();
-      expect(pause).toHaveBeenCalled();
-      const video = document.querySelector('video')!;
-      await act(async () => hiddenChanged(false));
-      expect(play).toHaveBeenCalledOnce();
-      video.currentTime = 3;
-      pause.mockClear();
-      await act(async () => hiddenChanged(true));
-      expect(pause).toHaveBeenCalledOnce();
-      expect(play).toHaveBeenCalledOnce();
-      await act(async () => hiddenChanged(false));
-      expect(play).toHaveBeenCalledTimes(2);
-      expect(document.querySelector('video')).toBe(video);
-      expect(video.currentTime).toBe(3);
-    }
-    const lightVeil = document.documentElement.style.getPropertyValue('--app-wallpaper-veil');
-    await act(async () => {
-      document.documentElement.classList.add('dark');
-    });
-    expect(document.documentElement.style.getPropertyValue('--app-wallpaper-veil')).not.toBe(
-      lightVeil,
-    );
+    expect(document.documentElement.dataset.wallpaperActive).toBeUndefined();
+    expect(document.querySelector('video')).toBeNull();
+    if (kind === 'sidebar') await act(async () => hiddenChanged(false));
     const url = 'cindy-media://client-wallpaper/' + 'a'.repeat(64) + '.webp';
     await act(async () =>
       changed({ ...DEFAULT_APPEARANCE_SETTINGS, wallpaperId: 'custom', customWallpaperUrl: url }),
     );
     expect(document.querySelector('video')).toBeNull();
+    expect(document.documentElement.style.getPropertyValue('--app-wallpaper-image')).toContain(url);
+    const lightVeil = document.documentElement.style.getPropertyValue('--app-wallpaper-veil');
+    await act(async () => document.documentElement.classList.add('dark'));
+    expect(document.documentElement.style.getPropertyValue('--app-wallpaper-veil')).not.toBe(lightVeil);
     expect(document.documentElement.style.getPropertyValue('--app-wallpaper-image')).toContain(url);
     await act(async () => changed(DEFAULT_APPEARANCE_SETTINGS));
     expect(document.documentElement.dataset.wallpaperActive).toBeUndefined();

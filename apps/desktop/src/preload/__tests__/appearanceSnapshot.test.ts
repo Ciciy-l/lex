@@ -45,9 +45,9 @@ describe.each(['sidebar', 'resource', 'ghost-panel'])('%s appearance startup', (
   });
 
   it('reads the latest wallpaper when broadcasts precede lazy renderer startup', () => {
-    const latest = { ...DEFAULT_APPEARANCE_SETTINGS, wallpaperId: 'cindy-dream' as const };
+    const latest = { ...DEFAULT_APPEARANCE_SETTINGS, wallpaperOverlay: 0.35 };
     expect(bridge.getSync()).toEqual(DEFAULT_APPEARANCE_SETTINGS);
-    emit({ ...latest, wallpaperId: 'cindy-window' });
+    emit({ ...latest, wallpaperOverlay: 0.5 });
     emit(latest);
     expect(bridge.getSync()).toEqual(latest);
     // Detached hosts remain read-only, without a new invoke capability.
@@ -68,7 +68,7 @@ describe.each(['sidebar', 'resource', 'ghost-panel'])('%s appearance startup', (
   });
 
   it('keeps the cache current after unsubscribe and replays removal on remount', () => {
-    const latest = { ...DEFAULT_APPEARANCE_SETTINGS, wallpaperId: 'cindy-studio' as const };
+    const latest = { ...DEFAULT_APPEARANCE_SETTINGS, wallpaperOverlay: 0.35 };
     emit(latest);
     const first = vi.fn();
     bridge.onChanged(first)();

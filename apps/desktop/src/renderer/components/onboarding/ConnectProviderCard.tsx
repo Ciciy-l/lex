@@ -16,7 +16,7 @@
 import { useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronRight, KeyRound } from 'lucide-react';
+import { ChevronDown, ChevronRight, KeyRound, UserRound } from 'lucide-react';
 
 import { presetDisplayName } from '@cindy/model-providers';
 
@@ -107,9 +107,9 @@ export function ConnectProviderCard({ className, dismissible = true }: {
             />
           );
         })}
-        {/* 推荐行:Cindy AI(cloud)/ 登录 Cindy(signed-out・local) */}
+        {/* The account service is named after the user chooses it. */}
         <ProviderRow
-          icon={rowIcon('xd', xdProvider?.name ?? 'Cindy AI')}
+          icon={cloudMode ? rowIcon('xd', xdProvider?.name ?? 'Cindy AI') : <UserRound size={16} />}
           label={
             cloudMode
               ? (xdProvider?.name ?? t('onboarding.connectProvider.cindy.title'))
