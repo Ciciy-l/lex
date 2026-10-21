@@ -4666,6 +4666,15 @@ export async function initialize(options: AuthInitializeOptions = {}): Promise<A
     }
   }
   if (!persistedSession) {
+    // A null read can also mean failed migration, I/O or decryption. Only
+    // confirmed absence may select durable local mode; otherwise retain the
+    // signed-out recovery path so the next initialize can retry credentials.
+    if (
+      !isPersistedSecretAbsent(AUTH_SESSION_KEY) ||
+      !isPersistedSecretAbsent(LEGACY_RESOURCE_REFRESH_TOKEN_KEY)
+    ) {
+      return finishColdStartSignedOut('cold-start-credential-absence-unconfirmed');
+    }
     // An account is optional. Establish the real account-free owner before
     // releasing startup, without granting cloud access or accepting consent.
     // Existing credentials and their recovery/error paths above stay intact.
