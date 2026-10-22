@@ -48,6 +48,28 @@ function passport(passportId: string, membershipIds: string[]) {
 }
 
 describe('auth account logout policy', () => {
+  it('tombstones one deployment without removing identical identities on another or Cindy', () => {
+    const scopes = ['lex-server:https://a.example', 'lex-server:https://b.example', 'global'] as const;
+    const vault = {
+      activeAccountKey: accountVaultKey(scopes[0], 'same-member'),
+      resources: Object.fromEntries(scopes.map(scope => [accountVaultKey(scope, 'same-member'), {
+        ...resource('same-member', 'same-passport'), realm: scope,
+      }])),
+      passports: Object.fromEntries(scopes.map(scope => [passportVaultKey(scope, 'same-passport'), {
+        ...passport('same-passport', ['same-member']), realm: scope,
+      }])),
+    };
+    const removed = removeLoggedOutVaultAccount(vault, {
+      realm: scopes[0], accountKey: vault.activeAccountKey, passportId: 'same-passport',
+    });
+    expect(removed?.realm).toBe(scopes[0]);
+    for (const scope of scopes) {
+      expect(isLoggedOutVaultAccount(vault, accountVaultKey(scope, 'same-member'))).toBe(scope === scopes[0]);
+      expect(Boolean(vault.resources[accountVaultKey(scope, 'same-member')])).toBe(scope !== scopes[0]);
+      expect(Boolean(vault.passports[passportVaultKey(scope, 'same-passport')])).toBe(scope !== scopes[0]);
+    }
+  });
+
   it('removes only the current membership while a sibling from the same Passport remains', () => {
     const currentKey = accountVaultKey(realm, 'personal');
     const siblingKey = accountVaultKey(realm, 'org');

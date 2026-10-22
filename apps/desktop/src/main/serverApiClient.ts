@@ -11,6 +11,7 @@
 
 import { net } from 'electron';
 import * as authManager from './authManager';
+import { authServiceScope, type AuthService } from '@cindy/auth-client';
 import { getResolvedMainLocale } from './i18n.js';
 
 import { createLogger } from './logger';
@@ -35,6 +36,8 @@ export class ServerApiError extends Error {
 }
 
 export interface ApiFetchOptions {
+  /** Fixed outgoing cleanup only; it cannot refresh/invalidate the replacement session. */
+  credentialService?: AuthService;
   method?: string;
   body?: unknown;
   /** 每次实际请求前重建 body；401 refresh 重试时会再次调用，优先于静态 body。 */
@@ -83,6 +86,12 @@ interface RawResponse<T> {
 async function rawFetch<T>(apiPath: string, opts: ApiFetchOptions): Promise<RawResponse<T>> {
   opts.beforeAttempt?.();
   const baseUrl = typeof opts.baseUrl === 'function' ? opts.baseUrl() : opts.baseUrl;
+  if (!baseUrl) throw new ServerApiError('SERVICE_CAPABILITY_UNAVAILABLE', 400, 'Service capability unavailable');
+  const service = opts.credentialService ?? authManager.getActiveAuthService();
+  if (service.kind === 'lex-server' && (baseUrl !== service.origin ||
+      !/^\/api\/(?:auth\/logout$|me(?:\/|$)|device-link(?:\/|$))/u.test(apiPath))) {
+    throw new ServerApiError('SERVICE_CAPABILITY_UNAVAILABLE', 400, 'Service capability unavailable');
+  }
   const url = baseUrl + apiPath;
   const method = opts.method ?? 'GET';
   const headers: Record<string, string> = {
@@ -100,6 +109,8 @@ async function rawFetch<T>(apiPath: string, opts: ApiFetchOptions): Promise<RawR
   try {
     const body = opts.bodyFactory ? opts.bodyFactory() : opts.body;
     const response = await net.fetch(url, {
+      redirect: 'error',
+      credentials: 'omit',
       method,
       headers,
       cache: opts.cache,
@@ -134,6 +145,21 @@ async function rawFetch<T>(apiPath: string, opts: ApiFetchOptions): Promise<RawR
  * 可恢复的 401 自动 refresh 一次再重试（除非 `skipAutoRefresh`）。
  */
 export async function serverApiFetch<T>(apiPath: string, opts: ApiFetchOptions): Promise<T> {
+  if (opts.credentialService && !(opts.token && opts.skipAutoRefresh && opts.skipSessionInvalidation)) {
+    throw new ServerApiError('INVALID_SERVICE_SCOPE', 400, 'Invalid fixed credential scope');
+  }
+  const serviceKey = authServiceScope(authManager.getActiveAuthService());
+  const initialState = authManager.getAuthState();
+  const callerCheck = opts.beforeAttempt;
+  opts = { ...opts, beforeAttempt: () => {
+    callerCheck?.();
+    if (opts.credentialService) return;
+    const state = authManager.getAuthState();
+    if (authServiceScope(authManager.getActiveAuthService()) !== serviceKey ||
+        state.dataOwnerId !== initialState.dataOwnerId || state.ownerGeneration !== initialState.ownerGeneration) {
+      throw new ServerApiError('AUTH_FLOW_SUPERSEDED', 409, 'Account service changed');
+    }
+  } };
   let result = await rawFetch<T>(apiPath, opts);
   let refreshedAndRetried = false;
   const firstCode = readErrorCode(result.data) ?? statusToCode(result.status);
@@ -202,6 +228,7 @@ export async function serverApiFetch<T>(apiPath: string, opts: ApiFetchOptions):
       opts.redactErrorDetails ? `请求失败 (${result.status})` : errMsg,
     );
   }
+  opts.beforeAttempt?.();
   if (result.data === null) {
     throw new ServerApiError('EMPTY_RESPONSE', result.status, '响应体为空');
   }

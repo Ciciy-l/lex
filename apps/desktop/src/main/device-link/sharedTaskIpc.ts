@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { getActiveAuthRealm, getCurrentUserId } from '../authManager.js';
+import { getActiveAuthServiceKey, getCurrentUserId } from '../authManager.js';
 import { activeOwnerScopeKey } from '../appSessionState.js';
 import { SHARED_TASK_ACCOUNT_CHANNEL, SHARED_TASK_HOST_CHANNEL } from '@cindy/device-link';
 import { assertTrustedAppRendererEvent } from '../security/trustedAppRenderer.js';
@@ -44,9 +44,9 @@ export function registerSharedTaskIpc(
     }
     if (!availableOnline()) throwIpcError('UNSUPPORTED_CAPABILITY', 'SharedTask mode requires updated clients and server');
     const owner = getCurrentUserId();
-    const region = getActiveAuthRealm();
+    const region = getActiveAuthServiceKey();
     const scope = activeOwnerScopeKey();
-    const isCurrent = () => getCurrentUserId() === owner && getActiveAuthRealm() === region && activeOwnerScopeKey() === scope;
+    const isCurrent = () => getCurrentUserId() === owner && getActiveAuthServiceKey() === region && activeOwnerScopeKey() === scope;
     return executeSharedTaskAccountCommand(raw, sharedTaskApi, getCurrentUserId() ?? undefined, {
       hostedIds: () => { try { return requireSharedTaskHost().activeSharedTaskIds(); } catch { return []; } },
       closeHosted: (sharedTaskId) => requireSharedTaskHost().close(sharedTaskId),

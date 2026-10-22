@@ -26,6 +26,13 @@ export const FOREIGN_DEVICE_REFRESH_FAILURE_CODE = 'DEVICE_MISMATCH';
 /** 只有这个错误码可能来自同机多实例轮换竞态;其它确定性错误换 token 无效。 */
 const REPLACEMENT_RETRY_ELIGIBLE_CODES: ReadonlySet<string> = new Set(['INVALID_REFRESH_TOKEN']);
 
+/** Lex Server's wire codes, adapted only at its scoped refresh boundary. */
+export function normalizeLexRefreshFailureCode(code: string): string {
+  if (code === 'INVALID_TOKEN' || code === 'REFRESH_REUSED') return 'INVALID_REFRESH_TOKEN';
+  if (code === 'MEMBERSHIP_UNAVAILABLE') return 'MEMBERSHIP_DISABLED';
+  return code;
+}
+
 /** `/api/auth/refresh` 错误响应体的最小形状(只关心 error.code)。 */
 export interface RefreshErrorBody {
   error?: { code?: string; message?: string };
@@ -108,6 +115,8 @@ export type SessionExpiredReason =
   | 'account-unavailable'
   /** 本机凭证文件被共享 userData 的外部实例清除(磁盘 token 消失但本会话活着)。 */
   | 'credential-lost'
+  /** A single-use refresh may have committed; replay is unsafe. Sign in normally. */
+  | 'refresh-uncertain'
   /** 无法归因的确定性失效,走通用文案。 */
   | 'unknown';
 

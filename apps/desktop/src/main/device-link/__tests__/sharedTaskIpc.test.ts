@@ -11,7 +11,7 @@ const h = vi.hoisted(() => ({
   host: { activeSharedTaskIds: vi.fn(() => []), open: vi.fn(), close: vi.fn() },
 }));
 vi.mock('electron', () => ({ ipcMain: { handle: (channel: string, handler: (event: unknown, raw: unknown) => Promise<unknown>) => h.handlers.set(channel, handler) } }));
-vi.mock('../../authManager.js', () => ({ getCurrentUserId: () => 'owner', getActiveAuthRealm: () => 'global' }));
+vi.mock('../../authManager.js', () => ({ getCurrentUserId: () => 'owner', getActiveAuthServiceKey: () => 'global' }));
 vi.mock('../../appSessionState.js', () => ({ activeOwnerScopeKey: () => 'owner-scope' }));
 vi.mock('../../security/trustedAppRenderer.js', () => ({ assertTrustedAppRendererEvent: h.trusted }));
 vi.mock('../invoke-context.js', () => ({ getDeviceLinkInvokeContext: () => h.context }));

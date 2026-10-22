@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -34,6 +35,8 @@ interface ProfileState {
 
 export function ProfileEditDialog({ open, onOpenChange }: ProfileEditDialogProps) {
   const { t } = useTranslation();
+  const { service } = useAuth();
+  const canUploadAvatar = service?.kind !== 'lex-server';
   const [state, setState] = useState<ProfileState | null>(null);
   const [name, setName] = useState('');
   const [avatarDraft, setAvatarDraft] = useState<AvatarDraft>({ type: 'keep' });
@@ -154,7 +157,7 @@ export function ProfileEditDialog({ open, onOpenChange }: ProfileEditDialogProps
                 {initial}
               </div>
             )}
-            <div className="flex flex-col items-start gap-1.5">
+            {canUploadAvatar && <div className="flex flex-col items-start gap-1.5">
               <button
                 type="button"
                 onClick={() => void handleChooseAvatar()}
@@ -180,7 +183,7 @@ export function ProfileEditDialog({ open, onOpenChange }: ProfileEditDialogProps
                   {t('settings.userProfile.edit.resetAvatar')}
                 </button>
               )}
-            </div>
+            </div>}
           </div>
 
           {/* 名字行:预填当前名字,留空 = 不改名 */}

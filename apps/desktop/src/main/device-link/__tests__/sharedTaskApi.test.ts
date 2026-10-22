@@ -5,7 +5,7 @@ const h = vi.hoisted(() => ({
   baseUrl: '',
   owner: 'owner-a',
   scope: 'cloud:owner-a:1',
-  region: 'global' as const,
+  region: 'global' as import('@cindy/auth-client').AuthServiceScope,
   token: 'token-a',
   authenticated: true,
   refresh: vi.fn(),
@@ -19,7 +19,11 @@ vi.mock('electron', () => ({
 }));
 vi.mock('../../authManager.js', () => ({
   getAccessToken: () => h.token,
-  getActiveAuthRealm: () => h.region,
+  getActiveAuthRealm: () => h.region === 'cn' ? 'cn' : 'global',
+  getActiveAuthServiceKey: () => h.region,
+  getActiveAuthService: () => h.region === 'cn' || h.region === 'global'
+    ? { kind: 'cindy', realm: h.region }
+    : { kind: 'lex-server', origin: h.region.slice('lex-server:'.length) },
   getAuthState: () => ({ isAuthenticated: h.authenticated }),
   getCurrentUserId: () => h.owner,
   refresh: h.refresh,
@@ -74,6 +78,30 @@ beforeEach(() => {
 });
 
 describe('desktop SharedTask API adapter over localhost HTTP', () => {
+  it('rejects a foreign deployment invitation without contacting it or the active server', async () => {
+    h.region = 'lex-server:' + h.baseUrl as import('@cindy/auth-client').AuthServiceScope;
+    const requests = vi.fn(); handler = requests;
+    await expect(sharedTaskApi.join('https://foreign.example/shared-task/join#' + 'a'.repeat(43), 'Synthetic'))
+      .rejects.toMatchObject({ code: 'REGION_MISMATCH' });
+    expect(requests).not.toHaveBeenCalled();
+    expect(h.refresh).not.toHaveBeenCalled();
+  });
+
+  it('drops same-member results after the deployment changes even if the local scope string is unchanged', async () => {
+    h.region = 'lex-server:' + h.baseUrl as import('@cindy/auth-client').AuthServiceScope;
+    handler = (_request, response) => {
+      requestCount++;
+      h.region = 'lex-server:https://another.example';
+      response.statusCode = 401;
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({ error: { code: 'TOKEN_EXPIRED' } }));
+    };
+    await expect(sharedTaskApi.list()).rejects.toBeInstanceOf(SharedTaskScopeChangedError);
+    expect(requestCount).toBe(1);
+    expect(h.refresh).not.toHaveBeenCalled();
+    expect(h.invalidate).not.toHaveBeenCalled();
+  });
+
   it('uses the real serverApiFetch path for create/list and keeps credentials out of the body', async () => {
     const requests: Array<{ method: string; url: string; authorization: string | undefined; body: string }> = [];
     handler = (request, response) => {

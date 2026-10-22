@@ -10,7 +10,7 @@ import {
   type PreparedSharedTaskClosure,
 } from '../localDb/sharedTasks.js';
 import { activeOwnerScopeKey, getActiveAppSession, isAppSessionBoundaryPending } from '../appSessionState.js';
-import { getAuthState, getCurrentUserId, getDeviceId, getActiveAuthRealm } from '../authManager.js';
+import { getAuthState, getCurrentDataOwnerId, getCurrentUserId, getDeviceId, getActiveAuthServiceKey } from '../authManager.js';
 import { createLogger } from '../logger.js';
 import { throwIpcError } from '../utils/ipcValidate.js';
 import { captureSharedTaskBoundaryClose, sharedTaskApi } from './sharedTaskApi.js';
@@ -26,7 +26,7 @@ interface Binding {
   database: object;
   creationState: SharedTaskCreationState;
   ownerAccountId: string;
-  region: ReturnType<typeof getActiveAuthRealm>;
+  region: ReturnType<typeof getActiveAuthServiceKey>;
   current(): boolean;
   rebindIfStable(): void;
 }
@@ -48,7 +48,7 @@ export function startSharedTaskRuntime(options: {
 
   const epoch = ++generation;
   const scope = activeOwnerScopeKey();
-  const region = getActiveAuthRealm();
+  const region = getActiveAuthServiceKey();
   const creationState = previous?.database === db.client && previous.dbEpoch === db.clientEpoch &&
     previous.ownerAccountId === ownerAccountId && previous.region === region
     ? previous.creationState
@@ -57,7 +57,7 @@ export function startSharedTaskRuntime(options: {
   let preservePeerLinks = false;
   const current = () => !stopped && generation === epoch && getAuthState().isAuthenticated &&
     getCurrentUserId() === ownerAccountId && !isAppSessionBoundaryPending() &&
-    activeOwnerScopeKey() === scope && getActiveAuthRealm() === region &&
+    activeOwnerScopeKey() === scope && getActiveAuthServiceKey() === region &&
     getCurrentDbClientSnapshot()?.clientEpoch === db.clientEpoch;
   const host = new SharedTaskHost({
     api: sharedTaskApi,
@@ -83,10 +83,10 @@ export function startSharedTaskRuntime(options: {
   const rebindIfStable = () => {
     if (stopped || generation !== epoch || binding?.host !== host || current() ||
         isAppSessionBoundaryPending() || !getAuthState().isAuthenticated ||
-        getCurrentUserId() !== ownerAccountId || getActiveAuthRealm() !== region) return;
+        getCurrentUserId() !== ownerAccountId || getActiveAuthServiceKey() !== region) return;
     const active = getActiveAppSession();
     const latestDb = getCurrentDbClientSnapshot();
-    if (active.mode !== 'cloud' || active.dataOwnerId !== ownerAccountId ||
+    if (active.mode !== 'cloud' || active.dataOwnerId !== db.userId ||
         latestDb?.client !== db.client || latestDb.clientEpoch !== db.clientEpoch ||
         activeOwnerScopeKey() === scope) return;
     preservePeerLinks = true;
@@ -152,9 +152,9 @@ export async function closeSharedTasksBeforeLogout(): Promise<void> {
   // opened. Never let that stale object supply the owner or region for the
   // current database: use the DbClient snapshot as the profile authority and
   // only reuse host-local state when every identity edge still matches.
-  const ownerAccountId = db.userId || getCurrentUserId();
+  const ownerAccountId = db.userId === getCurrentDataOwnerId() ? getCurrentUserId() : null;
   if (!ownerAccountId) return;
-  const region = getActiveAuthRealm();
+  const region = getActiveAuthServiceKey();
   const bindingMatchesCurrentDb = Boolean(
     outgoing &&
     outgoing.database === db.client &&
@@ -182,8 +182,8 @@ export async function closeSharedTaskForTask(sessionId: string, database: unknow
   const db = getCurrentDbClientSnapshot();
   if (!db || db.client !== database) return;
   const candidate = binding;
-  const ownerAccountId = db.userId || getCurrentUserId();
-  const region = getActiveAuthRealm();
+  const ownerAccountId = db.userId === getCurrentDataOwnerId() ? getCurrentUserId() : null;
+  const region = getActiveAuthServiceKey();
   const outgoing = candidate && candidate.database === db.client && candidate.dbEpoch === db.clientEpoch &&
     candidate.ownerAccountId === ownerAccountId && candidate.region === region ? candidate : null;
   const close = ownerAccountId ? captureSharedTaskBoundaryClose(ownerAccountId, region) : null;

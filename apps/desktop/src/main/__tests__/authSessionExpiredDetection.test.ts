@@ -159,7 +159,8 @@ describe('desktop auth session-expiry detection', () => {
     expect(authSource).toContain("from './authBoundaryQuarantine.js';");
     expect(refreshBody).toContain('await commitDesktopRefreshCredentials(');
     expect(refreshBody).toContain('await withCloudOwnerCommit({');
-    expect(refreshBody).toContain('nextOwnerId: nextUser.id');
+    expect(refreshBody).toContain('nextOwnerId: authDataOwnerId(refreshRealm, nextUser.id)');
+    expect(refreshBody).not.toContain('nextOwnerId: nextUser.id');
     expect(refreshBody.indexOf('await commitDesktopRefreshCredentials(')).toBeLessThan(
       refreshBody.indexOf('await withCloudOwnerCommit({'),
     );

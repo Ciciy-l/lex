@@ -14,6 +14,13 @@
   ],
   "terms": [
     {
+      "id": "lex-server",
+      "status": "proposed",
+      "en": "Lex Server",
+      "translations": { "zh-CN": "Lex Server", "zh-TW": "Lex Server", "ja": "Lex Server", "ko": "Lex Server" },
+      "note": "Self-hosted account and device service selected by its canonical origin; independent of Cindy service realms."
+    },
+    {
       "id": "agent-gui-presentation",
       "status": "proposed",
       "en": "GUI",

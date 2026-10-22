@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { useAppShellCover } from '@/contexts/AppShellCoverContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { toast } from '@/lib/toast';
 import { LoginPage } from './LoginPage';
 import { LoginServiceSelection } from './LoginServiceSelection';
+import { LexServerLoginPage } from './LexServerLoginPage';
+import type { DesktopLoginServiceInput } from '../../../shared/authIpc';
 
 interface AddAccountLocationState {
   returnTo?: string;
@@ -17,12 +17,11 @@ export function AddAccountLoginPage() {
   const { reportLocalDbGate } = useAppShellCover();
   const navigate = useNavigate();
   const location = useLocation();
-  const { t } = useTranslation();
   const initializedRef = useRef(false);
   const flowFinishedRef = useRef(false);
   const closeStartedRef = useRef(false);
   const [flowInitialized, setFlowInitialized] = useState(false);
-  const [serviceSelected, setServiceSelected] = useState(false);
+  const [serviceSelected, setServiceSelected] = useState<DesktopLoginServiceInput | null>(null);
   const returnTo = (location.state as AddAccountLocationState | null)?.returnTo ?? '/cc-agent';
 
   useEffect(() => {
@@ -36,16 +35,13 @@ export function AddAccountLoginPage() {
     return () => reportLocalDbGate('pending');
   }, [reportLocalDbGate]);
 
-  useEffect(() => {
-    if (!serviceSelected || initializedRef.current) return;
+  const startLogin = async (service: DesktopLoginServiceInput) => {
     initializedRef.current = true;
-    void beginAddAccount()
-      .then(() => setFlowInitialized(true))
-      .catch(() => {
-        toast.error(t('sidebar.accountSwitcher.startFailed'));
-        navigate(returnTo, { replace: true });
-      });
-  }, [serviceSelected, beginAddAccount, navigate, returnTo, t]);
+    await beginAddAccount(service);
+    if (closeStartedRef.current) return;
+    setFlowInitialized(true);
+    setServiceSelected(service);
+  };
 
   useEffect(() => {
     if (!flowInitialized || loginState?.step !== 'completed') return;
@@ -74,8 +70,10 @@ export function AddAccountLoginPage() {
   };
 
   return serviceSelected ? (
-    <LoginPage intent="add-account" onClose={() => void cancel()} />
+    serviceSelected.kind === 'lex-server'
+      ? <LexServerLoginPage onClose={() => void cancel()} />
+      : <LoginPage intent="add-account" onClose={() => void cancel()} />
   ) : (
-    <LoginServiceSelection onSelect={() => setServiceSelected(true)} onCancel={() => void cancel()} />
+    <LoginServiceSelection onSelect={startLogin} onCancel={() => void cancel()} />
   );
 }

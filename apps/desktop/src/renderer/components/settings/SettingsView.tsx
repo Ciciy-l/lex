@@ -67,7 +67,7 @@ export function SettingsView() {
   const outletContext = useOutletContext<SettingsOutletContext | null>();
   const [searchParams, setSearchParams] = useSearchParams();
   const { t } = useTranslation();
-  const { mode, dataOwnerId, serviceRealm, user } = useAuth();
+  const { mode, dataOwnerId, serviceRealm, service, user } = useAuth();
   const menuWidth = outletContext?.sidebarWidth ?? DEFAULT_SETTINGS_MENU_WIDTH;
   const isMac = window.electronAPI?.platform === 'darwin';
   const [helpAssistantOpen, setHelpAssistantOpen] = useState(false);
@@ -80,6 +80,7 @@ export function SettingsView() {
   const rawTab = searchParams.get('tab');
   const canAccessBilling = canAccessBillingSettings({
     mode,
+    service,
     membershipKind: user?.membershipKind ?? null,
   });
   const shouldRedirectLegacyPluginTabs = rawTab === 'api-keys' || rawTab === 'connections';
@@ -179,11 +180,12 @@ export function SettingsView() {
   const searchContext = useMemo<SettingsSearchContext>(
     () => ({
       region: serviceRealm,
+      service,
       mode,
       membershipKind: user?.membershipKind ?? null,
       platform: window.electronAPI?.platform ?? '',
     }),
-    [mode, serviceRealm, user?.membershipKind],
+    [mode, serviceRealm, service, user?.membershipKind],
   );
   const handleSelectSearchResult = useCallback(
     (entry: SettingsSearchEntry) => {

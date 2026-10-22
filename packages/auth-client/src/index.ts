@@ -1,4 +1,7 @@
 export { AuthApiError, CindyAuthClient } from "./client.js";
+export { authServiceSchema, authServiceScope, authServiceFromScope, authServiceRealm,
+  storedAuthServiceScope, isAuthServiceScope, normalizeLexServerOrigin } from "./service.js";
+export type { AuthService, AuthServiceScope, LexServiceKey } from "./service.js";
 export {
   accountVaultKey,
   isStoredAccountMetadata,

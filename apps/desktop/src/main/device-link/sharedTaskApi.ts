@@ -8,7 +8,8 @@ import {
 import { activeOwnerScopeKey, isAppSessionBoundaryPending } from '../appSessionState.js';
 import {
   getAccessToken,
-  getActiveAuthRealm,
+  getActiveAuthService,
+  getActiveAuthServiceKey,
   getAuthState,
   getCurrentUserId,
 } from '../authManager.js';
@@ -21,12 +22,12 @@ const accountApi = createSharedTaskApi({
   captureScope() {
     const key = activeOwnerScopeKey();
     const endpoint = getClientEndpoint('deviceLinkApiBaseUrl');
-    const region = getActiveAuthRealm();
+    const region = getActiveAuthServiceKey();
     return {
       isCurrent: () => getAuthState().isAuthenticated &&
         !isAppSessionBoundaryPending() &&
         activeOwnerScopeKey() === key &&
-        getActiveAuthRealm() === region &&
+        getActiveAuthServiceKey() === region &&
         getClientEndpoint('deviceLinkApiBaseUrl') === endpoint,
     };
   },
@@ -74,12 +75,19 @@ const accountApi = createSharedTaskApi({
 export const sharedTaskApi = {
   ...accountApi,
   async invite(sharedTaskId: string) {
+    const scope = activeOwnerScopeKey();
+    const service = getActiveAuthServiceKey();
+    const endpoint = getClientEndpoint('deviceLinkApiBaseUrl');
     const result = await accountApi.invite(sharedTaskId);
+    if (scope !== activeOwnerScopeKey() || service !== getActiveAuthServiceKey() ||
+        endpoint !== getClientEndpoint('deviceLinkApiBaseUrl') || isAppSessionBoundaryPending()) {
+      throw new SharedTaskScopeChangedError();
+    }
     return {
       ...result,
       invitationLink: buildSharedTaskInvitationLink(
         result.invitation,
-        getClientEndpoint('deviceLinkApiBaseUrl'),
+        endpoint,
       ),
     };
   },
@@ -105,18 +113,20 @@ export const sharedTaskApi = {
  */
 export function captureSharedTaskBoundaryClose(
   ownerAccountId: string,
-  region: ReturnType<typeof getActiveAuthRealm>,
+  region: ReturnType<typeof getActiveAuthServiceKey>,
 ) {
-  if (getCurrentUserId() !== ownerAccountId || getActiveAuthRealm() !== region) return null;
+  if (getCurrentUserId() !== ownerAccountId || getActiveAuthServiceKey() !== region) return null;
   const token = getAccessToken();
   if (!token) return null;
   const endpoint = getClientEndpoint('deviceLinkApiBaseUrl');
+  const credentialService = getActiveAuthService();
   const api = createSharedTaskApi({
     captureScope: () => ({ isCurrent: () => true }),
     request: (path, options) => serverApiFetch<unknown>(path, {
       method: options.method,
       body: options.body,
       token,
+      credentialService,
       baseUrl: endpoint,
       skipAutoRefresh: true,
       skipSessionInvalidation: true,

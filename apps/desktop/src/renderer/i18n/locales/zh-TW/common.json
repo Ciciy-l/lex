@@ -6310,7 +6310,27 @@
       "INVALID_AUTH_CODE": "授權已過期，請重新登入",
       "INVALID_LOGIN_TICKET": "登入會話已過期，請重新登入",
       "INVALID_BIND_TICKET": "繫結會話已過期，請重新登入",
-      "REGION_MISMATCH": "登入服務區域與當前客戶端不匹配"
+      "REGION_MISMATCH": "登入服務區域與當前客戶端不匹配",
+      "INVALID_SERVER_URL": "請填寫伺服器根網址，不含 /admin、/api、使用者資訊、查詢或片段。",
+      "SERVER_HTTPS_REQUIRED": "請使用 HTTPS。HTTP 僅可用於本機開發服務。",
+      "INVALID_SERVER_RESPONSE": "此網址未傳回符合約定的 {{appName}} Server JSON 回應。",
+      "UNSUPPORTED_SERVER_AUTH": "此伺服器不支援所需的電子郵件登入。",
+      "SERVER_UNAVAILABLE": "無法驗證伺服器。請檢查網址、HTTPS 憑證和服務狀態。",
+      "AUTH_ROTATION_UNCERTAIN": "無法確認憑證更新是否成功。請重新登入此伺服器；重試舊憑證可能導致工作階段失效。"
+    },
+    "lexServer": {
+      "address": "伺服器位址",
+      "addressDescription": "連線至你所屬組織的 {{appName}} Server。",
+      "addressHint": "填寫裝置服務的根位址，不含 /admin 或 /api。使用 HTTPS；本機開發可用 HTTP。",
+      "checking": "正在檢查伺服器…",
+      "connectionFailed": "無法驗證伺服器。請檢查位址、HTTPS 憑證和服務狀態後重試。",
+      "email": "電子郵件",
+      "emailDescription": "使用管理員已開通的電子郵件登入。驗證碼由此伺服器寄送。",
+      "chooseIdentity": "選擇身分",
+      "resendIn": "{{seconds}} 秒後可重新傳送",
+      "resend": "重新傳送驗證碼",
+      "retry": "重試",
+      "remoteLimits": "此伺服器支援裝置互聯與任務共享；雲端附件、TURN 中繼、系統憑證交接和自動解鎖暫不可用。"
     }
   },
   "legacyMigration": {
@@ -8577,6 +8597,8 @@
       "desc": "登入帳號服務，或連接你自己的模型 API。",
       "cta": "登入",
       "cloudTitle": "使用 Cindy 繼續",
+      "lexDesc": "此伺服器提供帳號與遠端服務，模型需自行連接。",
+      "lexCta": "設定模型",
       "cloudDesc": "你還未設定任何模型，開通官方服務即可使用數十種頂級大模型。",
       "cloudCta": "開始使用",
       "ownApi": "我有自己的模型 API 設定"
@@ -12088,7 +12110,8 @@
         "replaced-elsewhere": "你的帳號已在其他裝置或例項上退出登入，本機的登入狀態已失效，請重新登入。",
         "credential-lost": "本機的登入憑證已失效（可能是同一臺裝置上的其他例項退出了登入），請重新登入。",
         "device-mismatch": "登入狀態與本裝置不匹配，請重新登入。",
-        "account-unavailable": "帳號不可用（可能已被停用或刪除），如有疑問請聯絡管理員。"
+        "account-unavailable": "帳號不可用（可能已被停用或刪除），如有疑問請聯絡管理員。",
+        "refresh-uncertain": "無法確認憑證更新是否成功。請重新登入此伺服器；重試舊憑證可能導致工作階段失效。"
       },
       "voiceApiKeyAuthTitle": "需要配置 Cindy AI",
       "voiceApiKeyAuthDescription": "語音輸入當前使用 Cindy AI 語音識別服務。尚未連線 Cindy AI，無法開始語音輸入。是否前往「模型供應商」連線？",

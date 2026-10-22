@@ -6,6 +6,9 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const signInMock = vi.fn();
+const auth = vi.hoisted(() => ({ service: { kind: 'cindy', realm: 'global' } as import('@cindy/auth-client').AuthService }));
+
+vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => auth }));
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -44,9 +47,20 @@ function renderCard(authMode: 'signed-out' | 'local' | 'cloud') {
 afterEach(() => {
   cleanup();
   signInMock.mockReset();
+  auth.service = { kind: 'cindy', realm: 'global' };
 });
 
 describe('HomeZeroModelAction', () => {
+  it('Lex Server opens manual model setup without a Cindy service offer or another login', () => {
+    auth.service = { kind: 'lex-server', origin: 'http://127.0.0.1:3101' };
+    renderCard('cloud');
+    expect(screen.queryByText('onboarding.homeZeroModel.cloudTitle')).toBeNull();
+    expect(screen.getByText('onboarding.homeZeroModel.lexDesc')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('home-zero-model-cta'));
+    expect(signInMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId('loc').textContent).toBe('/settings?tab=providers&wizard=1');
+  });
+
   it('signed-out: login copy and CTA calls sign-in', () => {
     renderCard('signed-out');
     expect(screen.getByText('onboarding.homeZeroModel.title')).toBeTruthy();

@@ -27,6 +27,8 @@ describe('locale 品牌名插值', () => {
       'settings.remoteControl.myDevices.controllingThisMac',
       'chat.errorBanner.accountBoundaryPending',
       'sidebar.mobileDownload.title',
+      'login.errors.INVALID_SERVER_RESPONSE',
+      'login.lexServer.addressDescription',
     ]) {
       const rendered = i18n.t(key, { lng });
       expect(rendered).not.toBe(key);

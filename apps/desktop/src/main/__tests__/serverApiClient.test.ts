@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   netFetch: vi.fn(),
   getAccessToken: vi.fn(),
   refresh: vi.fn(),
+  getActiveAuthService: vi.fn(() => ({ kind: 'cindy', realm: 'global' })),
+  getAuthState: vi.fn(() => ({ dataOwnerId: 'fixture-owner', ownerGeneration: 1 })),
   invalidateSession: vi.fn(),
   logger: {
     error: vi.fn(),
@@ -21,6 +23,8 @@ vi.mock('electron', () => ({ net: { fetch: mocks.netFetch } }));
 vi.mock('../authManager', () => ({
   getAccessToken: mocks.getAccessToken,
   refresh: mocks.refresh,
+  getActiveAuthService: mocks.getActiveAuthService,
+  getAuthState: mocks.getAuthState,
   invalidateSession: mocks.invalidateSession,
 }));
 vi.mock('../i18n.js', () => ({
@@ -35,6 +39,46 @@ import { serverApiFetch } from '../serverApiClient';
 describe('serverApiFetch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getActiveAuthService.mockReturnValue({ kind: 'cindy', realm: 'global' });
+    mocks.getAuthState.mockReturnValue({ dataOwnerId: 'fixture-owner', ownerGeneration: 1 });
+  });
+
+  it('rejects unavailable/foreign Lex roles before a physical request or refresh', async () => {
+    mocks.getActiveAuthService.mockReturnValue({ kind: 'lex-server', origin: 'https://lex.example' } as never);
+    for (const [baseUrl, route] of [
+      ['https://official.example', '/api/device-link/devices'],
+      ['https://lex.example', '/api/models'],
+      ['https://lex.example', '/api/auth/connections/token'],
+      ['https://lex.example/api', '/api/device-link/devices'],
+      ['', '/api/device-link/devices'],
+    ]) await expect(serverApiFetch(route, { baseUrl })).rejects.toMatchObject({ code: 'SERVICE_CAPABILITY_UNAVAILABLE' });
+    expect(mocks.netFetch).not.toHaveBeenCalled();
+    expect(mocks.refresh).not.toHaveBeenCalled();
+  });
+
+  it('binds same-member responses to the captured deployment as well as the owner', async () => {
+    mocks.getActiveAuthService.mockReturnValue({ kind: 'lex-server', origin: 'https://a.example' } as never);
+    mocks.getAccessToken.mockReturnValue('synthetic-a');
+    mocks.netFetch.mockImplementation(async () => {
+      mocks.getActiveAuthService.mockReturnValue({ kind: 'lex-server', origin: 'https://b.example' } as never);
+      return { ok: false, status: 401, json: async () => ({ error: { code: 'TOKEN_EXPIRED' } }) };
+    });
+    await expect(serverApiFetch('/api/device-link/devices', { baseUrl: 'https://a.example' }))
+      .rejects.toMatchObject({ code: 'AUTH_FLOW_SUPERSEDED' });
+    expect(mocks.netFetch).toHaveBeenCalledTimes(1);
+    expect(mocks.refresh).not.toHaveBeenCalled();
+    expect(mocks.invalidateSession).not.toHaveBeenCalled();
+  });
+
+  it('does not apply a stale service response or 401 to a replacement owner', async () => {
+    mocks.getAccessToken.mockReturnValue('synthetic-token');
+    mocks.netFetch.mockImplementation(async () => {
+      mocks.getAuthState.mockReturnValue({ dataOwnerId: 'other-owner', ownerGeneration: 2 });
+      return { ok: false, status: 401, json: async () => ({ error: { code: 'ACCOUNT_UNAVAILABLE' } }) };
+    });
+    await expect(serverApiFetch('/api/device-link/devices', { baseUrl: 'https://device.example' })).rejects.toMatchObject({ code: 'AUTH_FLOW_SUPERSEDED' });
+    expect(mocks.refresh).not.toHaveBeenCalled();
+    expect(mocks.invalidateSession).not.toHaveBeenCalled();
   });
 
   it('TOKEN_EXPIRED refresh 后用新 token 和重新生成的 body 重试', async () => {

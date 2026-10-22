@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => {
     initialize: vi.fn(),
     getLoginState: vi.fn(),
     dispatchLoginAction: vi.fn(),
+    beginAddAccount: vi.fn(),
+    cancelAddAccount: vi.fn(async () => undefined),
     logout: vi.fn<() => Promise<void>>(async () => undefined),
     enterLocalMode: vi.fn(),
     exitLocalMode: vi.fn(),
@@ -89,8 +91,9 @@ vi.mock('react-i18next', () => ({
   initReactI18next: { type: '3rdParty', init: vi.fn() },
 }));
 const restoredToast = vi.hoisted(() => vi.fn());
+const recoveryToast = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/toast', () => ({
-  toast: { success: restoredToast },
+  toast: { success: restoredToast, error: recoveryToast },
 }));
 
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
@@ -109,6 +112,7 @@ import {
   listModelFavorites,
 } from '@/state/modelFavorites';
 import { __testing as ssoOrgHistoryTesting } from '@/state/ssoOrgHistory';
+import { setLoginEmailCaptchaGate } from '@/lib/loginCaptchaGate';
 
 function user(id: string) {
   return {
@@ -174,9 +178,13 @@ describe('AuthContext session cache boundaries', () => {
     dataOwnerGenerationTesting.reset();
     mocks.service.consumeAccountDeletionRestoredNotice.mockClear();
     restoredToast.mockClear();
+    recoveryToast.mockClear();
     mocks.confirm.mockClear();
     mocks.service.initialize.mockResolvedValue(authState('account-a'));
     mocks.service.dispatchLoginAction.mockReset();
+    mocks.service.beginAddAccount.mockReset();
+    mocks.service.cancelAddAccount.mockReset().mockResolvedValue(undefined);
+    setLoginEmailCaptchaGate(null);
     mocks.service.logout.mockResolvedValue(undefined);
     mocks.service.enterLocalMode.mockResolvedValue(localAuthState());
     mocks.service.exitLocalMode.mockResolvedValue(authState(null));
@@ -191,7 +199,76 @@ describe('AuthContext session cache boundaries', () => {
 
   afterEach(() => {
     cleanup();
+    setLoginEmailCaptchaGate(null);
     mocks.service.dispose.mockClear();
+  });
+
+  it('does not revive a cancelled server preflight or automatically send a code from late discovery', async () => {
+    const service = { kind: 'lex-server' as const, origin: 'https://fixture.example' };
+    const identifier = { success: true, realm: 'global', service, state: { step: 'identifier', providers: { email: true, phone: false, social: [] } } };
+    let resolveBegin!: (value: unknown) => void;
+    mocks.service.beginAddAccount.mockReturnValueOnce(new Promise(resolve => { resolveBegin = resolve; }));
+    const view = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(view.result.current.dataOwnerId).toBe('account-a'));
+    let pending!: ReturnType<typeof view.result.current.beginAddAccount>;
+    act(() => { pending = view.result.current.beginAddAccount(service); });
+    await act(async () => { await view.result.current.cancelAddAccount(); });
+    await act(async () => {
+      resolveBegin(identifier);
+      await expect(pending).resolves.toMatchObject({ code: 'AUTH_FLOW_SUPERSEDED', state: null });
+    });
+    expect(view.result.current.loginState).toBeNull();
+    expect(view.result.current.dataOwnerId).toBe('account-a');
+
+    mocks.service.beginAddAccount.mockResolvedValueOnce(identifier);
+    await act(async () => { await view.result.current.beginAddAccount(service); });
+    let resolveDiscovery!: (value: unknown) => void;
+    mocks.service.dispatchLoginAction.mockReturnValueOnce(new Promise(resolve => { resolveDiscovery = resolve; }));
+    let discovery!: ReturnType<typeof view.result.current.dispatchLoginAction>;
+    act(() => { discovery = view.result.current.dispatchLoginAction({ type: 'discover', email: 'fixture@example.test' }); });
+    await act(async () => { await view.result.current.cancelAddAccount(); });
+    await act(async () => {
+      resolveDiscovery({ ...identifier, state: { step: 'method-choice', email: 'fixture@example.test', methods: [{ type: 'email_code' }] } });
+      await expect(discovery).resolves.toMatchObject({ code: 'AUTH_FLOW_SUPERSEDED', state: null });
+    });
+    expect(mocks.service.dispatchLoginAction).toHaveBeenCalledTimes(1);
+    expect(view.result.current.loginState).toBeNull();
+    expect(view.result.current.dataOwnerId).toBe('account-a');
+  });
+
+  it('ignores a late captcha result after cancel and does not apply a Cindy captcha gate to Lex Server', async () => {
+    const result = { success: true, realm: 'global', state: { step: 'method-choice', email: 'fixture@example.test', methods: [{ type: 'email_code' }] } };
+    let resolveCaptcha!: (value: string | null) => void;
+    const gate = vi.fn(() => new Promise<string | null>(resolve => { resolveCaptcha = resolve; }));
+    setLoginEmailCaptchaGate(gate);
+    mocks.service.dispatchLoginAction.mockResolvedValueOnce(result);
+    const view = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(view.result.current.dataOwnerId).toBe('account-a'));
+    let discovery!: ReturnType<typeof view.result.current.dispatchLoginAction>;
+    act(() => { discovery = view.result.current.dispatchLoginAction({ type: 'discover', email: 'fixture@example.test' }); });
+    await waitFor(() => expect(gate).toHaveBeenCalledOnce());
+    await act(async () => { await view.result.current.cancelAddAccount(); });
+    await act(async () => { resolveCaptcha('synthetic-captcha'); await discovery; });
+    expect(mocks.service.dispatchLoginAction).toHaveBeenCalledTimes(1);
+    expect(view.result.current.loginState).toBeNull();
+
+    const service = { kind: 'lex-server' as const, origin: 'https://fixture.example' };
+    mocks.service.dispatchLoginAction.mockResolvedValueOnce({ ...result, service }).mockResolvedValueOnce({
+      success: true, realm: 'global', service, state: { step: 'verification-code', kind: 'email', identifier: 'fixture@example.test' },
+    });
+    await act(async () => { await view.result.current.dispatchLoginAction({ type: 'discover', email: 'fixture@example.test' }); });
+    expect(gate).toHaveBeenCalledOnce();
+    expect(mocks.service.dispatchLoginAction).toHaveBeenLastCalledWith({ type: 'request-code', kind: 'email', identifier: 'fixture@example.test', captchaToken: undefined });
+    expect(view.result.current.loginState?.step).toBe('verification-code');
+  });
+
+  it('explains an uncertain cold rotation without claiming an authenticated owner', async () => {
+    mocks.service.initialize.mockResolvedValueOnce({ ...authState(null), recoveryError: 'AUTH_ROTATION_UNCERTAIN' });
+    const view = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(recoveryToast).toHaveBeenCalledWith('login.errors.AUTH_ROTATION_UNCERTAIN'));
+    expect(view.result.current.mode).toBe('signed-out');
+    expect(view.result.current.dataOwnerId).toBeNull();
+    expect(view.result.current.isAuthenticated).toBe(false);
   });
 
   it('resets sessions when auth state switches accounts or logs out', async () => {

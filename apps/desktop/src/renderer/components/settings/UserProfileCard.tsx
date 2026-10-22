@@ -33,7 +33,7 @@ function abbreviateUserId(id: string): string {
 }
 
 export function UserProfileCard() {
-  const { user, mode } = useAuth();
+  const { user, mode, service } = useAuth();
   const handleLocalSignIn = useSignInToCindy();
   const confirmDialog = useOptionalConfirmDialog();
   const { handleLogout } = useLogout();
@@ -260,6 +260,7 @@ export function UserProfileCard() {
         )}
       </div>
 
+      {service?.kind === 'lex-server' && <p className="break-all text-12 text-[var(--text-secondary)]">{new URL(service.origin).host}</p>}
       {mode === 'cloud' && (
         <div className="flex shrink-0 flex-col items-stretch gap-2">
           <button

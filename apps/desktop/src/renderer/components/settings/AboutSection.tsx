@@ -173,8 +173,8 @@ export function AboutSection() {
 }
 
 export function CindyServicePanels() {
-  const { mode, isAuthenticated } = useAuth();
-  if (mode !== 'cloud' || !isAuthenticated) return null;
+  const { mode, isAuthenticated, service } = useAuth();
+  if (mode !== 'cloud' || !isAuthenticated || service?.kind === 'lex-server') return null;
 
   return (
     <>

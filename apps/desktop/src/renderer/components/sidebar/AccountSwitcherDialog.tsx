@@ -10,6 +10,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import type { DesktopSavedAccount } from '@/lib/authService';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
+import { extractIpcError } from '@/utils/ipcError';
 
 interface AccountSwitcherDialogProps {
   open: boolean;
@@ -122,8 +123,9 @@ export function AccountSwitcherDialog({
       // before committing the selected account, so this await is also the stop barrier.
       await switchAccount(account.accountKey);
       onOpenChange(false);
-    } catch {
-      toast.error(t('sidebar.accountSwitcher.switchFailed'));
+    } catch (error) {
+      toast.error(extractIpcError(error)?.code === 'AUTH_ROTATION_UNCERTAIN'
+        ? t('login.errors.AUTH_ROTATION_UNCERTAIN') : t('sidebar.accountSwitcher.switchFailed'));
     } finally {
       setSwitchingKey(null);
     }
@@ -199,7 +201,7 @@ export function AccountSwitcherDialog({
               const primaryLabel = hasDistinctOrgName ? account.orgName : account.displayName;
               const secondaryLabel =
                 account.kind === 'org' && hasDistinctOrgName ? account.displayName : account.email;
-              const realmLabel = t(
+              const realmLabel = account.service?.kind === 'lex-server' ? new URL(account.service.origin).host : t(
                 account.serviceRealm === 'cn'
                   ? 'login.serviceRealm.cn'
                   : 'login.serviceRealm.global',

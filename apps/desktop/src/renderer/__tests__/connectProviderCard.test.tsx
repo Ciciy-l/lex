@@ -20,7 +20,7 @@ import type { ProviderView } from '@cindy/model-providers';
 const { providersState, authState, detectState, exitLocalModeMock } = vi.hoisted(
   () => ({
     providersState: { providers: [] as unknown[], loading: false },
-    authState: { mode: 'cloud' as string, serviceRealm: 'global' as 'cn' | 'global' },
+    authState: { mode: 'cloud' as string, serviceRealm: 'global' as 'cn' | 'global', service: { kind: 'cindy', realm: 'global' } as import('@cindy/auth-client').AuthService },
     detectState: { detections: [] as unknown[] },
     exitLocalModeMock: vi.fn(async () => undefined),
   }),
@@ -110,6 +110,7 @@ beforeEach(() => {
   providersState.loading = false;
   authState.mode = 'cloud';
   authState.serviceRealm = 'global';
+  authState.service = { kind: 'cindy', realm: 'global' };
   detectState.detections = [];
   (window as unknown as { electronAPI: unknown }).electronAPI = {
     maker: {
@@ -147,6 +148,15 @@ afterEach(() => {
 });
 
 describe('ConnectProviderCard', () => {
+  it('Lex Server keeps manual providers without promoting Cindy account models', async () => {
+    authState.service = { kind: 'lex-server', origin: 'http://127.0.0.1:3101' };
+    await renderCardSettled();
+    expect(screen.queryByText('Cindy AI')).toBeNull();
+    expect(screen.queryByText('onboarding.connectProvider.cindy.loginTitle')).toBeNull();
+    fireEvent.click(screen.getByText('onboarding.connectProvider.haveApiKey'));
+    expect(screen.getByTestId('location').textContent).toBe('/settings?tab=providers&wizard=1');
+  });
+
   it('global 区零连接 → 推荐行(Cindy AI)+ 三条 OAuth 主列;点 Anthropic 落 connect=anthropic', async () => {
     await renderCardSettled();
 

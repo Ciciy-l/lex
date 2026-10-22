@@ -45,6 +45,8 @@ export type AuthFetch = (
     headers?: Record<string, string>;
     body?: string;
     signal?: AbortSignal;
+    /** Credential-bearing calls must never follow a redirect to another origin. */
+    redirect?: "error";
   },
 ) => Promise<AuthFetchResponse>;
 
@@ -497,6 +499,7 @@ export class CindyAuthClient {
       let response: AuthFetchResponse;
       try {
         response = await this.options.fetch(this.baseUrl + path, {
+          redirect: "error",
           method: body === undefined ? "GET" : "POST",
           headers: {
             "Content-Type": "application/json",

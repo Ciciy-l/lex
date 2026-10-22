@@ -117,7 +117,7 @@ describe('AddAccountLoginPage app-shell cover', () => {
     render(<Harness />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Cindy' }));
-    fireEvent.click(screen.getByRole('button', { name: 'close add-account login' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'close add-account login' }));
     await waitFor(() => expect(auth.cancelAddAccount).toHaveBeenCalledOnce());
     await waitFor(() => expect(screen.getByTestId('location-probe').textContent).toBe('/settings'));
   });

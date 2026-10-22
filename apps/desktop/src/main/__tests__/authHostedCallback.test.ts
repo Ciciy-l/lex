@@ -268,7 +268,7 @@ describe('openSystemBrowserAuthorization 分流', () => {
     const body = source.slice(start, source.indexOf('\n}', start));
 
     expect(body).toContain('client: CindyAuthClient');
-    expect(body).toContain('loginRealm: AuthRegion');
+    expect(body).toContain('loginRealm: AuthServiceScope');
     expect(body).not.toContain('pendingAuthRealm ?? activeAuthRealm');
     expect(body).toContain(
       "getClientEndpointForRealm(loginRealm, 'authDesktopCallbackUrl')",

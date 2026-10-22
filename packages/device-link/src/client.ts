@@ -211,6 +211,8 @@ export interface DeviceLinkClientOptions {
   getWsUrl(): string;
   /** 每次(重)连前取新鲜 token;null = 当前无登录态,跳过本轮并按退避重试 */
   getToken(): Promise<string | null>;
+  /** Hosts with multiple deployments capture destination and credential in one owner scope. */
+  getConnectionAuth?(): Promise<{ url: string; token: string } | null>;
   /** 每次(重)连时的 hello payload(host 持有 deviceName / 开关 / busy 的真相) */
   getHello(): HelloPayload;
   createWebSocket: WsFactory;
@@ -1790,19 +1792,23 @@ export class DeviceLinkClient {
     }
 
     let token: string | null = null;
+    let connectionUrl: string | null = null;
     try {
       // token 刷新可能走网络:必须有上限,否则弱网下 connect 卡在 connecting
       // 且没有任何重连计时器兜底(connectNow 也救不回来,因为 reconnectTimer 为 null)。
-      token = await withTimeout(
-        this.opts.getToken(),
+      const credentials = await withTimeout(
+        this.opts.getConnectionAuth ? this.opts.getConnectionAuth()
+          : this.opts.getToken().then(value => value ? { token: value, url: this.opts.getWsUrl() } : null),
         this.timing.getTokenTimeoutMs,
         'getToken timed out',
       );
+      token = credentials?.token ?? null;
+      connectionUrl = credentials?.url ?? null;
     } catch (err) {
       this.log.warn('getToken failed', err);
     }
     if (this.stopped || epoch !== this.connEpoch) return;
-    if (!token) {
+    if (!token || !connectionUrl) {
       // 无登录态:按退避节奏静默重试(登录完成后 host 也可直接 restart)
       this.scheduleReconnect();
       return;
@@ -1810,7 +1816,7 @@ export class DeviceLinkClient {
 
     let ws: WsLike;
     try {
-      ws = await this.opts.createWebSocket(this.opts.getWsUrl(), {
+      ws = await this.opts.createWebSocket(connectionUrl, {
         authorization: `Bearer ${token}`,
       });
     } catch (err) {

@@ -6312,7 +6312,27 @@
       "INVALID_AUTH_CODE": "Authorization expired. Start sign-in again.",
       "INVALID_LOGIN_TICKET": "The sign-in session expired. Start again.",
       "INVALID_BIND_TICKET": "The verification session expired. Start again.",
-      "REGION_MISMATCH": "The sign-in service region does not match this app."
+      "REGION_MISMATCH": "The sign-in service region does not match this app.",
+      "INVALID_SERVER_URL": "Enter only the server origin, without /admin, /api, credentials, query or fragment.",
+      "SERVER_HTTPS_REQUIRED": "Use HTTPS. HTTP is allowed only for a local development server.",
+      "INVALID_SERVER_RESPONSE": "This address did not return the expected {{appName}} Server JSON responses.",
+      "UNSUPPORTED_SERVER_AUTH": "This server does not support the required email sign-in.",
+      "SERVER_UNAVAILABLE": "The server could not be verified. Check the address, HTTPS certificate and service status.",
+      "AUTH_ROTATION_UNCERTAIN": "The refresh result is unknown. Sign in again to this server; retrying the old credential could revoke the session."
+    },
+    "lexServer": {
+      "address": "Server address",
+      "addressDescription": "Connect to your organization’s {{appName}} Server.",
+      "addressHint": "Enter the device service origin, without /admin or /api. Use HTTPS; HTTP is allowed for local development.",
+      "checking": "Checking server…",
+      "connectionFailed": "Could not verify the server. Check the address, HTTPS certificate and service status, then try again.",
+      "email": "Email",
+      "emailDescription": "Sign in with an email provisioned by your administrator. This server sends the verification code.",
+      "chooseIdentity": "Choose an identity",
+      "resendIn": "Resend in {{seconds}} seconds",
+      "resend": "Resend code",
+      "retry": "Try again",
+      "remoteLimits": "This server supports Device Link and task sharing. Cloud attachments, TURN relay, OS credential handoff and automatic unlock are unavailable."
     }
   },
   "legacyMigration": {
@@ -8579,6 +8599,8 @@
       "desc": "Sign in to an account service or connect your own model API.",
       "cta": "Sign in",
       "cloudTitle": "Continue with Cindy",
+      "lexDesc": "This server provides account and remote services. Connect your own model.",
+      "lexCta": "Set up a model",
       "cloudDesc": "You don’t have any models yet. Enable the official service to use dozens of top-tier models.",
       "cloudCta": "Get started",
       "ownApi": "I have my own model API"
@@ -12104,7 +12126,8 @@
         "replaced-elsewhere": "Your account was signed out on another device or instance, so this device's login is no longer valid. Please log in again.",
         "credential-lost": "The login credential on this device is no longer valid (another instance on this device may have signed out). Please log in again.",
         "device-mismatch": "Your login no longer matches this device. Please log in again.",
-        "account-unavailable": "Your account is unavailable (it may have been disabled or deleted). Contact your administrator if needed."
+        "account-unavailable": "Your account is unavailable (it may have been disabled or deleted). Contact your administrator if needed.",
+        "refresh-uncertain": "The refresh result is unknown. Sign in again to this server; retrying the old credential could revoke the session."
       },
       "voiceApiKeyAuthTitle": "Cindy AI required",
       "voiceApiKeyAuthDescription": "The current voice input provider uses Cindy AI. Cindy AI is not connected yet, so voice input cannot start. Open Model Providers to connect it?",

@@ -125,6 +125,25 @@ function makeHarness(opts?: {
 
 const tick = (ms = 0): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+it('captures a service URL and token together instead of mixing legacy getters', async () => {
+  const createWebSocket = vi.fn(() => new FakeWs());
+  const getToken = vi.fn(async () => 'wrong-legacy-token');
+  const getWsUrl = vi.fn(() => 'wss://wrong.example/api/device-link/ws');
+  const client = new DeviceLinkClient({
+    getToken, getWsUrl,
+    getConnectionAuth: async () => ({ url: 'wss://lex.example/api/device-link/ws', token: 'lex-token' }),
+    getHello: () => ({ deviceName: 'Fixture', platform: 'win32', appVersion: '1', remoteControlEnabled: true, busy: false }),
+    createWebSocket,
+  });
+  try {
+    client.start();
+    await tick();
+    expect(createWebSocket).toHaveBeenCalledWith('wss://lex.example/api/device-link/ws', { authorization: 'Bearer lex-token' });
+    expect(getToken).not.toHaveBeenCalled();
+    expect(getWsUrl).not.toHaveBeenCalled();
+  } finally { client.stop(); }
+});
+
 describe('outbound invoke admission', () => {
   it('shares 12/4 across ordinary and shared-task destinations while preserving wire scope', async () => {
     vi.useFakeTimers();

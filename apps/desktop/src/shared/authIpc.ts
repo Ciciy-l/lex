@@ -4,8 +4,19 @@ import type {
   AccountDeletionStatus,
   AuthFlowState,
   AuthRegion,
+  AuthService,
   VerificationKind,
 } from '@cindy/auth-client';
+
+export type DesktopLoginServiceInput = { kind: 'cindy' } | { kind: 'lex-server'; origin: string };
+
+export function parseDesktopLoginServiceInput(value: unknown): DesktopLoginServiceInput | null {
+  if (value === undefined) return { kind: 'cindy' };
+  if (!isRecord(value)) return null;
+  if (value.kind === 'cindy') return { kind: 'cindy' };
+  return value.kind === 'lex-server' && isBoundedString(value.origin, 2048)
+    ? { kind: 'lex-server', origin: value.origin } : null;
+}
 
 export type DesktopLoginAction =
   | { type: 'reset' }
@@ -30,8 +41,8 @@ export type DesktopLoginAction =
   | { type: 'verify-binding'; contact: string; code: string };
 
 export type DesktopLoginActionResult =
-  | { success: true; state: AuthFlowState; realm: AuthRegion }
-  | { success: false; code: string; state: AuthFlowState | null; realm: AuthRegion };
+  | { success: true; state: AuthFlowState; realm: AuthRegion; service?: AuthService }
+  | { success: false; code: string; state: AuthFlowState | null; realm: AuthRegion; service?: AuthService };
 
 /**
  * 登录准备态(「正在连接登录服务」)最多转圈的时长。
@@ -40,8 +51,8 @@ export type DesktopLoginActionResult =
 export const LOGIN_PREPARING_UNLOCK_TIMEOUT_MS = 30_000;
 
 export type SettledDesktopLoginActionResult =
-  | { success: true; state: AuthFlowState; realm: AuthRegion }
-  | { success: false; code: string; state: AuthFlowState; realm: AuthRegion };
+  | { success: true; state: AuthFlowState; realm: AuthRegion; service?: AuthService }
+  | { success: false; code: string; state: AuthFlowState; realm: AuthRegion; service?: AuthService };
 
 export function loginPreparingErrorState(
   code = 'AUTH_SERVICE_UNAVAILABLE',
@@ -55,11 +66,11 @@ export function settleDesktopLoginResult(
 ): SettledDesktopLoginActionResult {
   if (result.state) {
     return result.success
-      ? { success: true, state: result.state, realm: result.realm }
-      : { success: false, code: result.code, state: result.state, realm: result.realm };
+      ? { success: true, state: result.state, realm: result.realm, service: result.service }
+      : { success: false, code: result.code, state: result.state, realm: result.realm, service: result.service };
   }
   const code = result.success === false ? result.code : 'AUTH_SERVICE_UNAVAILABLE';
-  return { success: false, code, state: loginPreparingErrorState(code), realm: result.realm };
+  return { success: false, code, state: loginPreparingErrorState(code), realm: result.realm, service: result.service };
 }
 
 /**
@@ -102,6 +113,7 @@ export interface DesktopSavedAccount {
   accountKey: string;
   /** Display-only Cindy service realm; the opaque accountKey remains authoritative for switching. */
   serviceRealm: AuthRegion;
+  service?: AuthService;
   displayName: string;
   email: string | null;
   avatarUrl: string | null;
@@ -149,7 +161,7 @@ const MAX_CODE_LENGTH = 32;
 const MAX_CAPTCHA_TOKEN_LENGTH = 2048;
 // 与 auth-server 的企业 ID / slug / 已验证域名统一上限对齐。
 const MAX_ORG_IDENTIFIER_LENGTH = 253;
-const MAX_ACCOUNT_KEY_LENGTH = 512;
+const MAX_ACCOUNT_KEY_LENGTH = 4096;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);

@@ -1309,7 +1309,7 @@ function XdGatewayHeader({
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const { confirm } = useConfirmDialog();
-  const { mode, serviceRealm, user } = useAuth();
+  const { mode, serviceRealm, service, user } = useAuth();
   const BILLING_CURRENCY = billingCurrencyForRealm(serviceRealm);
   const { key, hasSavedKey, clearKey } = useApiKey();
   const syncStatus = useModelAccessStatus();
@@ -1320,6 +1320,7 @@ function XdGatewayHeader({
   // (不是灰置),与设置页「用量和计费」分区的可见性判定同源。
   const billingAccessible = canAccessBillingSettings({
     mode,
+    service,
     membershipKind: user?.membershipKind ?? null,
   });
   // 余额取三池账本的 available —— 与计费页余额卡、状态栏用量 chip 同一口径同一币种

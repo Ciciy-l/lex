@@ -6310,7 +6310,27 @@
       "INVALID_AUTH_CODE": "인증이 만료되었습니다.",
       "INVALID_LOGIN_TICKET": "로그인 세션이 만료되었습니다.",
       "INVALID_BIND_TICKET": "확인 세션이 만료되었습니다.",
-      "REGION_MISMATCH": "로그인 서비스 지역이 이 앱과 일치하지 않습니다."
+      "REGION_MISMATCH": "로그인 서비스 지역이 이 앱과 일치하지 않습니다.",
+      "INVALID_SERVER_URL": "서버 원본 주소만 입력하세요. /admin, /api, 사용자 정보, 쿼리 및 프래그먼트는 제외하세요.",
+      "SERVER_HTTPS_REQUIRED": "HTTPS를 사용하세요. HTTP는 로컬 개발 서버에서만 허용됩니다.",
+      "INVALID_SERVER_RESPONSE": "이 주소에서 규정된 {{appName}} Server JSON 응답을 받지 못했습니다.",
+      "UNSUPPORTED_SERVER_AUTH": "이 서버는 필요한 이메일 로그인을 지원하지 않습니다.",
+      "SERVER_UNAVAILABLE": "서버를 확인할 수 없습니다. 주소, HTTPS 인증서와 서비스 상태를 확인하세요.",
+      "AUTH_ROTATION_UNCERTAIN": "인증 정보 갱신 결과를 확인할 수 없습니다. 이 서버에 다시 로그인하세요. 이전 인증 정보를 재전송하면 세션이 무효화될 수 있습니다."
+    },
+    "lexServer": {
+      "address": "서버 주소",
+      "addressDescription": "조직의 {{appName}} Server에 연결합니다.",
+      "addressHint": "/admin 또는 /api를 제외한 기기 서비스의 루트 주소를 입력하세요. HTTPS를 사용하며 로컬 개발에서만 HTTP를 허용합니다.",
+      "checking": "서버 확인 중…",
+      "connectionFailed": "서버를 확인할 수 없습니다. 주소, HTTPS 인증서와 서비스 상태를 확인한 후 다시 시도하세요.",
+      "email": "이메일",
+      "emailDescription": "관리자가 등록한 이메일로 로그인합니다. 이 서버에서 인증 코드를 보냅니다.",
+      "chooseIdentity": "사용할 ID 선택",
+      "resendIn": "{{seconds}}초 후 다시 전송",
+      "resend": "코드 다시 전송",
+      "retry": "다시 시도",
+      "remoteLimits": "이 서버는 기기 연결과 세션 공유를 지원합니다. 클라우드 첨부, TURN 중계, OS 자격 증명 전달 및 자동 잠금 해제는 사용할 수 없습니다."
     }
   },
   "legacyMigration": {
@@ -8577,6 +8597,8 @@
       "desc": "계정 서비스에 로그인하거나 내 모델 API를 연결하세요.",
       "cta": "로그인",
       "cloudTitle": "Cindy로 계속하기",
+      "lexDesc": "이 서버는 계정 및 원격 서비스를 제공합니다. 모델은 직접 연결하세요.",
+      "lexCta": "모델 설정",
       "cloudDesc": "아직 모델이 없습니다. 공식 서비스를 켜면 수십 종의 최상위 모델을 사용할 수 있습니다.",
       "cloudCta": "시작하기",
       "ownApi": "내 모델 API가 있습니다"
@@ -12088,7 +12110,8 @@
         "replaced-elsewhere": "다른 기기 또는 인스턴스에서 로그아웃되어 이 기기의 로그인이 더 이상 유효하지 않습니다. 다시 로그인하세요.",
         "credential-lost": "이 기기의 로그인 자격 증명이 더 이상 유효하지 않습니다(같은 기기의 다른 인스턴스에서 로그아웃했을 수 있습니다). 다시 로그인하세요.",
         "device-mismatch": "로그인 상태가 이 기기와 일치하지 않습니다. 다시 로그인하세요.",
-        "account-unavailable": "계정을 사용할 수 없습니다(비활성화 또는 삭제되었을 수 있습니다). 필요한 경우 관리자에게 문의하세요."
+        "account-unavailable": "계정을 사용할 수 없습니다(비활성화 또는 삭제되었을 수 있습니다). 필요한 경우 관리자에게 문의하세요.",
+        "refresh-uncertain": "인증 정보 갱신 결과를 확인할 수 없습니다. 이 서버에 다시 로그인하세요. 이전 인증 정보를 재전송하면 세션이 무효화될 수 있습니다."
       },
       "voiceApiKeyAuthTitle": "Cindy AI 설정 필요",
       "voiceApiKeyAuthDescription": "현재 음성 입력 provider는 Cindy AI를 사용합니다. Cindy AI가 아직 연결되지 않아 음성 입력을 시작할 수 없습니다. 모델 제공자를 열어 연결하시겠습니까?",

@@ -141,7 +141,7 @@ function sshSummary(
 export function RemoteControlSection() {
   const { entry, activation } = useSettingsSearchNavigation();
   const { t } = useTranslation();
-  const { mode } = useAuth();
+  const { mode, service } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const deviceLinkAvailable = mode === 'cloud';
@@ -247,6 +247,7 @@ export function RemoteControlSection() {
         </p>
       </div>
 
+      {service?.kind === 'lex-server' && <p className="mt-3 text-13 leading-relaxed text-[var(--text-secondary)]">{t('login.lexServer.remoteLimits')}</p>}
       <div className="mt-4 flex flex-col gap-6">
         {deviceLinkAvailable ? (
           <>

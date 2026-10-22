@@ -39,8 +39,11 @@ vi.mock('../../appSessionState.js', () => ({
 vi.mock('../../authManager.js', () => ({
   getAuthState: () => ({ isAuthenticated: h.authenticated }),
   getCurrentUserId: () => h.owner,
+  getCurrentDataOwnerId: () => h.owner,
   getDeviceId: () => h.device,
   getActiveAuthRealm: () => h.region,
+  getActiveAuthServiceKey: () => h.region,
+  getActiveAuthService: () => ({ kind: 'cindy', realm: h.region }),
   getAccessToken: () => h.token,
 }));
 vi.mock('../sharedTaskApi.js', () => ({

@@ -239,6 +239,7 @@ import type {
   DesktopAccountDeletionStatusResult,
   DesktopAccountSwitcherSnapshot,
   DesktopLoginAction,
+  DesktopLoginServiceInput,
   DesktopLoginActionResult,
 } from '../shared/authIpc';
 import type {
@@ -2060,6 +2061,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   authInitialize: (): Promise<{
     user: unknown;
     serviceRealm: 'cn' | 'global';
+    service?: import('@cindy/auth-client').AuthService;
     mode: 'signed-out' | 'local' | 'cloud';
     dataOwnerId: string | null;
     ownerGeneration: number;
@@ -2085,8 +2087,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('auth:accounts:sync'),
   authSwitchAccount: (accountKey: string): Promise<void> =>
     ipcRenderer.invoke('auth:accounts:switch', accountKey),
-  authBeginAddAccount: (): Promise<DesktopLoginActionResult> =>
-    ipcRenderer.invoke('auth:accounts:begin-add'),
+  authBeginAddAccount: (service?: DesktopLoginServiceInput): Promise<DesktopLoginActionResult> =>
+    ipcRenderer.invoke('auth:accounts:begin-add', service),
   authCancelAddAccount: (): Promise<void> => ipcRenderer.invoke('auth:accounts:cancel-add'),
   authEnterLocal: () => ipcRenderer.invoke('auth:enter-local'),
   authExitLocal: () => ipcRenderer.invoke('auth:exit-local'),

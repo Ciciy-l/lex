@@ -21,7 +21,7 @@ export function resendRemainingSeconds(deadline: number, now: number): number {
   return Math.max(0, Math.ceil((deadline - now) / 1000));
 }
 
-export function useResendCountdown(active: boolean): {
+export function useResendCountdown(active: boolean, cooldownMs = RESEND_COUNTDOWN_MS): {
   /** 剩余秒;0 = 显示重发链接 */
   remaining: number;
   /** request-code 成功返回时调用:deadline = now + 42s(首帧 42) */
@@ -32,9 +32,9 @@ export function useResendCountdown(active: boolean): {
   const wasActive = useRef(active);
 
   const arm = useCallback(() => {
-    setDeadline(Date.now() + RESEND_COUNTDOWN_MS);
+    setDeadline(Date.now() + cooldownMs);
     setNow(Date.now());
-  }, []);
+  }, [cooldownMs]);
 
   // 离开 verification-code(active true→false 沿)清理 state;interval 由下方
   // effect 的 cleanup 清(unmount 同路径)。

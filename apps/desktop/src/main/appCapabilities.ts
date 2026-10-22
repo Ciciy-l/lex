@@ -11,11 +11,14 @@ import {
   type AppSessionMode,
 } from './appSessionState.js';
 import { throwIpcError } from './utils/ipcValidate.js';
+import { getActiveEndpointServiceKind } from './clientEndpointsService.js';
 
 export interface AppCapabilities {
   canUseCindyAccountServices: boolean;
   canUseCindyGateway: boolean;
   canUseDeviceLink: boolean;
+  canUseCloudAttachments: boolean;
+  canUseRemoteCredentialHandoff: boolean;
   canUseSkillHubCloud: boolean;
   canUseCindyOAuthBroker: boolean;
   canUseCindyHeartbeat: boolean;
@@ -24,21 +27,25 @@ export interface AppCapabilities {
 export function deriveAppCapabilities(
   mode: AppSessionMode,
   boundaryPending = false,
+  serviceKind: 'cindy' | 'lex-server' = 'cindy',
 ): AppCapabilities {
   const cloud = mode === 'cloud' && !boundaryPending;
+  const cindy = cloud && serviceKind === 'cindy';
   return {
-    canUseCindyAccountServices: cloud,
-    canUseCindyGateway: cloud,
+    canUseCindyAccountServices: cindy,
+    canUseCindyGateway: cindy,
     canUseDeviceLink: cloud,
-    canUseSkillHubCloud: cloud,
-    canUseCindyOAuthBroker: cloud,
-    canUseCindyHeartbeat: cloud,
+    canUseCloudAttachments: cindy,
+    canUseRemoteCredentialHandoff: cindy,
+    canUseSkillHubCloud: cindy,
+    canUseCindyOAuthBroker: cindy,
+    canUseCindyHeartbeat: cindy,
   };
 }
 
 export function getAppCapabilities(): AppCapabilities {
   const session = getActiveAppSession();
-  return deriveAppCapabilities(session.mode, isAppSessionBoundaryPending());
+  return deriveAppCapabilities(session.mode, isAppSessionBoundaryPending(), getActiveEndpointServiceKind());
 }
 
 export function requireAppCapability(
@@ -47,7 +54,7 @@ export function requireAppCapability(
 ): void {
   const session = getActiveAppSession();
   const boundaryPending = isAppSessionBoundaryPending();
-  if (deriveAppCapabilities(session.mode, boundaryPending)[capability]) return;
+  if (deriveAppCapabilities(session.mode, boundaryPending, getActiveEndpointServiceKind())[capability]) return;
   if (boundaryPending) {
     throwIpcError(
       'PRECONDITION_FAILED',

@@ -6310,7 +6310,27 @@
       "INVALID_AUTH_CODE": "授权已过期，请重新登录",
       "INVALID_LOGIN_TICKET": "登录会话已过期，请重新登录",
       "INVALID_BIND_TICKET": "绑定会话已过期，请重新登录",
-      "REGION_MISMATCH": "登录服务区域与当前客户端不匹配"
+      "REGION_MISMATCH": "登录服务区域与当前客户端不匹配",
+      "INVALID_SERVER_URL": "请填写服务器根地址，不含 /admin、/api、用户信息、查询或片段。",
+      "SERVER_HTTPS_REQUIRED": "请使用 HTTPS。HTTP 仅可用于本机开发服务。",
+      "INVALID_SERVER_RESPONSE": "此地址未返回符合约定的 {{appName}} Server JSON 响应。",
+      "UNSUPPORTED_SERVER_AUTH": "此服务器不支持所需的邮箱登录。",
+      "SERVER_UNAVAILABLE": "无法验证服务器。请检查地址、HTTPS 证书和服务状态。",
+      "AUTH_ROTATION_UNCERTAIN": "无法确认凭据刷新是否成功。请重新登录此服务器；重试旧凭据可能导致登录状态失效。"
+    },
+    "lexServer": {
+      "address": "服务器地址",
+      "addressDescription": "连接你所在组织的 {{appName}} Server。",
+      "addressHint": "填写设备服务的根地址，不含 /admin 或 /api。使用 HTTPS；本机开发可用 HTTP。",
+      "checking": "正在检查服务器…",
+      "connectionFailed": "无法验证服务器。请检查地址、HTTPS 证书和服务状态后重试。",
+      "email": "邮箱",
+      "emailDescription": "使用管理员已开通的邮箱登录。验证码由此服务器发送。",
+      "chooseIdentity": "选择身份",
+      "resendIn": "{{seconds}} 秒后可重新发送",
+      "resend": "重新发送验证码",
+      "retry": "重试",
+      "remoteLimits": "此服务器支持设备互联和任务共享；云附件、TURN 中继、系统凭据交接和自动解锁暂不可用。"
     }
   },
   "legacyMigration": {
@@ -8577,6 +8597,8 @@
       "desc": "登录账号服务，或连接你自己的模型 API。",
       "cta": "登录",
       "cloudTitle": "使用 Cindy 继续",
+      "lexDesc": "此服务器提供账号与远程服务，模型需自行连接。",
+      "lexCta": "配置模型",
       "cloudDesc": "你还未配置任何模型，开通官方服务即可使用数十种顶级大模型。",
       "cloudCta": "开始使用",
       "ownApi": "我有自己的模型 API 配置"
@@ -12088,7 +12110,8 @@
         "replaced-elsewhere": "你的账号已在其他设备或实例上退出登录，本机的登录状态已失效，请重新登录。",
         "credential-lost": "本机的登录凭证已失效（可能是同一台设备上的其他实例退出了登录），请重新登录。",
         "device-mismatch": "登录状态与本设备不匹配，请重新登录。",
-        "account-unavailable": "账号不可用（可能已被禁用或删除），如有疑问请联系管理员。"
+        "account-unavailable": "账号不可用（可能已被禁用或删除），如有疑问请联系管理员。",
+        "refresh-uncertain": "无法确认凭据刷新是否成功。请重新登录此服务器；重试旧凭据可能导致登录状态失效。"
       },
       "voiceApiKeyAuthTitle": "需要配置 Cindy AI",
       "voiceApiKeyAuthDescription": "语音输入当前使用 Cindy AI 语音识别服务。尚未连接 Cindy AI，无法开始语音输入。是否前往「模型供应商」连接？",

@@ -16,6 +16,7 @@ import type { CindyRegion } from '@cindy/maker-shared/brand-identity';
 
 /** 判定可见性所需的最小身份快照(全部来自 useAuth + 构建期区域常量)。 */
 export interface ImBotIdentity {
+  service?: { kind: 'cindy' | 'lex-server' };
   region: CindyRegion;
   mode: 'signed-out' | 'local' | 'cloud';
   membershipKind: 'personal' | 'org' | null;
@@ -32,6 +33,7 @@ export function isCnPersonalIdentity(identity: ImBotIdentity): boolean {
 
 /** 是否提供「Cindy」分栏(官方共享机器人;本地模式与国区个人账号都没有)。 */
 export function showCindyGroup(identity: ImBotIdentity): boolean {
+  if (identity.service?.kind === 'lex-server') return false;
   return identity.mode !== 'local' && !isCnPersonalIdentity(identity);
 }
 

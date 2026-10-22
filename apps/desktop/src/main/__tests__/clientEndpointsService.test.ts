@@ -69,6 +69,8 @@ vi.mock('../security/trustedAppRenderer', () => ({
 
 import {
   activateClientEndpointRealm,
+  activateLexServerEndpoints,
+  getActiveEndpointServiceKind,
   captureNetLogAround,
   prepareEndpointNetLogFile,
   promptRetryDialog,
@@ -90,6 +92,21 @@ import {
   type BlockingResolveDeps,
   type ManifestPromptContext,
 } from '../clientEndpointsService';
+
+it('routes only supported Lex roles while preserving independent update anchors', () => {
+  resetClientEndpointsForTest(TEST_CLIENT_ENDPOINTS, { buildRegion: 'global' });
+  activateLexServerEndpoints('https://lex.example');
+  expect(getActiveEndpointServiceKind()).toBe('lex-server');
+  expect(getClientEndpoint('authApiBaseUrl')).toBe('https://lex.example');
+  expect(getClientEndpoint('deviceLinkApiBaseUrl')).toBe('https://lex.example');
+  for (const role of ['modelAccessApiBaseUrl', 'oauthBrokerApiBaseUrl', 'ossApiBaseUrl', 'voiceApiBaseUrl', 'heartbeatUrl', 'pluginApiBaseUrl', 'skillhubApiBaseUrl'] as const) {
+    expect(getClientEndpoint(role)).toBe('');
+  }
+  expect(getClientEndpoint('cdnBaseUrl')).toBe(TEST_CLIENT_ENDPOINTS.cdnBaseUrl);
+  resetClientEndpointRealm();
+  expect(getActiveEndpointServiceKind()).toBe('cindy');
+  expect(getClientEndpoint('authApiBaseUrl')).toBe(TEST_CLIENT_ENDPOINTS.authApiBaseUrl);
+});
 
 afterEach(() => {
   resetClientEndpointsForTest();

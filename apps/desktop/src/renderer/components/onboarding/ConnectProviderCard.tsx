@@ -26,6 +26,7 @@ import { hasProviderLogo, ProviderLogoMark } from '@/components/icons/ProviderLo
 import { providerMonogram } from '@/lib/providerModels';
 import { useProviderOnboarding } from '@/hooks/useProviderOnboarding';
 import { useSignInToCindy } from '@/hooks/useSignInToCindy';
+import { useAuth } from '@/contexts/AuthContext';
 import type { ProviderOnboardingRow } from '@/hooks/useProviderOnboarding';
 import type { ProviderLogoRouting } from '@/components/icons/ProviderLogoMark';
 
@@ -43,6 +44,7 @@ export function ConnectProviderCard({ className, dismissible = true }: {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const signInToCindy = useSignInToCindy();
+  const { service } = useAuth();
   const onboarding = useProviderOnboarding({ loadPresets: true, dismissible });
   const [othersOpen, setOthersOpen] = useState(false);
 
@@ -108,7 +110,7 @@ export function ConnectProviderCard({ className, dismissible = true }: {
           );
         })}
         {/* The account service is named after the user chooses it. */}
-        <ProviderRow
+        {service?.kind !== 'lex-server' && <ProviderRow
           icon={cloudMode ? rowIcon('xd', xdProvider?.name ?? 'Cindy AI') : <UserRound size={16} />}
           label={
             cloudMode
@@ -122,7 +124,7 @@ export function ConnectProviderCard({ className, dismissible = true }: {
           }
           badge={t('onboarding.connectProvider.recommendedLabel')}
           onClick={() => (cloudMode ? goConnect('xd') : void signInToCindy())}
-        />
+        />}
         {primaryRows.map(renderRow)}
 
         {moreRows.length > 0 && (
