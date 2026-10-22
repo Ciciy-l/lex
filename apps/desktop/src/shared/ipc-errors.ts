@@ -3,6 +3,12 @@ import type { BrowserOpenForLoginErrorCode } from './browserBackend';
 /** main / preload / renderer 共用的 IPC 错误类型。 */
 
 export type IpcErrorCode =
+  | 'INVALID_SERVER_URL'
+  | 'SERVER_HTTPS_REQUIRED'
+  | 'INVALID_SERVER_RESPONSE'
+  | 'UNSUPPORTED_SERVER_AUTH'
+  | 'SERVER_UNAVAILABLE'
+  | 'AUTH_ROTATION_UNCERTAIN'
   // 通用错误
   | 'INVALID_PARAMS'
   | 'NOT_FOUND'
@@ -282,6 +288,8 @@ export interface IpcError {
 }
 
 const IPC_ERROR_CODES: ReadonlySet<IpcErrorCode> = new Set<IpcErrorCode>([
+  'INVALID_SERVER_URL', 'SERVER_HTTPS_REQUIRED', 'INVALID_SERVER_RESPONSE',
+  'UNSUPPORTED_SERVER_AUTH', 'SERVER_UNAVAILABLE', 'AUTH_ROTATION_UNCERTAIN',
   'INVALID_PARAMS',
   'NOT_FOUND',
   'INTERNAL',

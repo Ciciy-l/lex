@@ -124,10 +124,11 @@ function PersonalGroupContent({
 
 export function ImBotSection({ targetGroup }: { targetGroup: ImBotSettingsGroup | null }) {
   const { t } = useTranslation();
-  const { mode, dataOwnerId, serviceRealm, user } = useAuth();
+  const { mode, dataOwnerId, serviceRealm, service, user } = useAuth();
   const { entry, activation } = useSettingsSearchNavigation();
   const identity: ImBotIdentity = {
     region: serviceRealm,
+    service,
     mode,
     membershipKind: user?.membershipKind ?? null,
   };

@@ -1,23 +1,23 @@
 import {
   accountVaultKey,
   passportVaultKey,
-  type AuthRegion,
+  type AuthServiceScope,
   type StoredAccountMetadata,
 } from '@cindy/auth-client';
 
 export interface LoggedOutAccountIdentity {
   accountKey: string;
-  realm: AuthRegion;
+  realm: AuthServiceScope;
   passportId: string;
 }
 
 interface LogoutPolicyResourceSession {
-  realm: AuthRegion;
+  realm: AuthServiceScope;
   metadata: StoredAccountMetadata;
 }
 
 interface LogoutPolicyPassportSession {
-  realm: AuthRegion;
+  realm: AuthServiceScope;
   passportId: string;
   memberships: StoredAccountMetadata[];
 }

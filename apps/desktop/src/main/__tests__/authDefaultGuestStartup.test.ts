@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import ts from 'typescript';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AuthApiError, parseAuthSessionRecord, serializeAuthSessionRecord } from '@cindy/auth-client';
+import { AuthApiError, storedAuthServiceScope, parseAuthSessionRecord, serializeAuthSessionRecord } from '@cindy/auth-client';
 
 // Execute the production initialization and safe-storage helpers without
 // importing Electron or reading a real profile. Only owner commit/network
@@ -102,7 +102,7 @@ function harness(root: string, faults: Faults = {}, options: { passive?: boolean
   const loadEndpoints = vi.fn(async (_realm: string) => undefined);
   const mirror = vi.fn();
   const dependencies = {
-    fs: io, path, Buffer, safeStorage, AuthApiError, parseAuthSessionRecord, serializeAuthSessionRecord,
+    fs: io, path, Buffer, safeStorage, AuthApiError, storedAuthServiceScope, parseAuthSessionRecord, serializeAuthSessionRecord,
     SAFE_STORAGE_DIR: () => safeDir,
     AUTH_SESSION_KEY: SESSION, LEGACY_RESOURCE_REFRESH_TOKEN_KEY: LEGACY,
     LEGACY_ACCOUNT_REFRESH_TOKEN_KEY: 'fixture-old-account', LEGACY_REFRESH_TOKEN_KEY: 'fixture-old-feishu',

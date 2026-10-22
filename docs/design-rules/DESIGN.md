@@ -1499,7 +1499,10 @@ The execution rulebook for subsequent desktop / mobile UI updates. Sources: the 
 
 **Lex Desktop 0.1.7 入口调整**：无持久登录会话的正常冷启动先通过 Main 既有 owner
 边界进入「未登录」主界面，不再以登录页作为默认首页。应用内主动登录先显示账号服务
-选择（本轮仅 Cindy），再复用现有 Cindy 登录；取消保留原 owner 并返回原页面。
+选择（Lex Server / Cindy）；Cindy 复用原登录画布。Lex Server 使用普通页面语义 token，
+先填写设备服务 origin 并匿名检查，再进行预建邮箱验证码与组织身份选择；不显示 Cindy 条款。
+HTTP 仅用于 loopback 开发服务，其它地址必须 HTTPS。取消保留原 owner 并返回原页面，
+检查或验证码的迟到响应不能切换账号。账号菜单用服务域名和组织名称消歧。
 已有有效账号仍正常恢复；凭据恢复失败与 owner 未稳定时保留既有 fail-closed 恢复路径。
 默认进入未登录主界面不等于同意隐私协议或启用统计；登录授权与协议确认仍沿原合同。
 该入口使用 §4/5 的普通页面、容器与胶囊按钮；下述 Cindy 登录品牌画布与字段规格不变。

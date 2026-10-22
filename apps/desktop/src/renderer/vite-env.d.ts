@@ -30,6 +30,7 @@ type VoiceInputPowerStatePayload =
   import('../shared/voiceInputPowerIpc').VoiceInputPowerStatePayload;
 type VoiceInputConnectionTestResult =
   import('../shared/voiceInputConnectionTest').VoiceInputConnectionTestResult;
+type DesktopLoginServiceInput = import('../shared/authIpc').DesktopLoginServiceInput;
 type DesktopLoginAction = import('../shared/authIpc').DesktopLoginAction;
 type DesktopLoginActionResult = import('../shared/authIpc').DesktopLoginActionResult;
 type UtilityTextFailure = import('../shared/utilityTextResult').UtilityTextFailure;
@@ -585,6 +586,7 @@ interface AuthStateChangePayload {
   user: AuthUser | null;
   /** Cindy service realm for the active account or current signed-out selection. */
   serviceRealm: 'cn' | 'global';
+  service?: import('@cindy/auth-client').AuthService;
   mode: 'signed-out' | 'local' | 'cloud';
   dataOwnerId: string | null;
   ownerGeneration: number;
@@ -599,6 +601,7 @@ interface AuthStateChangePayload {
   accountDeletionRestored: boolean;
   /** 持久凭证库(safeStorage)连续多个刷新周期不可用(#1687);旧版 main 不带此字段。 */
   credentialStoreUnavailable?: boolean;
+  recoveryError?: 'AUTH_ROTATION_UNCERTAIN';
 }
 
 /**
@@ -611,6 +614,7 @@ type AuthSessionExpiredReason =
   | 'device-mismatch'
   | 'account-unavailable'
   | 'credential-lost'
+  | 'refresh-uncertain'
   | 'unknown';
 
 interface AuthSessionExpiredPayload {
@@ -2164,6 +2168,7 @@ interface ElectronAPI {
     user: AuthUser | null;
     /** Cindy service realm for the active account or current signed-out selection. */
     serviceRealm: 'cn' | 'global';
+  service?: import('@cindy/auth-client').AuthService;
     mode: 'signed-out' | 'local' | 'cloud';
     dataOwnerId: string | null;
     ownerGeneration: number;
@@ -2177,6 +2182,7 @@ interface ElectronAPI {
     accountDeletionRestored: boolean;
     /** 持久凭证库(safeStorage)连续多个刷新周期不可用(#1687)。 */
     credentialStoreUnavailable?: boolean;
+    recoveryError?: 'AUTH_ROTATION_UNCERTAIN';
   }>;
   authGetLoginState: () => Promise<DesktopLoginActionResult>;
   authDispatchLoginAction: (action: DesktopLoginAction) => Promise<DesktopLoginActionResult>;
@@ -2186,7 +2192,7 @@ interface ElectronAPI {
   authListAccounts: () => Promise<DesktopAccountSwitcherSnapshot>;
   authSyncAccounts: () => Promise<DesktopAccountSwitcherSnapshot>;
   authSwitchAccount: (accountKey: string) => Promise<void>;
-  authBeginAddAccount: () => Promise<DesktopLoginActionResult>;
+  authBeginAddAccount: (service?: DesktopLoginServiceInput) => Promise<DesktopLoginActionResult>;
   authCancelAddAccount: () => Promise<void>;
   authEnterLocal: () => Promise<AuthStateChangePayload>;
   authExitLocal: () => Promise<AuthStateChangePayload>;

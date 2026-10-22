@@ -43,6 +43,7 @@ let unsubscribeAuth: (() => void) | null = null;
 
 /** 已验证 cloud 会话返回其 user.id,其余模式一律 null(= 不上报云端心跳)。 */
 function verifiedCloudUserId(state: AuthStateSnapshot): string | null {
+  if (state.service?.kind === 'lex-server') return null;
   return state.mode === 'cloud' && state.isAuthenticated && state.user ? state.user.id : null;
 }
 

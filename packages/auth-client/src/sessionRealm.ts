@@ -1,17 +1,29 @@
 import { z } from "zod";
 
 import { authRegionSchema, type AuthRegion } from "./types.js";
+import { authServiceSchema, storedAuthServiceScope, type AuthService } from "./service.js";
 
-export const authSessionRecordSchema = z.object({
+const authSessionRecordV1Schema = z.object({
   version: z.literal(1),
   realm: authRegionSchema,
   refreshToken: z.string().min(1),
+}).strict();
+export const authSessionRecordSchema = z.union([authSessionRecordV1Schema, z.object({
+  version: z.literal(2),
+  realm: authRegionSchema,
+  refreshToken: z.string().min(1),
+  service: authServiceSchema,
+})]).superRefine((record, context) => {
+  try { storedAuthServiceScope(record); } catch {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Service does not match session realm" });
+  }
 });
 
 export interface AuthSessionRecord {
-  version: 1;
+  version: 1 | 2;
   realm: AuthRegion;
   refreshToken: string;
+  service?: AuthService;
 }
 
 const accountDeletionReceiptRecordV1Schema = z.object({
@@ -65,9 +77,10 @@ export function parseAuthSessionRecord(
 export function serializeAuthSessionRecord(
   realm: AuthRegion,
   refreshToken: string,
+  service?: AuthService,
 ): string {
   return JSON.stringify(
-    authSessionRecordSchema.parse({ version: 1, realm, refreshToken }),
+    authSessionRecordSchema.parse(service ? { version: 2, realm, refreshToken, service } : { version: 1, realm, refreshToken }),
   );
 }
 

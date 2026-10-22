@@ -9,6 +9,8 @@ describe('local app-session policy', () => {
       canUseCindyAccountServices: false,
       canUseCindyGateway: false,
       canUseDeviceLink: false,
+      canUseCloudAttachments: false,
+      canUseRemoteCredentialHandoff: false,
       canUseSkillHubCloud: false,
       canUseCindyOAuthBroker: false,
       canUseCindyHeartbeat: false,
@@ -19,6 +21,13 @@ describe('local app-session policy', () => {
     expect(deriveAppCapabilities('cloud', true).canUseCindyAccountServices).toBe(false);
     expect(deriveAppCapabilities('cloud', true).canUseCindyGateway).toBe(false);
     expect(deriveAppCapabilities('cloud', false).canUseCindyAccountServices).toBe(true);
+  });
+
+  it('offers Lex device tasks without borrowing Cindy account capabilities', () => {
+    const caps = deriveAppCapabilities('cloud', false, 'lex-server');
+    expect(caps.canUseDeviceLink).toBe(true);
+    for (const [name, value] of Object.entries(caps)) if (name !== 'canUseDeviceLink') expect(value).toBe(false);
+    expect(deriveAppCapabilities('cloud', true, 'lex-server').canUseDeviceLink).toBe(false);
   });
 
   it('rejects local DB work while the matching owner boundary is pending', () => {

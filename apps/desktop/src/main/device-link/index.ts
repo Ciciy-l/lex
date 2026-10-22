@@ -172,13 +172,13 @@ function startSharedTaskRuntimeForCurrentClient(): void {
   const currentClient = client;
   if (!currentClient) return;
   const ownerId = authManager.getCurrentUserId();
-  const ownerRealm = authManager.getActiveAuthRealm();
+  const ownerRealm = authManager.getActiveAuthServiceKey();
   startSharedTaskRuntime({
     client: currentClient,
     revoke(sharedTaskId, memberId) {
       // The callback owns this client, never a later account's global client.
       if (client !== currentClient || authManager.getCurrentUserId() !== ownerId
-          || authManager.getActiveAuthRealm() !== ownerRealm) return;
+          || authManager.getActiveAuthServiceKey() !== ownerRealm) return;
       for (const id of getKnownControllerIds()) {
         const peer = parseSharedTaskPeer(id);
         if (peer?.role !== 'guest' || peer.sharedTaskId !== sharedTaskId
@@ -190,7 +190,7 @@ function startSharedTaskRuntimeForCurrentClient(): void {
     },
     changed(sharedTaskId) {
       if (client === currentClient && authManager.getCurrentUserId() === ownerId
-          && authManager.getActiveAuthRealm() === ownerRealm && !isAppSessionBoundaryPending()) {
+          && authManager.getActiveAuthServiceKey() === ownerRealm && !isAppSessionBoundaryPending()) {
         broadcast('shared-task:changed', { sharedTaskId });
       }
     },
@@ -422,7 +422,7 @@ const transportTimeoutReopen = createTransportTimeoutReopenLoop({
   },
 });
 let arbiter: DeviceLinkOwnershipArbiter | null = null;
-let observedAuthRealm: ReturnType<typeof authManager.getActiveAuthRealm> | null = null;
+let observedAuthRealm: ReturnType<typeof authManager.getActiveAuthServiceKey> | null = null;
 let authRealmReconnectGeneration = 0;
 let unsubscribeAuthState: (() => void) | null = null;
 /** 按 userId 缓存文件锁;换账号或登出时释放 */
@@ -681,11 +681,21 @@ export function initDeviceLinkService(options: DeviceLinkServiceOptions = {}): v
   }
 
   remoteCredentialHost.currentToken = () => {
+    if (!authManager.isCindyServiceActive()) return null;
     const membership = authManager.getCurrentUserId(), token = authManager.getAccessToken();
     return membership && token ? { realm: authManager.getActiveAuthRealm(), membership, authDevice: authManager.getDeviceId(), token } : null;
   };
   client = new DeviceLinkClient({
     getWsUrl: wsUrl,
+    getConnectionAuth: async () => {
+      const scope = activeOwnerScopeKey();
+      const service = authManager.getActiveAuthServiceKey();
+      const token = authManager.getAccessToken() ??
+        (await authManager.refresh().catch(() => false) ? authManager.getAccessToken() : null);
+      if (!token || activeOwnerScopeKey() !== scope || authManager.getActiveAuthServiceKey() !== service ||
+          isAppSessionBoundaryPending()) return null;
+      return { url: wsUrl(), token };
+    },
     getToken: async () => {
       const token = authManager.getAccessToken();
       if (token) return token;
@@ -708,14 +718,21 @@ export function initDeviceLinkService(options: DeviceLinkServiceOptions = {}): v
     // 行为与不传一致(见 maker-host/outbound-fetch)。
     // lookup:DNS 失败/慢解析时回退最近成功地址(弱网 VPN 下 DNS 单段可吃掉
     // 大半个握手窗口);代理模式下由代理解析域名,本层自然旁路。
-    createWebSocket: async (url, headers) =>
-      new WebSocket(url, {
+    createWebSocket: async (url, headers) => {
+      const scope = activeOwnerScopeKey();
+      const service = authManager.getActiveAuthServiceKey();
+      const agent = await createOutboundHttpAgent(url);
+      if (url !== wsUrl() || headers.authorization !== 'Bearer ' + authManager.getAccessToken() ||
+          scope !== activeOwnerScopeKey() || service !== authManager.getActiveAuthServiceKey() ||
+          isAppSessionBoundaryPending()) throw new Error('Device Link account service changed');
+      return new WebSocket(url, {
         headers,
-        agent: await createOutboundHttpAgent(url),
+        agent,
         // ClientOptions 类型未声明 lookup,但 ws 会把额外选项透传给
         // http.request(其 RequestOptions 原生支持 lookup)→ net/tls 建连。
         lookup: relayDnsLookup,
-      } as WebSocket.ClientOptions),
+      } as WebSocket.ClientOptions);
+    },
     logger: {
       debug: (...args) => log.debug(...args),
       info: (...args) => log.info(...args),
@@ -1170,10 +1187,10 @@ export function initDeviceLinkService(options: DeviceLinkServiceOptions = {}): v
   });
 
   // 登录态驱动仲裁:已登录即参与认领(控制端列表/被控端可达都依赖这条 WS)
-  observedAuthRealm = authManager.getActiveAuthRealm();
+  observedAuthRealm = authManager.getActiveAuthServiceKey();
   syncWithAuthState(authManager.getAuthState().isAuthenticated);
   unsubscribeAuthState = authManager.onAuthStateChange((state) => {
-    const nextRealm = authManager.getActiveAuthRealm();
+    const nextRealm = authManager.getActiveAuthServiceKey();
     const realmChanged = observedAuthRealm !== null && observedAuthRealm !== nextRealm;
     observedAuthRealm = nextRealm;
     syncWithAuthState(state.isAuthenticated, realmChanged);
@@ -1241,7 +1258,7 @@ function syncWithAuthState(isAuthenticated: boolean, realmChanged = false): void
  */
 function restartDeviceLinkForAuthRealmChange(): void {
   const generation = ++authRealmReconnectGeneration;
-  const targetRealm = authManager.getActiveAuthRealm();
+  const targetRealm = authManager.getActiveAuthServiceKey();
   void stopArbitrationAndTeardown()
     .catch((error) => {
       log.warn('device-link ownership release during auth realm switch failed', error);
@@ -1250,7 +1267,7 @@ function restartDeviceLinkForAuthRealmChange(): void {
       if (
         generation !== authRealmReconnectGeneration ||
         !authManager.getAuthState().isAuthenticated ||
-        authManager.getActiveAuthRealm() !== targetRealm
+        authManager.getActiveAuthServiceKey() !== targetRealm
       ) {
         return;
       }
@@ -1923,7 +1940,7 @@ export function sendMobileSessionNotify(payload: {
    */
   generation?: number;
 }): boolean {
-  if (!client) return false;
+  if (!client || !authManager.isCindyServiceActive()) return false;
   if (payload.generation !== undefined && payload.generation !== mobileNotifyGeneration) {
     log.debug(
       `mobile notify dropped: link generation changed (account/ownership boundary), session=${payload.sessionId.slice(0, 8)}`,

@@ -105,6 +105,12 @@ function throwAuthAccountIpcError(error: unknown): never {
       : null;
   const message = error instanceof Error ? error.message : 'Saved account operation failed';
   switch (code) {
+    case 'INVALID_SERVER_URL':
+    case 'SERVER_HTTPS_REQUIRED':
+    case 'INVALID_SERVER_RESPONSE':
+    case 'UNSUPPORTED_SERVER_AUTH':
+    case 'SERVER_UNAVAILABLE':
+    case 'AUTH_ROTATION_UNCERTAIN':
     case 'INVALID_AUTH_ACTION':
     case 'PASSIVE_AUTH_MUTATION_BLOCKED':
     case 'ACCOUNT_NOT_FOUND':
@@ -5765,10 +5771,10 @@ const registerIpcHandlers = () => {
     }
   });
 
-  ipcMain.handle('auth:accounts:begin-add', async (event) => {
+  ipcMain.handle('auth:accounts:begin-add', async (event, service: unknown) => {
     assertTrustedAppRendererEvent(event);
     try {
-      return await authManager.beginAddAccountLogin();
+      return await authManager.beginAddAccountLogin(service);
     } catch (error) {
       throwAuthAccountIpcError(error);
     }
@@ -5837,7 +5843,7 @@ const registerIpcHandlers = () => {
 
   const profileEditLog = createLogger('profileEdit');
   const profileEditDeps: profileEdit.ProfileEditDeps = {
-    getCurrentUserId: () => authManager.getCurrentUserId(),
+    getCurrentUserId: () => authManager.getCurrentDataOwnerId(),
     getServerProfile: () => authManager.getServerProfile(),
     showAvatarOpenDialog: async () => {
       const result = await dialog.showOpenDialog({
@@ -5866,8 +5872,8 @@ const registerIpcHandlers = () => {
   };
 
   const requireCloudProfile = (): void => {
-    if (!getAppCapabilities().canUseCindyAccountServices) {
-      throwIpcError('PERMISSION_DENIED', 'Profile editing requires a Cindy account.');
+    if (!getAppCapabilities().canUseDeviceLink) {
+      throwIpcError('PERMISSION_DENIED', 'Profile editing requires an account.');
     }
   };
 
@@ -5878,11 +5884,16 @@ const registerIpcHandlers = () => {
 
   ipcMain.handle('profile:choose-avatar', async () => {
     requireCloudProfile();
+    requireAppCapability('canUseCloudAttachments', 'Avatar uploads are unavailable on this account service.');
     return profileEdit.chooseAvatarFile(profileEditDeps);
   });
 
   ipcMain.handle('profile:update', async (_event, params: unknown) => {
     requireCloudProfile();
+    if (!authManager.isCindyServiceActive() && params && typeof params === 'object' &&
+        (params as { avatar?: { type?: unknown } }).avatar?.type === 'set') {
+      throwIpcError('PERMISSION_DENIED', 'Avatar uploads are unavailable on this account service.');
+    }
     return profileEdit.updateProfile(profileEditDeps, params);
   });
 
@@ -8732,7 +8743,8 @@ app.on('ready', async () => {
         setCustomProviders([]);
       }
       const user = authManager.getAuthState().user;
-      if (user == null || user.id !== userId) return;
+      // Lex owners are deployment-scoped and must never adopt legacy Cindy/local databases.
+      if (!authManager.isCindyServiceActive() || user == null || user.id !== userId) return;
       if (authManager.isPassiveSharedUserDataInstance()) {
         const passivePreflight = await inspectPassiveLocalProfileAdoption(
           user.id,

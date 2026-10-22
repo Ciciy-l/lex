@@ -9,6 +9,8 @@ import {
   type ReactNode,
 } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { AuthService as AccountService } from '@cindy/auth-client';
+import type { DesktopLoginServiceInput } from '../../shared/authIpc';
 import { soleLoginMethod } from '@cindy/auth-client';
 
 import { useConfirmDialog } from '@/components/ui/confirm-dialog-provider';
@@ -69,6 +71,7 @@ import { getDataOwnerGeneration, setDataOwnerGeneration } from './dataOwnerGener
 export interface AuthContextValue {
   user: User | null;
   serviceRealm: 'cn' | 'global';
+  service?: AccountService;
   mode: 'signed-out' | 'local' | 'cloud';
   dataOwnerId: string | null;
   /** Failed auth boundaries remount owner-scoped routes so stale generations can rehydrate. */
@@ -91,13 +94,14 @@ export interface AuthContextValue {
   loginState: AuthFlowState | null;
   /** Main-owned Cindy service realm selected for the personal login surface. */
   loginRealm: 'cn' | 'global';
+  loginService?: AccountService;
   loadLoginState: () => Promise<DesktopLoginActionResult>;
   dispatchLoginAction: (action: DesktopLoginAction) => Promise<DesktopLoginActionResult>;
   logout: () => Promise<void>;
   listAccounts: () => Promise<DesktopAccountSwitcherSnapshot>;
   syncAccounts: () => Promise<DesktopAccountSwitcherSnapshot>;
   switchAccount: (accountKey: string) => Promise<void>;
-  beginAddAccount: () => Promise<DesktopLoginActionResult>;
+  beginAddAccount: (service?: DesktopLoginServiceInput) => Promise<DesktopLoginActionResult>;
   cancelAddAccount: () => Promise<void>;
   enterLocalMode: () => Promise<void>;
   exitLocalMode: () => Promise<void>;
@@ -149,6 +153,8 @@ export function AuthProvider({
   enableSessionExpiredPrompt?: boolean;
 }) {
   const [user, setUser] = useState<User | null>(null);
+  const [service, setService] = useState<AccountService>({ kind: 'cindy', realm: 'global' });
+  const [loginService, setLoginService] = useState<AccountService>({ kind: 'cindy', realm: 'global' });
   const [serviceRealm, setServiceRealm] = useState<'cn' | 'global'>('global');
   const [mode, setMode] = useState<'signed-out' | 'local' | 'cloud'>('signed-out');
   const [dataOwnerId, setDataOwnerId] = useState<string | null>(null);
@@ -168,6 +174,8 @@ export function AuthProvider({
   const { t } = useTranslation();
 
   const authServiceRef = useRef<AuthService | null>(null);
+  // Presentation lifetime only. Main's independent epoch remains the credential/owner authority.
+  const loginPresentationEpochRef = useRef(0);
   if (authServiceRef.current === null) {
     authServiceRef.current = createAuthService();
   }
@@ -288,6 +296,7 @@ export function AuthProvider({
       setDataOwnerGenerationState(state.ownerGeneration);
       setNewMakerDraftOwner(state.dataOwnerId);
       setServiceRealm(state.serviceRealm);
+      setService(state.service ?? { kind: 'cindy', realm: state.serviceRealm });
       setProviderModelMemoryOwner(state.dataOwnerId);
       // 模型选择器的持久记忆与 newMakerDraft 同待遇:同一处、同一个 dataOwnerId、
       // 登出时同样传 null(state.dataOwnerId 在 signed-out 快照里就是 null,分区键退回
@@ -359,6 +368,7 @@ export function AuthProvider({
         applyIncomingState(state);
         setHasAccountDeletionReceipt(state.hasAccountDeletionReceipt);
         setAccountDeletionRestored(state.accountDeletionRestored);
+        if (state.recoveryError) toast.error(t('login.errors.' + state.recoveryError));
       })
       .catch((error: unknown) => {
         // 初始化异常归一未登录(implementation-plan Step 3b v6.3):此前该链仅
@@ -445,6 +455,7 @@ export function AuthProvider({
   }, [confirm, enableSessionExpiredPrompt, t]);
 
   const loadLoginState = useCallback(async (): Promise<DesktopLoginActionResult> => {
+    const presentationEpoch = loginPresentationEpochRef.current;
     // preparing 只允许在 load 进行中出现。settle / throw / 30s 超时都必须落到
     // identifier 或既有 error 步,避免 AUTH_FLOW_SUPERSEDED + state=null 或 IPC
     // 挂起把「正在连接登录服务」变成永不结束。
@@ -452,20 +463,29 @@ export function AuthProvider({
       () => authServiceRef.current!.getLoginState(),
       loginRealm,
     );
+    if (presentationEpoch !== loginPresentationEpochRef.current) {
+      return { ...result, success: false, code: 'AUTH_FLOW_SUPERSEDED', state: null };
+    }
     setLoginState(result.state);
     setLoginRealm(result.realm);
+    setLoginService(result.service ?? { kind: 'cindy', realm: result.realm });
     return result;
   }, [loginRealm]);
 
   const dispatchLoginAction = useCallback(
     async (action: DesktopLoginAction): Promise<DesktopLoginActionResult> => {
+      const presentationEpoch = loginPresentationEpochRef.current;
       // Main keeps the browser request open until its loopback callback arrives,
       // so project the waiting screen immediately to expose the cancel action.
       if (action.type === 'start-browser') {
         setLoginState({ step: 'browser-redirect', label: action.label });
       }
       const result = await authServiceRef.current!.dispatchLoginAction(action);
+      if (presentationEpoch !== loginPresentationEpochRef.current) {
+        return { ...result, success: false, code: 'AUTH_FLOW_SUPERSEDED', state: null };
+      }
       setLoginRealm(result.realm);
+      setLoginService(result.service ?? { kind: 'cindy', realm: result.realm });
       // Org discovery can auto-start a sole SSO browser flow below. Persist at
       // the successful discovery boundary so a later browser cancel/timeout
       // does not erase a valid organization from local history.
@@ -488,8 +508,11 @@ export function AuthProvider({
           // 自动发码同样要先过人机验证闸（LoginPage 注册的挑战 overlay）：
           // 这条快捷链不经过 LoginPage 的 dispatchRequestCode，不过闸会在
           // global 开启 captcha 后不带 token 发码直接吃 400。
-          const captchaGate = getLoginEmailCaptchaGate();
+          const captchaGate = result.service?.kind === 'lex-server' ? null : getLoginEmailCaptchaGate();
           const captchaToken = captchaGate ? await captchaGate() : undefined;
+          if (presentationEpoch !== loginPresentationEpochRef.current) {
+            return { ...result, success: false, code: 'AUTH_FLOW_SUPERSEDED', state: null };
+          }
           if (captchaToken === null) {
             // 用户取消挑战：停在 method-choice，个人行可再次发起（会重新过闸）
             setLoginState(result.state);
@@ -525,16 +548,22 @@ export function AuthProvider({
     [runDataOwnerBoundary],
   );
 
-  const beginAddAccount = useCallback(async () => {
-    const result = await authServiceRef.current!.beginAddAccount();
+  const beginAddAccount = useCallback(async (service?: DesktopLoginServiceInput) => {
+    const presentationEpoch = ++loginPresentationEpochRef.current;
+    const result = await authServiceRef.current!.beginAddAccount(service);
+    if (presentationEpoch !== loginPresentationEpochRef.current) {
+      return { ...result, success: false as const, code: 'AUTH_FLOW_SUPERSEDED', state: null };
+    }
     setLoginState(result.state);
     setLoginRealm(result.realm);
+    setLoginService(result.service ?? { kind: 'cindy', realm: result.realm });
     return result;
   }, []);
 
   const cancelAddAccount = useCallback(async () => {
+    const presentationEpoch = ++loginPresentationEpochRef.current;
     await authServiceRef.current!.cancelAddAccount();
-    setLoginState(null);
+    if (presentationEpoch === loginPresentationEpochRef.current) setLoginState(null);
   }, []);
 
   const enterLocalMode = useCallback(async () => {
@@ -592,6 +621,7 @@ export function AuthProvider({
     () => ({
       user,
       serviceRealm,
+      service,
       mode,
       dataOwnerId,
       dataOwnerRecoveryEpoch,
@@ -603,6 +633,7 @@ export function AuthProvider({
       deviceId,
       loginState,
       loginRealm,
+      loginService,
       loadLoginState,
       dispatchLoginAction,
       logout,
@@ -626,6 +657,7 @@ export function AuthProvider({
     [
       user,
       serviceRealm,
+      service,
       mode,
       dataOwnerId,
       dataOwnerRecoveryEpoch,
@@ -637,6 +669,7 @@ export function AuthProvider({
       deviceId,
       loginState,
       loginRealm,
+      loginService,
       loadLoginState,
       dispatchLoginAction,
       logout,

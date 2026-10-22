@@ -1,4 +1,5 @@
 import type { AccountMembership, AuthMembership, AuthRegion } from "./types.js";
+import type { AuthServiceScope } from "./service.js";
 
 export interface StoredAccountMetadata {
   membershipId: string;
@@ -14,18 +15,18 @@ export interface StoredAccountMetadata {
 }
 
 export interface AccountMetadataVault {
-  resources: Record<string, { realm: AuthRegion; metadata: StoredAccountMetadata }>;
+  resources: Record<string, { realm: AuthServiceScope; metadata: StoredAccountMetadata }>;
   passports: Record<
     string,
-    { realm: AuthRegion; passportId: string; memberships: StoredAccountMetadata[] }
+    { realm: AuthServiceScope; passportId: string; memberships: StoredAccountMetadata[] }
   >;
 }
 
-export function accountVaultKey(realm: AuthRegion, membershipId: string): string {
+export function accountVaultKey(realm: AuthServiceScope, membershipId: string): string {
   return JSON.stringify([realm, membershipId]);
 }
 
-export function passportVaultKey(realm: AuthRegion, passportId: string): string {
+export function passportVaultKey(realm: AuthServiceScope, passportId: string): string {
   return JSON.stringify([realm, passportId]);
 }
 
@@ -68,7 +69,7 @@ export function storedAccountMetadataFromMembership(
 export function reconcileSavedAccountMetadata(
   vault: AccountMetadataVault,
   input: {
-    realm: AuthRegion;
+    realm: AuthServiceScope;
     passportId: string;
     memberships: readonly StoredAccountMetadata[];
     passportMode: "patch-known" | "replace-passport";

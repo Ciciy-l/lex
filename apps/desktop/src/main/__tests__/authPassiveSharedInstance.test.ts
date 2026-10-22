@@ -175,7 +175,7 @@ describe('passive shared-userData instance auth isolation', () => {
     const repair = body.indexOf('repairStableCloudOwnerDataReservations(currentUser.id);');
     expect(passiveGuard).toBeGreaterThan(-1);
     expect(repair).toBeGreaterThan(passiveGuard);
-    expect(body.indexOf('commitCloudAppSession(currentUser.id);')).toBeGreaterThan(repair);
+    expect(body.indexOf('commitCloudAppSession(authDataOwnerId(activeAuthRealm, currentUser.id));')).toBeGreaterThan(repair);
 
     const migrationHelper = sliceBody(
       'async function migrateLocalProviderBindingsAfterCloudCommit(ownerId: string): Promise<void> {',
@@ -348,7 +348,7 @@ describe('passive shared-userData instance auth isolation', () => {
     expect(completeBody.indexOf('clearReloginFlag();')).toBeGreaterThan(completeGuard);
 
     const receiptCommit = sliceBody(
-      'function commitWithClearedAccountDeletionReceipt(commit: () => void): void {',
+      'function commitWithClearedAccountDeletionReceipt(commit: () => void, scope: AuthServiceScope = activeAuthRealm): void {',
       '\n}\n',
     );
     expect(receiptCommit).toContain('if (isPassiveSharedUserDataInstance()) return commit();');

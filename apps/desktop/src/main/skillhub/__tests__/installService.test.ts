@@ -54,6 +54,8 @@ vi.mock('../../appCapabilities.js', () => ({
     canUseCindyAccountServices: true,
     canUseCindyGateway: true,
     canUseDeviceLink: true,
+    canUseCloudAttachments: true,
+    canUseRemoteCredentialHandoff: true,
     canUseSkillHubCloud: true,
     canUseCindyOAuthBroker: true,
     canUseCindyHeartbeat: true,
@@ -167,6 +169,7 @@ describe('skillhub/installService', () => {
     const { getAppCapabilities } = await import('../../appCapabilities.js');
     vi.mocked(getAppCapabilities).mockReturnValue({
       canUseCindyAccountServices: true, canUseCindyGateway: true, canUseDeviceLink: true,
+      canUseCloudAttachments: true, canUseRemoteCredentialHandoff: true,
       canUseSkillHubCloud: true, canUseCindyOAuthBroker: true, canUseCindyHeartbeat: true,
     });
   });
@@ -642,6 +645,8 @@ describe('skillhub/installService', () => {
       canUseCindyAccountServices: false,
       canUseCindyGateway: false,
       canUseDeviceLink: false,
+      canUseCloudAttachments: false,
+      canUseRemoteCredentialHandoff: false,
       canUseSkillHubCloud: false,
       canUseCindyOAuthBroker: false,
       canUseCindyHeartbeat: false,
@@ -676,6 +681,8 @@ describe('skillhub/installService', () => {
       canUseCindyAccountServices: false,
       canUseCindyGateway: false,
       canUseDeviceLink: false,
+      canUseCloudAttachments: false,
+      canUseRemoteCredentialHandoff: false,
       canUseSkillHubCloud: false,
       canUseCindyOAuthBroker: false,
       canUseCindyHeartbeat: false,
@@ -696,6 +703,8 @@ describe('skillhub/installService', () => {
         canUseCindyAccountServices: true,
         canUseCindyGateway: true,
         canUseDeviceLink: true,
+        canUseCloudAttachments: true,
+        canUseRemoteCredentialHandoff: true,
         canUseSkillHubCloud: true,
         canUseCindyOAuthBroker: true,
         canUseCindyHeartbeat: true,
@@ -1483,6 +1492,8 @@ describe('skillhub/installService', () => {
       canUseCindyAccountServices: false,
       canUseCindyGateway: false,
       canUseDeviceLink: false,
+      canUseCloudAttachments: false,
+      canUseRemoteCredentialHandoff: false,
       canUseSkillHubCloud: false,
       canUseCindyOAuthBroker: false,
       canUseCindyHeartbeat: false,

@@ -50,7 +50,7 @@ describe('legacy → v1 refresh token migration window', () => {
 
   it('写侧:legacy 文件不存在时不镜像(不凭空复活已清理的凭证文件)', () => {
     const body = sliceBody(
-      'function mirrorLegacyResourceRefreshToken(refreshToken: string, realm: AuthRegion): void {',
+      'function mirrorLegacyResourceRefreshToken(refreshToken: string, realm: AuthServiceScope): void {',
       '\n}\n',
     );
 
@@ -66,7 +66,7 @@ describe('legacy → v1 refresh token migration window', () => {
 
   it('写侧:只镜像与安装包区域一致的 session(legacy 是裸 token,不带 realm)', () => {
     const body = sliceBody(
-      'function mirrorLegacyResourceRefreshToken(refreshToken: string, realm: AuthRegion): void {',
+      'function mirrorLegacyResourceRefreshToken(refreshToken: string, realm: AuthServiceScope): void {',
       '\n}\n',
     );
 
@@ -81,7 +81,7 @@ describe('legacy → v1 refresh token migration window', () => {
 
   it('写侧:值未变化则不落盘(避免无意义 mtime 变化干扰 CAS 删除的身份校验)', () => {
     const body = sliceBody(
-      'function mirrorLegacyResourceRefreshToken(refreshToken: string, realm: AuthRegion): void {',
+      'function mirrorLegacyResourceRefreshToken(refreshToken: string, realm: AuthServiceScope): void {',
       '\n}\n',
     );
 
@@ -92,7 +92,7 @@ describe('legacy → v1 refresh token migration window', () => {
 
   it('写侧:镜像写入失败必须如实记录,不静默当成已同步', () => {
     const body = sliceBody(
-      'function mirrorLegacyResourceRefreshToken(refreshToken: string, realm: AuthRegion): void {',
+      'function mirrorLegacyResourceRefreshToken(refreshToken: string, realm: AuthServiceScope): void {',
       '\n}\n',
     );
 
@@ -105,7 +105,7 @@ describe('legacy → v1 refresh token migration window', () => {
 
   it('写侧:镜像期间 v1 被清掉**或已前进** → 都按 CAS 撤回刚写的从属副本', () => {
     const body = sliceBody(
-      'function mirrorLegacyResourceRefreshToken(refreshToken: string, realm: AuthRegion): void {',
+      'function mirrorLegacyResourceRefreshToken(refreshToken: string, realm: AuthServiceScope): void {',
       '\n}\n',
     );
 

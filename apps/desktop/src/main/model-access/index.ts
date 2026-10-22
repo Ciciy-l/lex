@@ -483,14 +483,14 @@ export function initModelAccess(): void {
 
   authManager.onAuthStateChange((state) => {
     noteAuthState(
-      state.isAuthenticated,
+      state.isAuthenticated && authManager.isCindyServiceActive(),
       state.user?.id ?? null,
       state.isAuthenticated ? authManager.getActiveAuthRealm() : null,
     );
   });
   // 订阅挂载时可能已错过冷启动的首次 notify(初始化顺序取决于 bootstrap),补一次。
   const initial = authManager.getAuthState();
-  if (initial.isAuthenticated) {
+  if (initial.isAuthenticated && authManager.isCindyServiceActive()) {
     noteAuthState(true, initial.user?.id ?? null, authManager.getActiveAuthRealm());
   }
   foregroundRefreshListener = () => {

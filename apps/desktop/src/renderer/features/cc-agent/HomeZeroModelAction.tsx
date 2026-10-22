@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 
 import { cn } from '@/lib/utils';
 import { useSignInToCindy } from '@/hooks/useSignInToCindy';
+import { useAuth } from '@/contexts/AuthContext';
 
 /** 首页零模型单行动卡:未登录走 states.html B,已登录无来源走开通官方服务。 */
 export function HomeZeroModelAction({
@@ -16,7 +17,9 @@ export function HomeZeroModelAction({
   const { t } = useTranslation();
   const navigate = useNavigate();
   const signInToCindy = useSignInToCindy();
-  const cloud = authMode === 'cloud';
+  const { service } = useAuth();
+  const lexServer = authMode === 'cloud' && service?.kind === 'lex-server';
+  const cloud = authMode === 'cloud' && !lexServer;
 
   return (
     <div data-testid="home-zero-model" className="mt-4 w-full">
@@ -31,13 +34,17 @@ export function HomeZeroModelAction({
             {t(cloud ? 'onboarding.homeZeroModel.cloudTitle' : 'onboarding.homeZeroModel.title')}
           </p>
           <p className="text-13 leading-relaxed text-[var(--text-secondary)]">
-            {t(cloud ? 'onboarding.homeZeroModel.cloudDesc' : 'onboarding.homeZeroModel.desc')}
+            {t(lexServer ? 'onboarding.homeZeroModel.lexDesc' : cloud ? 'onboarding.homeZeroModel.cloudDesc' : 'onboarding.homeZeroModel.desc')}
           </p>
         </div>
         <button
           type="button"
           data-testid="home-zero-model-cta"
           onClick={() => {
+            if (lexServer) {
+              navigate('/settings?tab=providers&wizard=1');
+              return;
+            }
             if (cloud) {
               navigate('/settings?tab=providers&connect=xd');
               return;
@@ -51,7 +58,7 @@ export function HomeZeroModelAction({
             narrow && 'self-end',
           )}
         >
-          {t(cloud ? 'onboarding.homeZeroModel.cloudCta' : 'onboarding.homeZeroModel.cta')}
+          {t(lexServer ? 'onboarding.homeZeroModel.lexCta' : cloud ? 'onboarding.homeZeroModel.cloudCta' : 'onboarding.homeZeroModel.cta')}
         </button>
       </div>
       <button

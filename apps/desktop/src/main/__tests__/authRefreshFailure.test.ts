@@ -9,6 +9,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   DEFINITIVE_REFRESH_FAILURE_CODES,
+  normalizeLexRefreshFailureCode,
   getRefreshTokenReplacementCandidate,
   isDefinitiveRefreshFailure,
   isForeignDeviceRefreshFailure,
@@ -37,6 +38,14 @@ describe('resolveSessionExpiredReason', () => {
 });
 
 describe('isDefinitiveRefreshFailure', () => {
+  it('adapts only Lex refresh codes without broadening Cindy credential deletion', () => {
+    for (const code of ['INVALID_TOKEN', 'REFRESH_REUSED', 'MEMBERSHIP_UNAVAILABLE']) {
+      expect(isDefinitiveRefreshFailure({ ok: false, data: { error: { code } } })).toBe(false);
+      expect(isDefinitiveRefreshFailure({ ok: false, data: { error: { code: normalizeLexRefreshFailureCode(code) } } })).toBe(true);
+    }
+    expect(normalizeLexRefreshFailureCode('DEVICE_MISMATCH')).toBe('DEVICE_MISMATCH');
+    expect(normalizeLexRefreshFailureCode('RATE_LIMITED')).toBe('RATE_LIMITED');
+  });
   it('成功响应不删除 token', () => {
     expect(isDefinitiveRefreshFailure({ ok: true, data: { accessToken: 'a' } })).toBe(false);
   });

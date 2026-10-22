@@ -158,7 +158,7 @@ describe('auth login-flow reset', () => {
     expect(discover.indexOf('discoveredMethods = [];')).toBeLessThan(discover.indexOf('await discoverEmailLogin'));
     expect(discover).toContain('discoverOrganizationRealm(domain, actionLoginFlowEpoch)');
     expect(discover).toContain('pendingAuthRealm = region;');
-    expect(discover.indexOf("type: 'realm-switch-required'")).toBeLessThan(discover.indexOf('discoveredMethods = methods;'));
+    expect(discover.indexOf("type: 'realm-switch-required'")).toBeLessThan(discover.indexOf('discoveredMethods = methods;', discover.indexOf('await discoverEmailLogin')));
     expect(source).toContain("email: confirmation.email ?? ''");
     const requestStart = source.indexOf("if (action.type === 'request-code') {");
     const request = source.slice(requestStart, source.indexOf("if (action.type === 'verify-code') {", requestStart));
@@ -210,7 +210,7 @@ describe('auth login-flow reset', () => {
   });
 
   it('keeps saved account metadata fresh after profile edits and Passport sync', () => {
-    expect(source).toContain('const AUTH_ACCOUNT_VAULT_VERSION = 2 as const;');
+    expect(source).toContain('const AUTH_ACCOUNT_VAULT_VERSION = 3 as const;');
     expect(source).toContain(
       "const AUTH_ACCOUNT_LOGOUT_TOMBSTONES_KEY = deviceCredentialKey('cindy_auth_account_logout_tombstones_v1');",
     );
@@ -238,7 +238,11 @@ describe('auth login-flow reset', () => {
     const writeStart = source.indexOf('function writeAuthAccountVault(');
     const writeEnd = source.indexOf('\n}\n\nfunction writeAuthAccountVaultOrThrow', writeStart);
     const writeBody = source.slice(writeStart, writeEnd);
-    expect(writeBody).toContain('JSON.stringify({ ...vault, version: 1 })');
+    expect(writeBody).toContain('serializeAuthAccountVault(vault)');
+    const serializeStart = source.indexOf('function serializeAuthAccountVault(');
+    const serializeBody = source.slice(serializeStart, source.indexOf('\n}\n', serializeStart));
+    expect(serializeBody).toContain('version: hasLex || vault.pendingRotations?.length ? 3 : 1');
+    expect(serializeBody).toContain('authServiceFromScope(item.realm)');
     expect(writeBody).toContain('older client can');
     expect(writeBody).toContain('writeAuthAccountLogoutTombstones(vault)');
     expect(writeBody.indexOf('writeAuthAccountLogoutTombstones(vault)')).toBeLessThan(
@@ -553,7 +557,7 @@ describe('auth login-flow reset', () => {
     expect(switchBody).not.toContain('client.refresh(resource.refreshToken)');
     expect(switchBody).not.toContain('removeVaultAccount(parsedKey)');
     expect(switchBody).not.toContain("'REGION_MISMATCH'");
-    expect(switchBody).toContain('const switchLoginFlowEpoch = loginFlowEpoch;');
+    expect(switchBody).toContain('const switchLoginFlowEpoch = ++loginFlowEpoch;');
     expect(switchBody).toContain(
       "await completeLogin({ status: 'ok', ...pair }, switchLoginFlowEpoch, {",
     );
@@ -842,7 +846,7 @@ describe('auth login-flow reset', () => {
       'readActiveVaultRefreshCandidate()',
       inactiveCommit,
     );
-    const ownershipRetry = coldBody.indexOf('return runColdStartRefreshFlow(', activeCandidateRead);
+    const ownershipRetry = coldBody.indexOf('return continueRefresh(', activeCandidateRead);
     expect(activeCandidateRead).toBeGreaterThan(inactiveCommit);
     expect(ownershipRetry).toBeGreaterThan(activeCandidateRead);
     expect(coldBody.slice(inactiveCommit, ownershipRetry)).toContain(
@@ -883,7 +887,7 @@ describe('auth login-flow reset', () => {
       clearDeadTokens,
     );
     const ownershipRetry = coldStartBody.indexOf(
-      'return runColdStartRefreshFlow(',
+      'return continueRefresh(',
       clearDeadTokens,
     );
     expect(clearDeadTokens).toBeGreaterThan(-1);
@@ -981,7 +985,7 @@ describe('auth login-flow reset', () => {
 
   it('advances the existing owner generation when login or restoration commits another realm', () => {
     for (const [entry, realm] of [
-      ['async function runColdStartRefreshFlow(', 'storedRealm'],
+      ['async function runColdStartRefreshFlowWhileLocked(', 'storedRealm'],
       ['async function completeLogin(', 'committedRealm'],
     ]) {
       const start = source.indexOf(entry);
@@ -989,7 +993,7 @@ describe('auth login-flow reset', () => {
       const body = source.slice(start, source.indexOf('\n}\n', start));
       const capture = body.indexOf(`const authRealmChanged = ${realm} !== activeAuthRealm;`);
       const activate = body.indexOf(`activeAuthRealm = ${realm};`);
-      const commit = body.indexOf('commitCloudAppSession(currentUser.id, authRealmChanged);');
+      const commit = body.indexOf('commitCloudAppSession(authDataOwnerId(activeAuthRealm, currentUser.id), authRealmChanged);');
       expect(capture).toBeGreaterThan(-1);
       expect(activate).toBeGreaterThan(capture);
       expect(commit).toBeGreaterThan(activate);
@@ -1008,7 +1012,7 @@ describe('auth login-flow reset', () => {
     expect(refreshBody).toContain('const authRealmChanged = refreshRealm !== activeAuthRealm;');
     expect(refreshBody).toContain('await commitDesktopRefreshCredentials(');
     expect(refreshBody).toContain('activeAuthRealm = refreshRealm;');
-    expect(refreshBody.match(/commitCloudAppSession\(currentUser.id, authRealmChanged\);/g)).toHaveLength(2);
+    expect(refreshBody.split('commitCloudAppSession(authDataOwnerId(activeAuthRealm, currentUser.id), authRealmChanged);')).toHaveLength(3);
     expect(refreshBody).toContain(
       'const membershipKindChanged = previousMembershipKind !== nextUser.membershipKind;',
     );
@@ -1021,7 +1025,7 @@ describe('auth login-flow reset', () => {
 
     expect(deviceLinkSource).toContain('restartDeviceLinkForAuthRealmChange();');
     expect(deviceLinkSource).toContain('void stopArbitrationAndTeardown()');
-    expect(deviceLinkSource).toContain('authManager.getActiveAuthRealm() !== targetRealm');
+    expect(deviceLinkSource).toContain('authManager.getActiveAuthServiceKey() !== targetRealm');
     expect(hookControlSource).toContain('} else if (realmChanged) {');
     expect(hookControlSource).toContain('manager?.sync();');
   });
@@ -1192,7 +1196,7 @@ describe('auth login-flow reset', () => {
     const completeEnd = source.indexOf('\n}\n\nasync function acceptLoginOutcome', completeStart);
     const completeBody = source.slice(completeStart, completeEnd);
     const acceptedUser = completeBody.indexOf('currentUser = nextUser;');
-    const ownerCommit = completeBody.indexOf('commitCloudAppSession(currentUser.id, authRealmChanged);');
+    const ownerCommit = completeBody.indexOf('commitCloudAppSession(authDataOwnerId(activeAuthRealm, currentUser.id), authRealmChanged);');
     const clearPreviousFlag = completeBody.indexOf('canaryFlagStore.clear();', acceptedUser);
     expect(acceptedUser).toBeGreaterThan(-1);
     expect(clearPreviousFlag).toBeGreaterThan(acceptedUser);
@@ -1205,7 +1209,7 @@ describe('auth login-flow reset', () => {
     const betaEnd = source.indexOf('function scheduleNonXdOrgBetaDefault(', betaStart);
     expect(betaEnd).toBeGreaterThan(betaStart);
     const betaBody = source.slice(betaStart, betaEnd);
-    expect(betaBody).toContain('if (isPassiveSharedUserDataInstance()) return;');
+    expect(betaBody).toContain('if (!isCindyServiceActive() || isPassiveSharedUserDataInstance()) return;');
     expect(betaBody).toContain('decodeAccessTokenOrgSlug(accessToken)');
     expect(betaBody).not.toContain('shouldAttemptOrgBetaDefault');
     const nonXdStart = source.indexOf('function scheduleNonXdOrgBetaDefault(');

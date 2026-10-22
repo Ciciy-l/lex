@@ -1,4 +1,4 @@
-import type { AuthFlowState } from '@cindy/auth-client';
+import type { AuthService as AccountService, AuthFlowState } from '@cindy/auth-client';
 import type {
   DesktopAccountDeletionAvailabilityResult,
   DesktopAccountDeletionChallenge,
@@ -8,6 +8,7 @@ import type {
   DesktopAccountDeletionStatusResult,
   DesktopAccountSwitcherSnapshot,
   DesktopLoginAction,
+  DesktopLoginServiceInput,
   DesktopLoginActionResult,
 } from '../../shared/authIpc';
 export type { DesktopSavedAccount } from '../../shared/authIpc';
@@ -37,6 +38,7 @@ export interface User {
 export interface AuthState {
   user: User | null;
   serviceRealm: 'cn' | 'global';
+  service?: AccountService;
   mode: 'signed-out' | 'local' | 'cloud';
   dataOwnerId: string | null;
   ownerGeneration: number;
@@ -49,6 +51,7 @@ export interface AuthState {
   accountDeletionRestored: boolean;
   /** 持久凭证库(safeStorage)连续多个刷新周期不可用(#1687);恢复后自动回 false。 */
   credentialStoreUnavailable: boolean;
+  recoveryError?: 'AUTH_ROTATION_UNCERTAIN';
 }
 
 export interface AuthService {
@@ -59,7 +62,7 @@ export interface AuthService {
   listAccounts(): Promise<DesktopAccountSwitcherSnapshot>;
   syncAccounts(): Promise<DesktopAccountSwitcherSnapshot>;
   switchAccount(accountKey: string): Promise<void>;
-  beginAddAccount(): Promise<DesktopLoginActionResult>;
+  beginAddAccount(service?: DesktopLoginServiceInput): Promise<DesktopLoginActionResult>;
   cancelAddAccount(): Promise<void>;
   enterLocalMode(): Promise<AuthState>;
   exitLocalMode(): Promise<AuthState>;
@@ -80,6 +83,7 @@ export function createAuthService(): AuthService {
     const normalized: AuthState = {
       user: rawState.user as User | null,
       serviceRealm: rawState.serviceRealm === 'cn' ? 'cn' : 'global',
+      service: rawState.service,
       mode: rawState.mode,
       dataOwnerId: rawState.dataOwnerId,
       ownerGeneration: rawState.ownerGeneration,
@@ -101,6 +105,7 @@ export function createAuthService(): AuthService {
       return {
         user: raw.user as User | null,
         serviceRealm: raw.serviceRealm === 'cn' ? 'cn' : 'global',
+        service: raw.service,
         mode: raw.mode,
         dataOwnerId: raw.dataOwnerId,
         ownerGeneration: raw.ownerGeneration,
@@ -112,6 +117,7 @@ export function createAuthService(): AuthService {
         hasAccountDeletionReceipt: raw.hasAccountDeletionReceipt === true,
         accountDeletionRestored: raw.accountDeletionRestored === true,
         credentialStoreUnavailable: raw.credentialStoreUnavailable === true,
+        recoveryError: raw.recoveryError,
       };
     },
 
@@ -139,8 +145,8 @@ export function createAuthService(): AuthService {
       return window.electronAPI.authSwitchAccount(accountKey);
     },
 
-    beginAddAccount() {
-      return window.electronAPI.authBeginAddAccount();
+    beginAddAccount(service) {
+      return window.electronAPI.authBeginAddAccount(service);
     },
 
     cancelAddAccount() {
@@ -191,5 +197,6 @@ export type {
   DesktopAccountDeletionChallenge,
   DesktopAccountSwitcherSnapshot,
   DesktopLoginAction,
+  DesktopLoginServiceInput,
   DesktopLoginActionResult,
 };

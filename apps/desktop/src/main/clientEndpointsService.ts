@@ -1,3 +1,4 @@
+import { normalizeLexServerOrigin } from '@cindy/auth-client';
 /**
  * clientEndpointsService.ts
  * ---------------------------------------------------------------------------
@@ -621,6 +622,7 @@ let resolvedRegion: ClientEndpointRegion | null = null;
 let crossRealmOrgLoginEnabled = BUILD_VARIANT !== 'dev';
 let realmManifestBaseUrls: RealmManifestBaseUrls = DEFAULT_REALM_MANIFEST_BASE_URLS;
 let activeSessionRealm: ClientEndpointRegion | null = null;
+let activeLexServerOrigin: string | null = null;
 const realmEndpointCache = new Map<ClientEndpointRegion, ClientEndpointMap>();
 /** 本次启动是否走了离线缓存(自动回退或用户确认,而非本次网络拉取)。 */
 let startedFromCachedManifest = false;
@@ -1222,6 +1224,12 @@ export function getClientEndpoint(key: ClientEndpointKey): string {
       `client endpoints not initialized (getClientEndpoint('${key}') called before initClientEndpoints)`,
     );
   }
+  if (activeLexServerOrigin !== null) {
+    if (key === 'authApiBaseUrl' || key === 'deviceLinkApiBaseUrl') return activeLexServerOrigin;
+    // Installation/update trust anchors are independent of the account service.
+    if (key === 'cdnBaseUrl' || key === 'mobileUpdateBaseUrl') return resolvedEndpoints[key];
+    return '';
+  }
   if (BUILD_SCOPED_ENDPOINT_KEYS.has(key) || activeSessionRealm === null) {
     return resolvedEndpoints[key];
   }
@@ -1312,9 +1320,20 @@ export function activateClientEndpointRealm(region: ClientEndpointRegion): void 
     throw new Error(`client endpoints for realm '${region}' not loaded`);
   }
   activeSessionRealm = region;
+  activeLexServerOrigin = null;
+}
+
+export function activateLexServerEndpoints(origin: string): void {
+  activeLexServerOrigin = normalizeLexServerOrigin(origin);
+  activeSessionRealm = null;
+}
+
+export function getActiveEndpointServiceKind(): 'cindy' | 'lex-server' {
+  return activeLexServerOrigin === null ? 'cindy' : 'lex-server';
 }
 
 export function resetClientEndpointRealm(): void {
+  activeLexServerOrigin = null;
   activeSessionRealm = resolvedRegion ?? BUILD_AUTH_REGION;
 }
 
@@ -1350,6 +1369,7 @@ export function resetClientEndpointsForTest(
   resolved?: ClientEndpointMap,
   options?: ResetClientEndpointsForTestOptions,
 ): void {
+  activeLexServerOrigin = null;
   resolvedEndpoints = resolved ?? null;
   resolvedRegion = resolved ? (options?.buildRegion ?? null) : null;
   startedFromCachedManifest = false;
