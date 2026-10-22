@@ -6313,14 +6313,14 @@
       "REGION_MISMATCH": "로그인 서비스 지역이 이 앱과 일치하지 않습니다.",
       "INVALID_SERVER_URL": "서버 원본 주소만 입력하세요. /admin, /api, 사용자 정보, 쿼리 및 프래그먼트는 제외하세요.",
       "SERVER_HTTPS_REQUIRED": "HTTPS를 사용하세요. HTTP는 로컬 개발 서버에서만 허용됩니다.",
-      "INVALID_SERVER_RESPONSE": "이 주소에서 규정된 Lex Server JSON 응답을 받지 못했습니다.",
+      "INVALID_SERVER_RESPONSE": "이 주소에서 규정된 {{appName}} Server JSON 응답을 받지 못했습니다.",
       "UNSUPPORTED_SERVER_AUTH": "이 서버는 필요한 이메일 로그인을 지원하지 않습니다.",
       "SERVER_UNAVAILABLE": "서버를 확인할 수 없습니다. 주소, HTTPS 인증서와 서비스 상태를 확인하세요.",
       "AUTH_ROTATION_UNCERTAIN": "인증 정보 갱신 결과를 확인할 수 없습니다. 이 서버에 다시 로그인하세요. 이전 인증 정보를 재전송하면 세션이 무효화될 수 있습니다."
     },
     "lexServer": {
       "address": "서버 주소",
-      "addressDescription": "조직의 Lex Server에 연결합니다.",
+      "addressDescription": "조직의 {{appName}} Server에 연결합니다.",
       "addressHint": "/admin 또는 /api를 제외한 기기 서비스의 루트 주소를 입력하세요. HTTPS를 사용하며 로컬 개발에서만 HTTP를 허용합니다.",
       "checking": "서버 확인 중…",
       "connectionFailed": "서버를 확인할 수 없습니다. 주소, HTTPS 인증서와 서비스 상태를 확인한 후 다시 시도하세요.",

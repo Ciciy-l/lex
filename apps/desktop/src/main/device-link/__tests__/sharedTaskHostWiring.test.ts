@@ -35,13 +35,14 @@ describe('SharedTask production host wiring', () => {
     const forget = vi.fn();
     const broadcast = vi.fn();
     let ownerScope = 'owner-a';
+    let serviceKey = 'lex-server:https://a.example';
     const run = evaluate('function() ' + declaration.body.getText(source), {
       client: { closeLink }, parseSharedTaskPeer,
       startSharedTaskRuntime: (value: typeof callbacks) => { callbacks = value; },
       getKnownControllerIds: () => [affected, otherMember, otherTask, 'owner-physical'],
       purgeRevokedController: purge, forgetControllerInvokeState: forget, broadcast,
       isAppSessionBoundaryPending: () => false,
-      authManager: { getCurrentUserId: () => ownerScope, getActiveAuthRealm: () => 'global' },
+      authManager: { getCurrentUserId: () => ownerScope, getActiveAuthServiceKey: () => serviceKey },
     });
     run();
     callbacks.revoke('task-a', 'member-a');
@@ -55,6 +56,12 @@ describe('SharedTask production host wiring', () => {
     expect(closeLink.mock.calls).toEqual([[affected, 'revoked', 'inbound'], [otherMember, 'revoked', 'inbound']]);
     ownerScope = 'owner-b';
     closeLink.mockClear(); broadcast.mockClear();
+    callbacks.revoke('task-a'); callbacks.changed('task-a');
+    expect(closeLink).not.toHaveBeenCalled();
+    expect(broadcast).not.toHaveBeenCalled();
+    // A matching membership on a different deployment must not revive old callbacks.
+    ownerScope = 'owner-a';
+    serviceKey = 'lex-server:https://b.example';
     callbacks.revoke('task-a'); callbacks.changed('task-a');
     expect(closeLink).not.toHaveBeenCalled();
     expect(broadcast).not.toHaveBeenCalled();

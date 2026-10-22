@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { accountVaultKey, authServiceScope, normalizeLexServerOrigin } from '@cindy/auth-client';
 
 import {
   LOGIN_PREPARING_UNLOCK_TIMEOUT_MS,
@@ -12,8 +13,15 @@ import {
 describe('desktop auth IPC validation', () => {
   it('accepts bounded opaque account keys and rejects malformed values', () => {
     expect(parseDesktopAccountKey('["global","membership-1"]')).toBe('["global","membership-1"]');
+    // The service-qualified tuple can exceed the old 512-character budget.
+    // It remains opaque here: Main resolves it only against the saved vault.
+    const origin = normalizeLexServerOrigin('https://' + [63, 63, 63, 57].map(size => 'a'.repeat(size)).join('.'));
+    const serviceKey = accountVaultKey(authServiceScope({ kind: 'lex-server', origin }), 'm'.repeat(256));
+    expect(serviceKey.length).toBeGreaterThan(512);
+    expect(parseDesktopAccountKey(serviceKey)).toBe(serviceKey);
+    expect(parseDesktopAccountKey('x'.repeat(4096))).toBe('x'.repeat(4096));
     expect(parseDesktopAccountKey('')).toBeNull();
-    expect(parseDesktopAccountKey('x'.repeat(513))).toBeNull();
+    expect(parseDesktopAccountKey('x'.repeat(4097))).toBeNull();
     expect(parseDesktopAccountKey({ accountKey: 'membership-1' })).toBeNull();
   });
 

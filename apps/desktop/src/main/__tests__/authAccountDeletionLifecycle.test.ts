@@ -41,12 +41,22 @@ describe('desktop auth account-deletion lifecycle', () => {
     const helperEnd = source.indexOf('\n}\n\n// ── PKCE', helperStart);
     const helperBody = source.slice(helperStart, helperEnd);
     expect(helperBody).toContain(
-      'serializeAccountDeletionReceiptRecord(realm, receiptToken, authIdentity)',
+      'serializeAccountDeletionReceiptRecord(authServiceRealm(realm), receiptToken, authIdentity)',
     );
+    // Receipts retain the legacy wire realm because this capability is Cindy-only.
+    // Lex must be rejected before either requesting or confirming a challenge.
+    const accessStart = source.indexOf('function requireAccountDeletionAccessToken()');
+    const accessBody = source.slice(accessStart, source.indexOf('\n}\n', accessStart));
+    expect(accessBody).toContain('!isCindyServiceActive()');
+    expect(accessBody).toContain("throw new AuthApiError('SERVICE_CAPABILITY_UNAVAILABLE'");
 
     const requestStart = source.indexOf('export async function requestAccountDeletionChallenge()');
     const requestEnd = source.indexOf('\n}\n\n/**\n * Confirm deletion', requestStart);
     const requestBody = source.slice(requestStart, requestEnd);
+    expect(requestBody.indexOf('requireAccountDeletionAccessToken()')).toBeGreaterThan(-1);
+    expect(requestBody.indexOf('requireAccountDeletionAccessToken()')).toBeLessThan(
+      requestBody.indexOf('createAuthClient(expectedRealm)'),
+    );
     expect(requestBody).toContain('const expectedIdentity = currentAccountDeletionAuthIdentity();');
     expect(requestBody).toContain('const expectedRealm = activeAuthRealm;');
     expect(requestBody).toMatch(
@@ -56,6 +66,10 @@ describe('desktop auth account-deletion lifecycle', () => {
     const confirmStart = source.indexOf('export async function confirmAccountDeletion(');
     const confirmEnd = source.indexOf('\n}\n\n/** Query the persisted receipt', confirmStart);
     const confirmBody = source.slice(confirmStart, confirmEnd);
+    expect(confirmBody.indexOf('requireAccountDeletionAccessToken()')).toBeGreaterThan(-1);
+    expect(confirmBody.indexOf('requireAccountDeletionAccessToken()')).toBeLessThan(
+      confirmBody.indexOf('const client = createAuthClient(receipt.realm)'),
+    );
     expect(confirmBody).toContain('receipt.version !== 2');
     expect(confirmBody).toContain('receipt.authIdentity !== expectedIdentity');
     expect(confirmBody).toContain('receipt.realm !== activeAuthRealm');

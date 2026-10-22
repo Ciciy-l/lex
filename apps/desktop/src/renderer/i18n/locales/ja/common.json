@@ -6313,14 +6313,14 @@
       "REGION_MISMATCH": "ログインサービスの地域がこのアプリと一致しません。",
       "INVALID_SERVER_URL": "サーバーのオリジンのみを入力してください。/admin、/api、認証情報、クエリ、フラグメントは含めないでください。",
       "SERVER_HTTPS_REQUIRED": "HTTPS を使用してください。HTTP はローカル開発サーバーのみ利用できます。",
-      "INVALID_SERVER_RESPONSE": "このアドレスから所定の Lex Server JSON 応答が返されませんでした。",
+      "INVALID_SERVER_RESPONSE": "このアドレスから所定の {{appName}} Server JSON 応答が返されませんでした。",
       "UNSUPPORTED_SERVER_AUTH": "このサーバーは必要なメール認証に対応していません。",
       "SERVER_UNAVAILABLE": "サーバーを確認できませんでした。アドレス、HTTPS 証明書、稼働状況を確認してください。",
       "AUTH_ROTATION_UNCERTAIN": "認証情報の更新結果が不明です。このサーバーに再度ログインしてください。古い認証情報を再送するとセッションが無効になる可能性があります。"
     },
     "lexServer": {
       "address": "サーバーアドレス",
-      "addressDescription": "組織の Lex Server に接続します。",
+      "addressDescription": "組織の {{appName}} Server に接続します。",
       "addressHint": "/admin や /api を含めず、デバイスサービスのルートアドレスを入力してください。HTTPS を使用します。ローカル開発のみ HTTP を利用できます。",
       "checking": "サーバーを確認中…",
       "connectionFailed": "サーバーを確認できませんでした。アドレス、HTTPS 証明書、稼働状態を確認して再試行してください。",

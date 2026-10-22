@@ -74,7 +74,7 @@ export function LoginServiceSelection({
           </div>
         )}
         {error && <p role="alert" className="mt-3 text-13 text-[var(--error-fg)]">{t(
-          'login.errors.' + error, { defaultValue: t('login.lexServer.connectionFailed') },
+          `login.errors.${error}`, { defaultValue: t('login.lexServer.connectionFailed') },
         )}</p>}
         <div className="mt-6 flex justify-end">
           {serverMode && !busy && <Button variant="secondary" className="mr-2" onClick={() => { setServerMode(false); setError(null); }}>{t('login.back')}</Button>}

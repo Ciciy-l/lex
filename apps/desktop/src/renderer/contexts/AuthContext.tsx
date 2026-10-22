@@ -368,7 +368,9 @@ export function AuthProvider({
         applyIncomingState(state);
         setHasAccountDeletionReceipt(state.hasAccountDeletionReceipt);
         setAccountDeletionRestored(state.accountDeletionRestored);
-        if (state.recoveryError) toast.error(t('login.errors.' + state.recoveryError));
+        if (state.recoveryError === 'AUTH_ROTATION_UNCERTAIN') {
+          toast.error(t('login.errors.AUTH_ROTATION_UNCERTAIN'));
+        }
       })
       .catch((error: unknown) => {
         // 初始化异常归一未登录(implementation-plan Step 3b v6.3):此前该链仅

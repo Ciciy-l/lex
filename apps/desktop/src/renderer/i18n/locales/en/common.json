@@ -6315,14 +6315,14 @@
       "REGION_MISMATCH": "The sign-in service region does not match this app.",
       "INVALID_SERVER_URL": "Enter only the server origin, without /admin, /api, credentials, query or fragment.",
       "SERVER_HTTPS_REQUIRED": "Use HTTPS. HTTP is allowed only for a local development server.",
-      "INVALID_SERVER_RESPONSE": "This address did not return the expected Lex Server JSON responses.",
+      "INVALID_SERVER_RESPONSE": "This address did not return the expected {{appName}} Server JSON responses.",
       "UNSUPPORTED_SERVER_AUTH": "This server does not support the required email sign-in.",
       "SERVER_UNAVAILABLE": "The server could not be verified. Check the address, HTTPS certificate and service status.",
       "AUTH_ROTATION_UNCERTAIN": "The refresh result is unknown. Sign in again to this server; retrying the old credential could revoke the session."
     },
     "lexServer": {
       "address": "Server address",
-      "addressDescription": "Connect to your organization’s Lex Server.",
+      "addressDescription": "Connect to your organization’s {{appName}} Server.",
       "addressHint": "Enter the device service origin, without /admin or /api. Use HTTPS; HTTP is allowed for local development.",
       "checking": "Checking server…",
       "connectionFailed": "Could not verify the server. Check the address, HTTPS certificate and service status, then try again.",

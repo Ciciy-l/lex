@@ -6313,14 +6313,14 @@
       "REGION_MISMATCH": "登录服务区域与当前客户端不匹配",
       "INVALID_SERVER_URL": "请填写服务器根地址，不含 /admin、/api、用户信息、查询或片段。",
       "SERVER_HTTPS_REQUIRED": "请使用 HTTPS。HTTP 仅可用于本机开发服务。",
-      "INVALID_SERVER_RESPONSE": "此地址未返回符合约定的 Lex Server JSON 响应。",
+      "INVALID_SERVER_RESPONSE": "此地址未返回符合约定的 {{appName}} Server JSON 响应。",
       "UNSUPPORTED_SERVER_AUTH": "此服务器不支持所需的邮箱登录。",
       "SERVER_UNAVAILABLE": "无法验证服务器。请检查地址、HTTPS 证书和服务状态。",
       "AUTH_ROTATION_UNCERTAIN": "无法确认凭据刷新是否成功。请重新登录此服务器；重试旧凭据可能导致登录状态失效。"
     },
     "lexServer": {
       "address": "服务器地址",
-      "addressDescription": "连接你所在组织的 Lex Server。",
+      "addressDescription": "连接你所在组织的 {{appName}} Server。",
       "addressHint": "填写设备服务的根地址，不含 /admin 或 /api。使用 HTTPS；本机开发可用 HTTP。",
       "checking": "正在检查服务器…",
       "connectionFailed": "无法验证服务器。请检查地址、HTTPS 证书和服务状态后重试。",

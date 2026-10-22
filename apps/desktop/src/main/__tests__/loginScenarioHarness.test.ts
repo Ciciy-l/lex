@@ -1,17 +1,17 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import ts from 'typescript';
+import { describe, expect, it, vi } from 'vitest';
 
-import { CindyAuthClient } from '@cindy/auth-client';
+import { CindyAuthClient, authServiceRealm, type AuthServiceScope } from '@cindy/auth-client';
 import { resolveLoginScenarioFetch } from '@cindy/auth-client/fixtures';
 
 /**
  * 桌面端登录 scenario harness 接线测试(implementation-plan Step 0 WHAT4 / SC-1)。
  *
  * 分两层:
- * 1. 注入点静态断言(authManager.ts 依赖重、不宜整模块加载,沿用本目录
- *    authLoginFlowReset.test.ts 的读源码断言模式):guard 形态与「真实 client +
- *    scenario fetch 构造参数注入」形态不许漂移。
+ * 1. 静态 import / 构建排除守卫,以及提取真实 createAuthClient 的运行断言:
+ *    依赖注入不加载 Electron,但 client、schema 与 scenario resolver 均使用真实实现。
  * 2. guard 行为断言(fixtures 包纯函数):app.isPackaged(devModeActive=false)
  *    下 harness 全部失效——production-mode 断言。
  */
@@ -23,8 +23,32 @@ const viteMainConfigSource = readFileSync(
   resolve(process.cwd(), 'vite.main.config.ts'),
   'utf8',
 );
+const ast = ts.createSourceFile('authManager.ts', authManagerSource, ts.ScriptTarget.Latest, true);
+const factory = ast.statements.find((node): node is ts.FunctionDeclaration =>
+  ts.isFunctionDeclaration(node) && node.name?.text === 'createAuthClient');
+if (!factory) throw new Error('Missing production createAuthClient');
+const factoryCode = ts.transpileModule(factory.getText(ast), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText;
 
-describe('authManager 注入点(静态源码断言)', () => {
+/** Exercise the production injection point with an in-memory network boundary. */
+function createClient(realm: AuthServiceScope, packaged = false) {
+  const networkFetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(
+    JSON.stringify({ region: authServiceRealm(realm), email: true, phone: false, social: [], attribution: 'email' }),
+    { headers: { 'Content-Type': 'application/json' } },
+  ));
+  const resolveScenario = vi.fn(resolveLoginScenarioFetch);
+  const deps = {
+    CindyAuthClient, authServiceRealm, resolveLoginScenarioFetch: resolveScenario,
+    app: { isPackaged: packaged }, net: { fetch: networkFetch }, deviceId: 'harness-device',
+    authServerUrl: () => realm === 'cn' || realm === 'global' ? 'https://auth.scenario.invalid' : realm.slice('lex-server:'.length),
+    getResolvedMainLocale: () => 'en', process: { env: { XDT_LOGIN_SCENARIO: 'providers:cn-social' } },
+  };
+  const build = new Function('deps', 'const {' + Object.keys(deps).join(',') + '}=deps;' + factoryCode + ';return createAuthClient;')(deps) as (scope: AuthServiceScope) => CindyAuthClient;
+  return { client: build(realm), networkFetch, resolveScenario };
+}
+
+describe('authManager scenario 注入点', () => {
   it('经静态 import 使用 fixtures(main 禁运行时动态 import)', () => {
     expect(authManagerSource).toContain(
       "import { resolveLoginScenarioFetch } from '@cindy/auth-client/fixtures'",
@@ -32,17 +56,28 @@ describe('authManager 注入点(静态源码断言)', () => {
     expect(authManagerSource).not.toContain("import('@cindy/auth-client/fixtures')");
   });
 
-  it('guard 写死为 !app.isPackaged + XDT_LOGIN_SCENARIO(附录 A 值域 env)', () => {
-    expect(authManagerSource).toContain('devModeActive: !app.isPackaged');
-    expect(authManagerSource).toContain('scenario: process.env.XDT_LOGIN_SCENARIO');
+  it('packaged Main disables the configured scenario and uses the real client transport', async () => {
+    const harness = createClient('cn', true);
+    expect((await harness.client.getProviders()).social).toEqual([]);
+    expect(harness.resolveScenario).toHaveBeenCalledWith({ devModeActive: false, scenario: 'providers:cn-social', region: 'cn' });
+    expect(harness.networkFetch).toHaveBeenCalledOnce();
   });
 
-  it('注入形态 = 真实 CindyAuthClient + fetch 构造参数(scenarioFetch ?? 真 fetch)', () => {
-    expect(authManagerSource).toContain(
-      'fetch: scenarioFetch ?? (async (input, init) => net.fetch(input, init as RequestInit))',
-    );
+  it.each(['cn', 'global'] as const)('injects the scenario fetch into a real Cindy client for %s in development', async realm => {
+    const harness = createClient(realm);
+    expect((await harness.client.getProviders()).social).toEqual(['apple']);
+    expect(harness.resolveScenario).toHaveBeenCalledWith({ devModeActive: true, scenario: 'providers:cn-social', region: realm });
+    expect(harness.networkFetch).not.toHaveBeenCalled();
     // 不替换 client、不 fake 方法:注入点仍是唯一的 new CindyAuthClient 构造
     expect(authManagerSource.match(/new CindyAuthClient\(/g)).toHaveLength(1);
+  });
+
+  it('never injects a Cindy scenario for Lex Server and preserves its credential-free transport', async () => {
+    const harness = createClient('lex-server:https://lex.scenario.invalid');
+    expect((await harness.client.getProviders()).social).toEqual([]);
+    expect(harness.resolveScenario).toHaveBeenCalledWith({ devModeActive: true, scenario: undefined, region: 'global' });
+    expect(harness.networkFetch).toHaveBeenCalledOnce();
+    expect(harness.networkFetch).toHaveBeenCalledWith('https://lex.scenario.invalid/api/auth/providers', expect.objectContaining({ method: 'GET', redirect: 'error', credentials: 'omit' }));
   });
 
   it('vite.main.config 挂了生产 stub alias(build-time 排除双保险)', () => {
