@@ -1,35 +1,49 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import ts from 'typescript';
-import { expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
+import { getMobileAuthOwner, isMobileAuthOwnerCurrent, setMobileAuthOwner } from '@/auth/authOwnerGeneration';
 
 // Execute the production adapter: a second copy of these ordering checks would
 // not catch a stale REST response being wired to the live presence handler.
 const source = ts.createSourceFile('context.tsx', readFileSync(resolve(process.cwd(), 'src/device-link/DeviceLinkContext.tsx'), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 function fixture() {
+  setMobileAuthOwner('roster-fixture', 'global');
   let expression: ts.Expression | undefined;
+  let currentExpression: ts.Expression | undefined;
   const visit = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && node.name.getText(source) === 'connectionCurrent') currentExpression = node.initializer;
     if (ts.isBinaryExpression(node) && node.left.getText(source) === 'rosterConsumerRef.current'
       && ts.isArrowFunction(node.right)) expression = node.right;
     ts.forEachChild(node, visit);
   };
   visit(source);
-  if (!expression) throw new Error('Missing roster consumer');
+  if (!expression || !currentExpression) throw new Error('Missing roster consumer or owner fence');
   const client = { getStatus: () => 'online' };
   const catalogRefreshDeviceIds = new Set<string>();
   const catalogRefresh = { cancel: vi.fn() };
   const bindings = { client, clientRef: { current: client }, connectionEpochRef: { current: 1 },
+    connectionOwner: getMobileAuthOwner(), isMobileAuthOwnerCurrent,
     presenceAvailabilityEpochsRef: { current: { next: 0, byDevice: new Map<string, number>() } },
     remoteResponseEvidenceEpochs: { next: 0, byDevice: new Map<string, number>() },
     presenceAvailableByDeviceRef: { current: new Map<string, boolean>() },
     presenceUnavailableVerdictsRef: { current: new Map<string, { kind: string }>() },
     applyPresence: vi.fn(), catalogRefreshDeviceIds, catalogRefresh,
   };
-  const compiled = ts.transpileModule(`const create = ${expression.getText(source)};`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const compiled = ts.transpileModule(`const connectionCurrent = ${currentExpression.getText(source)}; const create = ${expression.getText(source)};`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   const create = new Function(...Object.keys(bindings), `${compiled}\nreturn create;`)(...Object.values(bindings));
   return { ...bindings, apply: create() as (devices: unknown[]) => void };
 }
 const device = { deviceId: 'host', name: 'Computer', online: false, remoteControlEnabled: true, isSelf: false };
+afterEach(() => setMobileAuthOwner(null));
+
+it('does not publish an old roster after its service owner changes', () => {
+  const f = fixture();
+  setMobileAuthOwner('roster-fixture', 'cn');
+  f.apply([device]);
+  expect(f.applyPresence).not.toHaveBeenCalled();
+  expect(f.catalogRefresh.cancel).not.toHaveBeenCalled();
+});
 
 it('seeds an already offline host and does not reset unchanged online links', () => {
   const f = fixture();

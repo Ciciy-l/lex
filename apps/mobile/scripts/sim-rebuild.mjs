@@ -54,7 +54,7 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mobileClientBundleEnv } from '../../../scripts/shared/client-endpoint-build-env.mjs';
+import { extractMobileDevVariantArgs, mobileSimulatorBuildEnv } from './lib/mobile-dev-variant.mjs';
 import {
   resolvePnpmInvocation,
   usablePnpmExecPath,
@@ -63,14 +63,13 @@ import { ensureMobileEnv, formatMobileEnvStatus } from './ensure-mobile-env.mjs'
 import { computeFingerprintReport, parseFingerprintCliOutput } from './ci-fingerprint.mjs';
 import {
   extractMobileDevRegionArgs,
-  withLocalMobileRegionConfig,
 } from './lib/mobile-dev-region.mjs';
 import {
   ensureMobileLocalRegionConfig,
   formatMobileLocalConfigStatus,
 } from './lib/mobile-local-config.mjs';
 import { podInstallBounded } from './sim-pod-install.mjs';
-import { ensureWindowsAndroidEmulator, resolveAndroidSdkTools } from './lib/android-simulator.mjs';
+import { ensureWindowsAndroidEmulator, resolveAndroidSdkTools, extractAndroidSimulatorArgs } from './lib/android-simulator.mjs';
 import { resolveJavaRuntimeEnv } from './java-runtime-env.mjs';
 import {
   cwdOfPid,
@@ -86,7 +85,10 @@ const mobileDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const worktreeRoot = resolve(mobileDir, '../..');
 const iosDir = join(mobileDir, 'ios');
 const buildDir = join(iosDir, 'build');
-const { region, passthrough } = extractMobileDevRegionArgs(process.argv.slice(2));
+const { region, passthrough: regionPassthrough } = extractMobileDevRegionArgs(process.argv.slice(2));
+const { lex, passthrough: variantPassthrough } = extractMobileDevVariantArgs(regionPassthrough);
+const androidArgs = extractAndroidSimulatorArgs(variantPassthrough);
+const { passthrough } = androidArgs;
 const clean = passthrough.includes('--clean');
 const forceBuild = passthrough.includes('--force-build');
 const buildOnly = passthrough.includes('--build-only');
@@ -101,12 +103,10 @@ if (
   console.error('✗ --udid 必须是精确的 Simulator UUID。');
   process.exit(1);
 }
-const localConfigResult = ensureMobileLocalRegionConfig({ mobileDir });
-const localConfigStatus = formatMobileLocalConfigStatus(localConfigResult, worktreeRoot);
+const localConfigResult = lex ? null : ensureMobileLocalRegionConfig({ mobileDir });
+const localConfigStatus = localConfigResult ? formatMobileLocalConfigStatus(localConfigResult, worktreeRoot) : null;
 if (localConfigStatus) console.log(localConfigStatus);
-const buildEnv = withLocalMobileRegionConfig(
-  mobileClientBundleEnv({ authRegion: region }),
-);
+const buildEnv = mobileSimulatorBuildEnv(region, { lex });
 const devProcessEnv = { ...process.env, ...buildEnv };
 
 // fingerprint 产物缓存位置与保留份数。跨 worktree 共享;条目按 LRU(目录 mtime)清理。
@@ -218,7 +218,7 @@ async function rebuildAndroidSimulator() {
     : null;
   const emulator = buildOnly
     ? { serial: null, adb: null, sdkRoot: androidTools?.sdkRoot }
-    : await ensureWindowsAndroidEmulator({ port: 8081 });
+    : await ensureWindowsAndroidEmulator({ avd: androidArgs.avd, port: 8081 });
   const sdkRoot = emulator.sdkRoot ?? androidTools?.sdkRoot;
   const androidDir = join(mobileDir, 'android');
   const javaEnv = resolveJavaRuntimeEnv({
@@ -231,7 +231,7 @@ async function rebuildAndroidSimulator() {
   const gradle = process.platform === 'win32' ? 'gradlew.bat' : './gradlew';
   console.log('› Android gradle assembleDebug');
   if (process.platform === 'win32') {
-    run('cmd.exe', ['/d', '/s', '/c', 'gradlew.bat assembleDebug'], {
+    run('cmd.exe', ['/d', '/s', '/c', '.\\gradlew.bat assembleDebug'], {
       cwd: androidDir,
       env: javaEnv,
       windowsVerbatimArguments: true,

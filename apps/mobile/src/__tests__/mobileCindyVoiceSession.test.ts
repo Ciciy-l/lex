@@ -1,4 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+const serviceFixture = vi.hoisted(() => ({ lex: false }));
+vi.mock('@/auth/authService', () => ({ getActiveMobileAuthService: () => serviceFixture.lex
+  ? { kind: 'lex-server', origin: 'https://lex.fixture.invalid' } : null }));
 
 vi.mock('expo-constants', () => ({
   default: {
@@ -63,6 +66,19 @@ function makeContext(apiFetch: unknown, refinerProvider: string | undefined = CI
 }
 
 describe('MobileCindyVoiceRunContext', () => {
+  it('rejects Lex hosted voice before reading a token or calling the official service', async () => {
+    serviceFixture.lex = true;
+    const token = vi.fn(async () => 'fixture-lex');
+    const refresh = vi.fn(async () => 'fixture-lex');
+    const apiFetch = vi.fn();
+    try {
+      const context = new MobileCindyVoiceRunContext(token, refresh, apiFetch, 'zh-CN', CINDY_MANAGED_REFINER_PROVIDER);
+      await expect(context.createAsrConnection('qwen-asr-flash-realtime')).rejects.toThrow('SERVICE_CAPABILITY_UNAVAILABLE');
+      expect(apiFetch).not.toHaveBeenCalled();
+      expect(token).not.toHaveBeenCalled();
+      expect(refresh).not.toHaveBeenCalled();
+    } finally { serviceFixture.lex = false; }
+  });
   it('creates managed ASR sessions through the authenticated API wrapper with the auto refiner marker', async () => {
     const apiFetch = vi.fn(async () => sessionResponse());
     const context = makeContext(apiFetch);

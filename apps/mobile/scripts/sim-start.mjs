@@ -29,7 +29,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mobileClientBundleEnv } from '../../../scripts/shared/client-endpoint-build-env.mjs';
+import { extractMobileDevVariantArgs, mobileSimulatorBuildEnv } from './lib/mobile-dev-variant.mjs';
 import {
   resolvePnpmInvocation,
   usablePnpmExecPath,
@@ -41,7 +41,6 @@ import {
 } from './lib/android-simulator.mjs';
 import {
   extractMobileDevRegionArgs,
-  withLocalMobileRegionConfig,
 } from './lib/mobile-dev-region.mjs';
 import {
   classifySimMetroListener,
@@ -69,18 +68,17 @@ const worktreeRoot = resolve(mobileDir, '../..');
 const DEFAULT_PORT = 8081;
 const { region, passthrough: regionPassthrough } = extractMobileDevRegionArgs(process.argv.slice(2));
 const { takeover, passthrough: takeoverPassthrough } = extractSimTakeoverArgs(regionPassthrough);
-const androidArgs = extractAndroidSimulatorArgs(takeoverPassthrough);
+const { lex, passthrough: variantPassthrough } = extractMobileDevVariantArgs(takeoverPassthrough);
+const androidArgs = extractAndroidSimulatorArgs(variantPassthrough);
 const portArgs = extractSimMetroPortArgs(androidArgs.passthrough, DEFAULT_PORT);
 if (takeover && portArgs.explicit) {
   console.error(`✗ --takeover 只用于隐式默认端口 ${DEFAULT_PORT},不能和显式 --port 混用。`);
   process.exit(1);
 }
-const localConfigResult = ensureMobileLocalRegionConfig({ mobileDir });
-const localConfigStatus = formatMobileLocalConfigStatus(localConfigResult, worktreeRoot);
+const localConfigResult = lex ? null : ensureMobileLocalRegionConfig({ mobileDir });
+const localConfigStatus = localConfigResult ? formatMobileLocalConfigStatus(localConfigResult, worktreeRoot) : null;
 if (localConfigStatus) console.log(localConfigStatus);
-const buildEnv = withLocalMobileRegionConfig(
-  mobileClientBundleEnv({ authRegion: region }),
-);
+const buildEnv = mobileSimulatorBuildEnv(region, { lex });
 
 const envResult = ensureMobileEnv({ mobileDir, authRegion: region, endpointEnv: buildEnv });
 console.log(formatMobileEnvStatus(envResult, worktreeRoot));
@@ -89,7 +87,7 @@ const envFingerprint = metroEnvironmentFingerprint({
   env: buildEnv,
   files: {
     '.env': readFileSync(envResult.envPath, 'utf8'),
-    'scripts/self-host-regions.json': readFileSync(localConfigResult.configPath, 'utf8'),
+    ...(localConfigResult ? { 'scripts/self-host-regions.json': readFileSync(localConfigResult.configPath, 'utf8') } : {}),
   },
 });
 

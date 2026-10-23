@@ -11,7 +11,7 @@ describe('sim-rebuild script invariants', () => {
   const source = readFileSync(resolve(process.cwd(), 'scripts/sim-rebuild.mjs'), 'utf8');
 
   it('runs pod install itself via the bounded runner, instead of letting prebuild own it', () => {
-    expect(source).toContain('const buildEnv = withLocalMobileRegionConfig(');
+    expect(source).toContain('const buildEnv = mobileSimulatorBuildEnv(region, { lex });');
     // prebuild 不再隐式跑 pod install(它的失败重试会带 --repo-update 打 CDN 且无界)。
     expect(source).toContain("['exec', 'expo', 'prebuild', '-p', 'ios', '--no-install']");
     // pod 执行策略(本地 specs 优先 / --repo-update 重试 / 空转看门狗 / UTF-8 LANG)
@@ -60,7 +60,7 @@ describe('sim-rebuild script invariants', () => {
   });
 
   it('uses the Android debug client on Windows without invoking xcrun', () => {
-    expect(source).toContain("import { ensureWindowsAndroidEmulator, resolveAndroidSdkTools } from './lib/android-simulator.mjs';");
+    expect(source).toContain("import { ensureWindowsAndroidEmulator, resolveAndroidSdkTools, extractAndroidSimulatorArgs } from './lib/android-simulator.mjs';");
     expect(source).toContain("probeMetroOwnership");
     expect(source).toContain('const ownership = probeMetroOwnership(8081);');
     expect(source).toContain('if (!await portInUse(8081)) return true;');
@@ -75,7 +75,7 @@ describe('sim-rebuild script invariants', () => {
     expect(source).toContain('await rebuildAndroidSimulator();');
     expect(source).toContain("'--platform', 'android', '--no-install'");
     expect(source).toContain("const gradle = process.platform === 'win32' ? 'gradlew.bat' : './gradlew';");
-    expect(source).toContain("run('cmd.exe', ['/d', '/s', '/c', 'gradlew.bat assembleDebug']");
+    expect(source).toContain("run('cmd.exe', ['/d', '/s', '/c', '.\\\\gradlew.bat assembleDebug']");
     expect(source).not.toContain('process.env.ComSpec');
     expect(source).toContain('resolvePnpmInvocation');
     expect(source).toContain('function runPnpm(args, opts = {})');

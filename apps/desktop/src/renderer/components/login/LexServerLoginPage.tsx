@@ -1,19 +1,42 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { isValidEmail } from '@cindy/auth-client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useAuth } from '@/contexts/AuthContext';
+import { useLoginHandoff } from '@/contexts/LoginHandoffContext';
 import { useLogin } from '@/hooks/useLogin';
 import { WindowControls } from '@/components/title-bar/WindowControls';
 import { WINDOW_DRAG_STYLE, WINDOW_NO_DRAG_STYLE } from '@/components/layout/windowDrag';
 import { useResendCountdown } from './useResendCountdown';
 
+const AccountSwitcherDialog = lazy(() => import('@/components/sidebar/AccountSwitcherDialog').then(module => ({ default: module.AccountSwitcherDialog })));
+
 /** Presentation only: uses the same Main-owned login, tickets and commit transaction as Cindy. */
-export function LexServerLoginPage({ onClose }: { onClose: () => void }) {
+export function LexServerLoginPage({ onClose, intent = 'add-account' }: {
+  onClose: () => void;
+  intent?: 'sign-in' | 'add-account';
+}) {
   const { t } = useTranslation();
   const { loginService } = useAuth();
-  const { loginState, dispatch, isLoading, errorCode, clearError } = useLogin({ autoLoad: false });
+  const { loginState, dispatch, isLoading, errorCode, clearError, listAccounts } = useLogin({ autoLoad: false });
+  const { reportLoginPanelMounted, reportLoginPanelUnmounted } = useLoginHandoff();
+  const [hasSavedAccounts, setHasSavedAccounts] = useState(false);
+  const [accountSwitcherOpen, setAccountSwitcherOpen] = useState(false);
+  const accountSwitcherTriggerRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (intent !== 'sign-in') return;
+    reportLoginPanelMounted();
+    return reportLoginPanelUnmounted;
+  }, [intent, reportLoginPanelMounted, reportLoginPanelUnmounted]);
+  useEffect(() => {
+    if (intent !== 'sign-in') return;
+    let active = true;
+    void listAccounts().then(snapshot => {
+      if (active) setHasSavedAccounts(snapshot.accounts.length > 0);
+    }, () => { if (active) setHasSavedAccounts(false); });
+    return () => { active = false; };
+  }, [intent, listAccounts]);
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const verification = loginState?.step === 'verification-code' ? loginState : null;
@@ -31,7 +54,7 @@ export function LexServerLoginPage({ onClose }: { onClose: () => void }) {
   const error = errorCode ?? (loginState?.step === 'error' ? loginState.code : null);
   const origin = loginService?.kind === 'lex-server' ? loginService.origin : '';
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[var(--surface)] px-6 py-16 text-[var(--text-primary)]">
+    <div className="relative z-[9990] flex min-h-screen items-center justify-center bg-[var(--surface)] px-6 py-16 text-[var(--text-primary)]">
       <div className="absolute inset-x-0 top-0 flex h-[46px] justify-end" style={WINDOW_DRAG_STYLE}>
         {window.electronAPI?.platform !== 'darwin' && <div style={WINDOW_NO_DRAG_STYLE}><WindowControls /></div>}
       </div>
@@ -71,10 +94,12 @@ export function LexServerLoginPage({ onClose }: { onClose: () => void }) {
         ) : <p role="status" className="mt-6 text-13">{t('login.working')}</p>}
         {error && <p role="alert" className="mt-3 text-13 text-[var(--error-fg)]">{t(`login.errors.${error}`, { defaultValue: t('login.errors.fallback') })}</p>}
         <div className="mt-6 flex justify-end gap-2">
+          {hasSavedAccounts && <Button ref={accountSwitcherTriggerRef} variant="secondary" data-testid="login-account-switcher" onClick={() => setAccountSwitcherOpen(true)}>{t('sidebar.accountSwitcher.title')}</Button>}
           {verification && <Button variant="secondary" disabled={isLoading} onClick={reset}>{t('login.back')}</Button>}
           <Button variant="secondary" onClick={onClose}>{t('logic.confirm.cancel')}</Button>
         </div>
       </section>
+      {accountSwitcherOpen && <Suspense fallback={null}><AccountSwitcherDialog open onOpenChange={setAccountSwitcherOpen} triggerRef={accountSwitcherTriggerRef} onAddAccount={() => { setAccountSwitcherOpen(false); reset(); }} /></Suspense>}
     </div>
   );
 }

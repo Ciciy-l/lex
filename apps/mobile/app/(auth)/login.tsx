@@ -1,4 +1,5 @@
 import { SystemNavigationBack, useSystemNavigationBack } from '@/platform/chrome/SystemNavigationBack';
+import { MobileServiceLogin } from '@/auth/MobileServiceLogin';
 import { useAdaptiveWindow } from '@/platform/AdaptiveWindowContext';
 import { resolveLoginGroupPlacement } from '@/auth/loginGroupPlacement';
 import { Stack } from 'expo-router';
@@ -111,11 +112,18 @@ import { fontWeight, iconSize, iconStroke, lineHeight, loginPalettes, loginSizes
 export interface LoginScreenProps {
   additionalAccount?: boolean;
   onClose?: () => void;
+  onServiceBack?: () => void;
 }
 
-export function LoginScreen({
+export function LoginScreen(props: LoginScreenProps = {}) {
+  if (!IS_LEX_MOBILE || Platform.OS === 'ios') return <CindyLoginScreen {...props} />;
+  return <MobileServiceLogin onClose={props.onClose} renderCindy={back => <CindyLoginScreen {...props} onClose={back} onServiceBack={back} />} />;
+}
+
+function CindyLoginScreen({
   additionalAccount = false,
   onClose,
+  onServiceBack,
 }: LoginScreenProps = {}) {
   // 订阅语言变化:本屏文案走 loginText()(非响应式),useTranslation 保证
   // 手动语言 override 恢复/切换时本屏跟着重渲(P2-a:不依赖 auth 重渲兜底)。
@@ -444,14 +452,14 @@ export function LoginScreen({
   // SSO 组织标识 子视图退回首屏输入;其余步骤(选方式/验证码/选身份/绑定)整体重置。
   const step = auth.loginState?.step;
   const backAction =
-    step === 'identifier'
+    !step ? onServiceBack ?? null : step === 'identifier'
       ? ssoOrgMode
         ? () => {
             auth.clearAuthError();
             setSsoOrgHistoryOpen(false);
             setSsoOrgMode(false);
           }
-        : null
+        : onServiceBack ?? null
       : step && step !== 'browser-redirect' && step !== 'completed'
         ? reset
         : null;

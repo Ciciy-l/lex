@@ -2,12 +2,13 @@
 
 import { useState } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
 const auth = vi.hoisted(() => ({
   isInitializing: false,
   canEnterApp: true,
+  dataOwnerId: 'test-owner',
   loginState: { step: 'identifier' },
   beginAddAccount: vi.fn(async () => ({
     success: true,
@@ -16,9 +17,10 @@ const auth = vi.hoisted(() => ({
   cancelAddAccount: vi.fn(async () => undefined),
 }));
 
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
-}));
+vi.mock('react-i18next', () => {
+  const t = (key: string) => key;
+  return { useTranslation: () => ({ t }) };
+});
 
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => auth,
@@ -46,6 +48,7 @@ vi.mock('../LoginPage', () => ({
 
 import { AppShellCoverProvider, useAppShellCover } from '@/contexts/AppShellCoverContext';
 import { AddAccountLoginPage } from '../AddAccountLoginPage';
+import { LocalDbGate } from '@/components/auth/LocalDbGate';
 
 function CoverProbe() {
   const { coverHeld, localDbGateStatus } = useAppShellCover();
@@ -67,7 +70,12 @@ function Harness() {
       <MemoryRouter
         initialEntries={[{ pathname: '/add-account', state: { returnTo: '/settings' } }]}
       >
-        {showAddAccount ? <AddAccountLoginPage /> : null}
+        <Routes>
+          <Route element={<LocalDbGate />}>
+            <Route path="/add-account" element={showAddAccount ? <AddAccountLoginPage /> : null} />
+            <Route path="/settings" element={null} />
+          </Route>
+        </Routes>
         <CoverProbe />
         <LocationProbe />
         <button type="button" onClick={() => setShowAddAccount(false)}>
@@ -77,6 +85,14 @@ function Harness() {
     </AppShellCoverProvider>
   );
 }
+
+beforeEach(() => {
+  Object.defineProperty(window, 'electronAPI', { configurable: true, value: {
+    platform: 'darwin',
+    localDb: { ensureReady: async () => ({ ready: true }), maintenance: { getLastResult: async () => null } },
+    appReadyForBot: async () => undefined,
+  } });
+});
 
 afterEach(() => {
   cleanup();
@@ -100,7 +116,7 @@ describe('AddAccountLoginPage app-shell cover', () => {
     await waitFor(() => expect(auth.beginAddAccount).toHaveBeenCalledOnce());
 
     fireEvent.click(screen.getByRole('button', { name: 'leave route' }));
-    expect(screen.getByTestId('cover-state').textContent).toBe('held:pending');
+    expect(screen.getByTestId('cover-state').textContent).toBe('open:ready');
     await waitFor(() => expect(auth.cancelAddAccount).toHaveBeenCalledOnce());
   });
 

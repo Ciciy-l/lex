@@ -1,4 +1,4 @@
-import { accountVaultKey, type AuthRegion } from '@cindy/auth-client';
+import { accountVaultKey, type AuthServiceScope } from '@cindy/auth-client';
 
 export interface MobileAuthOwnerGeneration {
   /** Bare membership ID retained for creation guards and recovery ledgers. */
@@ -24,7 +24,7 @@ let current: MobileAuthOwnerGeneration = {
 /** Publish the account owner synchronously, before React state updates settle. */
 export function setMobileAuthOwner(
   accountId: string | null | undefined,
-  realm: AuthRegion = 'global',
+  realm: AuthServiceScope = 'global',
 ): void {
   publishMobileAuthOwner(accountId, realm, false);
 }
@@ -36,7 +36,7 @@ export function invalidateMobileAuthOwnerForSwitch(): void {
 
 function publishMobileAuthOwner(
   accountId: string | null | undefined,
-  realm: AuthRegion,
+  realm: AuthServiceScope,
   switching: boolean,
 ): void {
   const normalized = accountId?.trim() ?? '';

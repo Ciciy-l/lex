@@ -6,6 +6,7 @@ import {
 import { ensureDeviceId } from "@/auth/deviceId";
 import { getActiveMobileSessionRealm } from "@/config/env";
 import { remoteCredentials } from "../../modules/cindy-remote-credentials/src";
+import { isCindyMobileSession } from '@/auth/authService';
 
 let resetBarrier: Promise<void> = Promise.resolve();
 subscribeMobileAuthOwner(() => {
@@ -17,6 +18,7 @@ subscribeMobileAuthOwner(() => {
 export async function configureCredentialIdentity(
   token: string,
 ): Promise<void> {
+  if (!isCindyMobileSession()) throw new Error('SERVICE_CAPABILITY_UNAVAILABLE');
   if (!remoteCredentials) return;
   const owner = getMobileAuthOwner(),
     realm = getActiveMobileSessionRealm();
@@ -34,6 +36,7 @@ export async function credentialPushHeaders(
   method: string,
   body: unknown,
 ): Promise<Record<string, string>> {
+  if (!isCindyMobileSession()) throw new Error('SERVICE_CAPABILITY_UNAVAILABLE');
   if (!remoteCredentials) return {};
   if (method !== "PUT" && method !== "DELETE")
     throw new Error("CREDENTIAL_INVALID_MESSAGE");
@@ -56,6 +59,7 @@ export async function credentialPushHeaders(
 }
 
 export function updateCredentialAccessToken(token: string | null): void {
+  if (!isCindyMobileSession()) return;
   const owner = getMobileAuthOwner(),
     realm = getActiveMobileSessionRealm(),
     native = remoteCredentials;

@@ -18,6 +18,8 @@ import { execFileSync, execSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { extractMobileDevRegionArgs } from "./lib/mobile-dev-region.mjs";
+import { extractMobileDevVariantArgs } from './lib/mobile-dev-variant.mjs';
+import { extractAndroidSerialArgs, inspectAndroidDevelopmentClient } from './lib/android-whoami.mjs';
 import {
   ensureMobileLocalRegionConfig,
   formatMobileLocalConfigStatus,
@@ -46,7 +48,9 @@ function resolveTarget() {
   const { region, passthrough } = extractMobileDevRegionArgs(
     process.argv.slice(2).filter((arg) => arg !== "--json"),
   );
-  const udidArgs = extractSimWhoamiUdidArgs(passthrough);
+  const variant = extractMobileDevVariantArgs(passthrough);
+  const android = extractAndroidSerialArgs(variant.passthrough);
+  const udidArgs = extractSimWhoamiUdidArgs(android.passthrough);
   const portArgs = extractSimMetroPortArgs(udidArgs.passthrough);
   if (portArgs.passthrough.length > 0) {
     throw new Error(
@@ -57,14 +61,16 @@ function resolveTarget() {
     region,
     port: portArgs.port,
     simulatorUdid: udidArgs.simulatorUdid,
-    bundleId: resolveMobileSimulatorBundleId(region),
+    serial: android.serial,
+    bundleId: resolveMobileSimulatorBundleId(region, { lex: variant.lex, platform: process.platform === 'win32' ? 'android' : 'ios' }),
   };
 }
 
 let target;
 try {
-  const localConfigResult = ensureMobileLocalRegionConfig({ mobileDir });
-  if (!jsonOutput) {
+  const lex = extractMobileDevVariantArgs(process.argv.slice(2)).lex;
+  const localConfigResult = lex ? null : ensureMobileLocalRegionConfig({ mobileDir });
+  if (!jsonOutput && localConfigResult) {
     const localConfigStatus = formatMobileLocalConfigStatus(
       localConfigResult,
       worktreeRoot,
@@ -80,6 +86,17 @@ try {
 const { region, port: expectedPort, simulatorUdid, bundleId } = target;
 const ports = [...new Set([...PORTS, expectedPort])].sort((a, b) => a - b);
 const expectedSource = gitSourceIdentity(worktreeRoot);
+if (process.platform === 'win32') {
+  try {
+    const result = await inspectAndroidDevelopmentClient({ ...target, source: expectedSource, worktree: worktreeRoot });
+    console.log(JSON.stringify(result, null, jsonOutput ? 0 : 2));
+    if (!result.healthy) process.exitCode = 1;
+  } catch (error) {
+    console.error(JSON.stringify({ healthy: false, error: error instanceof Error ? error.message : 'Android inspection failed' }));
+    process.exitCode = 1;
+  }
+  process.exit(process.exitCode ?? 0);
+}
 let healthy = true;
 
 function sh(cmd) {

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { InteractionPanel, PluginSetupMessageContent } from '@/session/InteractionPanel';
 import { remoteSessionStore, useSessionPendingInteractions } from '@/session/remoteSessionStore';
 import { clearAllInteractionDrafts, readAskUserDraft, readPlanReviewDraft } from '@/session/interactionDraftStore';
+import { setMobileAuthOwner } from '@/auth/authOwnerGeneration';
 
 const { resolveInteraction, invoke, push } = vi.hoisted(() => ({ resolveInteraction: vi.fn(), invoke: vi.fn(), push: vi.fn() }));
 const { routeParams } = vi.hoisted(() => ({ routeParams: {} as { deviceId?: string; sessionId?: string } }));
@@ -68,6 +69,7 @@ function Harness() {
   return <InteractionPanel deviceId="d1" sessionId="s1" interactions={interactions} onError={onError} />;
 }
 beforeEach(() => {
+  setMobileAuthOwner('interaction-receipt-fixture', 'global');
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   vi.resetAllMocks();
   remoteSessionStore.clear();
@@ -75,7 +77,7 @@ beforeEach(() => {
   host = document.createElement('div');
   root = createRoot(host);
 });
-afterEach(() => act(() => root.unmount()));
+afterEach(() => { act(() => root.unmount()); setMobileAuthOwner(null); });
 
 async function click(id: string) {
   const button = host.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`);

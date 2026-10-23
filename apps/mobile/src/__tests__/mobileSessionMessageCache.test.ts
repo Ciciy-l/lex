@@ -66,7 +66,7 @@ function makeSession(id: string, patch: Partial<RemoteSession> = {}): RemoteSess
 }
 
 describe('mobileSessionMessageCache', () => {
-  it('migrates every legacy cache entry through the per-key queue, even before login', async () => {
+  it('preserves old Cindy cache entries through the per-key queue after its owner is known', async () => {
     const storage = (await import('@/session/messageCacheStorage')).messageCacheStorage;
     const { migrateLegacySessionMessageCache } = await import('@/session/mobileSessionMessageCache');
     store.set('xdt.mobileSessionMessageCache.v1.a', '[]');
@@ -78,6 +78,20 @@ describe('mobileSessionMessageCache', () => {
       'xdt.mobileSessionMessageCache.v1.a', 'xdt.mobileSessionMessageCache.v1.b',
     ]);
     expect(storage.removeItem).not.toHaveBeenCalled();
+  });
+
+  it('does not enumerate or migrate unqualified Cindy records as guest or Lex', async () => {
+    const storage = (await import('@/session/messageCacheStorage')).messageCacheStorage;
+    const { setMobileAuthOwner } = await import('@/auth/authOwnerGeneration');
+    const { migrateLegacySessionMessageCache } = await import('@/session/mobileSessionMessageCache');
+    vi.mocked(storage.legacyKeys).mockClear();
+    vi.mocked(storage.migrateLegacy).mockClear();
+    for (const owner of [null, 'same-member']) {
+      setMobileAuthOwner(owner, 'lex-server:https://a.fixture.invalid');
+      await migrateLegacySessionMessageCache();
+    }
+    expect(storage.legacyKeys).not.toHaveBeenCalled();
+    expect(storage.migrateLegacy).not.toHaveBeenCalled();
   });
 
   it('a logout clear cancels legacy migrations still waiting in the queue', async () => {
@@ -96,7 +110,7 @@ describe('mobileSessionMessageCache', () => {
     release();
     await Promise.all([migration, clearing]);
     expect(storage.migrateLegacy).not.toHaveBeenCalled();
-    expect(store.has('xdt.mobileSessionMessageCache.v1.a')).toBe(false);
+    expect(store.get('xdt.mobileSessionMessageCache.v1.a')).toBe('[]');
   });
 
   it('logout waits for a migrating read and removes its late write', async () => {

@@ -1,4 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getMobileAuthOwner, isMobileAuthOwnerCurrent } from '@/auth/authOwnerGeneration';
+import { mobileStorageNamespace } from '@/auth/mobileStorageNamespace';
 
 import type { HomeListSortBy, HomeStatusFilter } from './homeListPriority';
 import type { HomeProjectOrder } from './homeProjectOrder';
@@ -29,8 +31,13 @@ export interface HomeViewPreferencePatch {
   selectedDevice?: { deviceId: string; name: string } | null;
 }
 
-export async function readHomeViewPreferences(): Promise<HomeViewPreferences> {
-  const raw = await AsyncStorage.getItem(STORAGE_KEY);
+function storageKey(owner: ReturnType<typeof getMobileAuthOwner>): string {
+  return STORAGE_KEY + '.scope.' + (owner.accountKey ? mobileStorageNamespace(owner.accountKey) : 'guest');
+}
+
+export async function readHomeViewPreferences(owner = getMobileAuthOwner()): Promise<HomeViewPreferences> {
+  const raw = await AsyncStorage.getItem(storageKey(owner));
+  if (!isMobileAuthOwnerCurrent(owner)) return emptyPreferences();
   if (!raw) return emptyPreferences();
   try {
     return normalizeStoredPreferences(JSON.parse(raw));
@@ -43,18 +50,21 @@ export async function readHomeViewPreferences(): Promise<HomeViewPreferences> {
 // 用单一 pending 链把「读 → 合并 → 写」串行化,保证每次写都基于上一次写完后的状态。
 let writeChain: Promise<void> = Promise.resolve();
 
-export function saveHomeViewPreferences(patch: HomeViewPreferencePatch): Promise<void> {
-  const next = writeChain.then(() => writeHomeViewPreferences(patch));
+export function saveHomeViewPreferences(patch: HomeViewPreferencePatch, owner = getMobileAuthOwner()): Promise<void> {
+  const next = writeChain.then(() => writeHomeViewPreferences(patch, owner));
   // 链自身吞掉失败,避免一次异常让后续所有写入跟着 reject。
   writeChain = next.catch(() => undefined);
   return next;
 }
 
-async function writeHomeViewPreferences(patch: HomeViewPreferencePatch): Promise<void> {
+async function writeHomeViewPreferences(patch: HomeViewPreferencePatch, owner: ReturnType<typeof getMobileAuthOwner>): Promise<void> {
+  if (!isMobileAuthOwnerCurrent(owner)) return;
+  const key = storageKey(owner);
   // A failed read (disk/lock) must reject so we do not replace a still-valid
   // blob with defaults. Corrupt JSON is different: keeping it makes every
   // computer switch alert "couldn't save" forever.
-  const raw = await AsyncStorage.getItem(STORAGE_KEY);
+  const raw = await AsyncStorage.getItem(key);
+  if (!isMobileAuthOwnerCurrent(owner)) return;
   const current = raw === null ? emptyPreferences() : parseStoredPreferences(raw);
   const next: HomeViewPreferences = {
     groupByProject: patch.groupByProject ?? current.groupByProject,
@@ -68,11 +78,12 @@ async function writeHomeViewPreferences(patch: HomeViewPreferencePatch): Promise
       ? normalizeDevice(patch.selectedDevice)
       : current.selectedDevice,
   };
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(serializePreferences(next)));
+  await AsyncStorage.setItem(key, JSON.stringify(serializePreferences(next)));
 }
 
-export async function clearHomeViewPreferences(): Promise<void> {
-  await AsyncStorage.removeItem(STORAGE_KEY).catch(() => undefined);
+export async function clearHomeViewPreferences(owner = getMobileAuthOwner()): Promise<void> {
+  await writeChain;
+  await AsyncStorage.removeItem(storageKey(owner));
 }
 
 function emptyPreferences(): HomeViewPreferences {
@@ -169,4 +180,4 @@ function readStringList(value: unknown): string[] {
   return next;
 }
 
-export const __testing = { storageKey: STORAGE_KEY };
+export const __testing = { get storageKey() { return storageKey(getMobileAuthOwner()); }, legacyStorageKey: STORAGE_KEY };

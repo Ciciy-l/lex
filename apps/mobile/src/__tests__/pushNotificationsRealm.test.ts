@@ -4,12 +4,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const store = vi.hoisted(() => new Map<string, string>());
 const envState = vi.hoisted(() => ({
+  cindy: true,
   activeRealm: 'cn' as 'cn' | 'global',
   buildRegion: 'cn' as 'cn' | 'global' | 'dev',
   endpointByRealm: {
     cn: 'https://relay.cn.example',
     global: 'https://relay.global.example',
   },
+}));
+vi.mock('@/auth/authService', () => ({
+  isCindyMobileSession: () => envState.cindy,
+  getActiveMobileAuthScope: () => envState.cindy ? envState.activeRealm : 'lex-server:https://fixture.test',
 }));
 const devEnvironmentState = vi.hoisted(() => ({
   active: 'dev' as 'dev' | 'release',
@@ -85,10 +90,22 @@ function readStoredRealms(key: string): string[] {
 }
 
 describe('push notification realm routing', () => {
+  it('never reads a native push token or dispatches registration/cleanup with a Lex session', async () => {
+    envState.cindy = false;
+    const apiFetch = vi.fn();
+    await expect(syncPushRegistration({ enabled: true, apiFetch })).resolves.toBe('skipped');
+    await retryPendingUnregister(apiFetch);
+    await unregisterPushTokenBestEffort('fixture-lex');
+    expect(mocks.asyncGetItem).not.toHaveBeenCalled();
+    expect(mocks.getPermissionsAsync).not.toHaveBeenCalled();
+    expect(mocks.getDevicePushTokenAsync).not.toHaveBeenCalled();
+    expect(apiFetch).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     store.clear();
     envState.activeRealm = 'cn';
+    envState.cindy = true;
     envState.buildRegion = 'cn';
     devEnvironmentState.active = 'dev';
     mocks.getPermissionsAsync.mockResolvedValue({

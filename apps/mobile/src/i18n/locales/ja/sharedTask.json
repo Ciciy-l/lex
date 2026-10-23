@@ -91,7 +91,7 @@
   "hostOfflineBody": "このセッションの共有は終了し、招待は無効になりました。ホストに再度共有を開始してもらい、新しい招待を送ってもらってください。",
   "closedToast": "{{count}} 件のセッションの共有を停止しました",
   "closeFailedToast": "停止できなかった共有があります（{{count}} 件）。後ほど再試行できます。",
-  "invitationDifferentServer": "この招待は別の Cindy サービスのものです。対応するアプリでリンクを開いてください。",
+  "invitationDifferentServer": "この招待は別のサービスのものです。対応するサービスに切り替えてから参加してください。",
   "managementIntro": "開始した共有と参加した共有を管理します。",
   "manageSharing": "共有管理",
   "joinedTab": "参加した共有",

@@ -1,5 +1,7 @@
 import type { DeviceView } from '@cindy/device-link';
 import { getSecureItem, setSecureItem } from '@/auth/secureStorage';
+import { getMobileAuthOwner, isMobileAuthOwnerCurrent } from '@/auth/authOwnerGeneration';
+import { mobileStorageNamespace } from '@/auth/mobileStorageNamespace';
 
 const DEVICE_IDENTITY_STORAGE_KEY = 'device-link.device-identity.v1';
 
@@ -21,7 +23,10 @@ export function createEmptyDeviceIdentityCache(): DeviceIdentityCache {
 }
 
 export async function loadDeviceIdentityCache(): Promise<DeviceIdentityCache> {
-  const raw = await getSecureItem(DEVICE_IDENTITY_STORAGE_KEY);
+  const owner = getMobileAuthOwner();
+  if (!owner.accountKey) return createEmptyDeviceIdentityCache();
+  const raw = await getSecureItem(`${DEVICE_IDENTITY_STORAGE_KEY}.scope.${mobileStorageNamespace(owner.accountKey)}`);
+  if (!isMobileAuthOwnerCurrent(owner)) return createEmptyDeviceIdentityCache();
   if (!raw) return createEmptyDeviceIdentityCache();
   try {
     return hydrateDeviceIdentityCache(JSON.parse(raw));
@@ -30,8 +35,9 @@ export async function loadDeviceIdentityCache(): Promise<DeviceIdentityCache> {
   }
 }
 
-export async function saveDeviceIdentityCache(cache: DeviceIdentityCache): Promise<void> {
-  await setSecureItem(DEVICE_IDENTITY_STORAGE_KEY, JSON.stringify(cache));
+export async function saveDeviceIdentityCache(cache: DeviceIdentityCache, owner = getMobileAuthOwner()): Promise<void> {
+  if (!owner.accountKey || !isMobileAuthOwnerCurrent(owner)) return;
+  await setSecureItem(`${DEVICE_IDENTITY_STORAGE_KEY}.scope.${mobileStorageNamespace(owner.accountKey)}`, JSON.stringify(cache));
 }
 
 export function hydrateDeviceIdentityCache(raw: unknown): DeviceIdentityCache {

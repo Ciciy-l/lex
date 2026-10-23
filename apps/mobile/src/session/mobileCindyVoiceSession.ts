@@ -1,4 +1,5 @@
 import Constants from 'expo-constants';
+import { getActiveMobileAuthService } from '@/auth/authService';
 
 import { ApiError, type ApiFetchOptions } from '@/api/client';
 import {
@@ -269,6 +270,7 @@ export function createMobileCindyVoiceCredential(
 }
 
 function requireVoiceBaseUrl(): string {
+  if (getActiveMobileAuthService()?.kind === 'lex-server') throw new Error('SERVICE_CAPABILITY_UNAVAILABLE');
   if (!VOICE_API_BASE_URL) throw new Error(i18n.t('composer.voice.serviceUnavailable'));
   return VOICE_API_BASE_URL.replace(/\/+$/, '');
 }

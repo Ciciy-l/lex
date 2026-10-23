@@ -30,8 +30,12 @@ thread 配置，同时设置窗口和 90% 自动压缩预算，保留原生 5% �
 不覆盖之后的外部修改）；界面失败后重新读回实际持久值，不沿用旧快照。
 空闲任务释放执行句柄后，提示可读取下一次启动将应用的 CLI 配置，但必须标记待应用；不能把它当运行期窗口计算旧用量百分比。尚无实际用量时显示未知，不显示 0%。
 未知模型保留 Codex 原生 fallback 的提示词和工具元数据，不克隆 GPT 模板。
-`codex-native-fallback-prompt.md` 原样来自 OpenAI Codex `rust-v0.153.0` 的
-`codex-rs/models-manager/prompt.md`（Apache-2.0）；升级 CLI 时需同步其 fallback 元数据与
+`codex-native-fallback-prompt.json` 以 JSON 字符串保存 OpenAI Codex `rust-v0.162.1` 的
+`codex-rs/models-manager/prompt.md` 原始字节（Apache-2.0；与 `rust-v0.153.0` 同为
+Git blob `907ff8b877026871b088f01f4366cea36e1f02cd`），避免 Markdown 格式化丢失原生尾空格。
+运行时仍逐字节核验 CLI 内嵌提示词（允许 LF / CRLF），不能仅改版本号或跳过校验。
+Fallback descriptor 使用当前 CLI 的 `model_messages.instructions_template` 及原生工具／能力默认值；
+显式 E2E 以受管 CLI、独立临时 home 验证，无需用户凭据。升级 CLI 时需同步其 fallback 元数据与
 原生提示词清理规则，并以实际 CLI 验证窗口、压缩触发、历史恢复和提示词／工具不变。
 
 修复显示时复用运行时已有的路由判定，保留数据来源边界。目录错误应回到 Server／发布

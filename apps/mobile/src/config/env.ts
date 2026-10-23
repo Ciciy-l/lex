@@ -557,6 +557,14 @@ export function activateMobileSessionRealm(region: ClientEndpointRegion): void {
   VOICE_API_BASE_URL = endpoints.voiceApiBaseUrl;
 }
 
+/** Only the two implemented Lex roles exist; unavailable hosted roles have no fallback URL. */
+export function activateMobileLexServer(origin: string): void {
+  AUTH_API_BASE_URL = origin;
+  DEVICE_LINK_API_BASE_URL = origin;
+  OAUTH_BROKER_API_BASE_URL = '';
+  VOICE_API_BASE_URL = '';
+}
+
 export function resetMobileSessionRealm(): void {
   const buildRealm = endpointManifestRegion ?? BUILD_AUTH_REGION;
   const endpoints = realmEndpointCache.get(buildRealm) ?? buildEndpointMap;

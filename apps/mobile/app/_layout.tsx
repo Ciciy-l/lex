@@ -96,6 +96,11 @@ function NavigationGate() {
   const sessionHeaderShown = Platform.OS === 'ios'
     && (windowGeometry.barEdge !== 'none' || !sessionPaneLayout(windowGeometry).persistent);
   const auth = useAuth();
+  useEffect(() => {
+    if (auth.initialized && auth.service?.kind === 'cindy') {
+      void migrateLegacySessionMessageCache().catch(() => undefined);
+    }
+  }, [auth.initialized, auth.service, auth.accountGeneration]);
   const router = useRouter();
   const segments = useSegments();
   const pendingSharedTaskInvitation = usePendingSharedTaskInvitationIntent();
@@ -135,7 +140,8 @@ function NavigationGate() {
   useEffect(() => {
     if (!auth.initialized) return;
     const inAuthGroup = segments[0] === '(auth)';
-    if (!auth.isAuthenticated && !inAuthGroup) {
+    const guestPage = segments.join('/') === '' || segments[0] === 'devices' || segments[0] === 'settings';
+    if (!auth.isAuthenticated && !inAuthGroup && !guestPage) {
       router.replace('/login');
       return;
     }
@@ -403,11 +409,6 @@ function RootLayout() {
   // Dev-only:注册开发者菜单的"清缓存 + reload"项(内部 __DEV__ gate,生产为 no-op)。
   useEffect(() => {
     registerDevCacheMenu();
-  }, []);
-  // 旧版写在 AsyncStorage 的消息缓存会把安卓 6 MiB 库占满、导致发送失败(#5403);
-  // 消息缓存已改存文件,启动时把剩余旧副本迁过去、腾出库空间。
-  useEffect(() => {
-    void migrateLegacySessionMessageCache().catch(() => undefined);
   }, []);
   // Dev-only:JS 停摆探测器,把 JS 线程忙死的时间边界钉进 Metro 日志流(内部 __DEV__ gate)。
   useEffect(() => startJsStallWatchdog(), []);

@@ -69,7 +69,7 @@ describe("mobile account deletion", () => {
       requestBody.indexOf("return challenge"),
     );
     expect(context).toContain(
-      "serializeAccountDeletionReceiptRecord(realm, receiptToken)",
+      "serializeAccountDeletionReceiptRecord(authServiceRealm(realm), receiptToken)",
     );
     const persistStart = context.indexOf(
       "const persistAccountDeletionReceipt = useCallback",
@@ -159,7 +159,7 @@ describe("mobile account deletion", () => {
       context.indexOf("const getAccessToken", logoutStart),
     );
     const vaultClear = logoutBody.indexOf(
-      "clearMobileLoginCredentialsForLogout({",
+      "removeMobileLoginAccountForLogout({",
     );
     const sessionSnapshot = logoutBody.indexOf(
       "readSessionRaw: () => getSecureItem(AUTH_SESSION_KEY)",
@@ -196,7 +196,7 @@ describe("mobile account deletion", () => {
     expect(statusBody).toContain(
       "const realm = accountDeletionReceiptRealmRef.current;",
     );
-    expect(statusBody).toContain("await loadMobileEndpointsForRealm(realm);");
+    expect(statusBody).toContain("await loadMobileAuthScope(realm);");
     expect(statusBody).toContain(
       "authClientFor(did, realm).getAccountDeletionStatus(receiptToken)",
     );

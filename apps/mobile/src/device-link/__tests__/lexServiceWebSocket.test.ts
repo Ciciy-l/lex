@@ -1,0 +1,21 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+const native = vi.hoisted(() => ({ os: 'android', available: true, handlers: new Set<(e: Record<string, unknown>) => void>(), connect: vi.fn(), send: vi.fn(), close: vi.fn(), terminate: vi.fn() }));
+vi.mock('react-native', () => ({ Platform: { get OS() { return native.os; } } }));
+vi.mock('expo-modules-core', () => ({ requireOptionalNativeModule: () => native.available ? {
+  connect: native.connect, send: native.send, close: native.close, terminate: native.terminate,
+  addListener: (_name: string, cb: (e: Record<string, unknown>) => void) => { native.handlers.add(cb); return { remove: () => native.handlers.delete(cb) }; },
+} : null }));
+import { createLexServiceWebSocket, supportsLexServiceWebSocket } from '../lexServiceWebSocket';
+import { classifyConnectionIssue } from '@cindy/device-link';
+beforeEach(() => { vi.useFakeTimers(); native.os = 'android'; native.available = true; native.handlers.clear(); native.connect.mockReset(); native.send.mockReset(); native.close.mockReset(); native.terminate.mockReset(); });
+afterEach(() => vi.useRealTimers());
+const socket = () => createLexServiceWebSocket('https://a.test', 'wss://a.test/api/device-link/ws', { authorization: 'Bearer invalid-fixture' });
+const event = (id: string, type: string, fields = {}) => native.handlers.forEach(cb => cb({ id, type, ...fields }));
+describe('Android dedicated service transport adapter', () => {
+  it('fails closed on iOS and binaries without the native module', () => { native.available = false; expect(supportsLexServiceWebSocket()).toBe(false); expect(socket).toThrow('LEX_SERVER_NATIVE_UPDATE_REQUIRED'); native.available = true; native.os = 'ios'; expect(supportsLexServiceWebSocket()).toBe(false); expect(socket).toThrow('LEX_SERVER_NATIVE_UPDATE_REQUIRED'); });
+  it('rejects another origin and non-directory paths before calling native', () => { expect(() => createLexServiceWebSocket('https://a.test', 'wss://b.test/api/device-link/ws', {})).toThrow('INVALID_SOCKET_ORIGIN'); expect(() => createLexServiceWebSocket('https://a.test', 'wss://a.test/other', {})).toThrow('INVALID_SOCKET_ORIGIN'); expect(native.connect).not.toHaveBeenCalled(); });
+  it('waits for the awaited factory consumer and preserves open/message/send/close', async () => { const ws = await socket(); const open = vi.fn(), message = vi.fn(), close = vi.fn(); ws.on('open', open); ws.on('message', message); ws.on('close', close); expect(native.connect).not.toHaveBeenCalled(); vi.runOnlyPendingTimers(); const id = native.connect.mock.calls[0][0]; event('foreign', 'open'); expect(open).not.toHaveBeenCalled(); event(id, 'open'); event(id, 'message', { data: 'fixture-frame' }); expect(open).toHaveBeenCalledOnce(); expect(message.mock.calls[0][0].toString()).toBe('fixture-frame'); ws.send('fixture-reply'); expect(native.send).toHaveBeenCalledWith(id, 'fixture-reply'); event(id, 'close', { code: 1000, reason: 'done' }); event(id, 'open'); expect(close).toHaveBeenCalledWith(1000, 'done'); expect(native.handlers.size).toBe(0); });
+  it('delivers a synchronous native failure after handlers attach', async () => { native.connect.mockImplementation(() => { throw new Error('fixture'); }); const ws = await socket(); const error = vi.fn(), close = vi.fn(); ws.on('error', error); ws.on('close', close); vi.runOnlyPendingTimers(); expect(error).toHaveBeenCalledOnce(); expect(close).toHaveBeenCalledWith(1006, undefined); expect(native.handlers.size).toBe(0); });
+  it('cancels before connecting and ignores late events after termination', () => { const ws = socket(); const close = vi.fn(); ws.on('close', close); ws.terminate?.(); vi.runOnlyPendingTimers(); expect(native.connect).not.toHaveBeenCalled(); expect(close).toHaveBeenCalledOnce(); expect(native.handlers.size).toBe(0); });
+  it('retains HTTP 401 classification without leaking response bodies', () => { const ws = socket(); const error = vi.fn(); ws.on('error', error); vi.runOnlyPendingTimers(); const id = native.connect.mock.calls[0][0]; event(id, 'error', { message: 'WebSocket handshake failed (HTTP 401)' }); expect(classifyConnectionIssue(1006, '', error.mock.calls[0][0].message)).toBe('auth-failed'); ws.terminate?.(); });
+});

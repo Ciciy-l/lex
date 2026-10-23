@@ -22,6 +22,25 @@ package first when switching build identity.
 
 ## Current Source Verification Contract
 
+### Lex Android development client
+
+On Windows, use the explicit Lex variant of the same official lifecycle:
+
+    pnpm mobile:sim:rebuild -- --lex --build-only
+    pnpm mobile:sim:start -- --lex --avd <dedicated-avd>
+    pnpm mobile:sim:rebuild -- --lex --avd <dedicated-avd>
+    pnpm mobile:sim:whoami -- --lex --serial <exact-emulator-serial> --json
+
+The debug APK uses the checkout's existing Desktop version and Lex installation
+identity. It does not change release version inputs or reuse Cindy/EAS/self-host
+configuration. The original Lex configuration guards remain active. A dedicated
+AVD keeps its app data separate from normal installations; never wipe an AVD to
+obtain a clean fixture. The Windows doctor binds every adb read to the supplied
+serial and checks the running debug package and Metro source ownership. The
+visible development source label and fresh bundle output are still required.
+Lex Server requires the Android native WebSocket module from the new binary;
+older binaries and iOS do not offer that connection option.
+
 Before anyone claims "the simulator is already showing the new version", they
 must produce evidence. The #1 time sink in mobile debugging is staring at a
 **stale bundle from another worktree's Metro** and concluding "my change didn't

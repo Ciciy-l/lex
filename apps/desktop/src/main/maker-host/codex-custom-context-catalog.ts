@@ -3,9 +3,11 @@ import { promises as fs } from 'node:fs';
 import type { FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { parse as parseToml } from 'smol-toml';
-// Unmodified Apache-2.0 OpenAI Codex rust-v0.153.0 models-manager/prompt.md.
+// Unmodified Apache-2.0 OpenAI Codex rust-v0.162.1 models-manager/prompt.md
+// (also byte-identical in rust-v0.153.0; Git blob 907ff8b877026871b088f01f4366cea36e1f02cd).
+// JSON encoding preserves upstream trailing whitespace through checkout/formatters.
 // This is the native unknown-model prompt, never a GPT-specific template.
-import nativeFallbackPrompt from './codex-native-fallback-prompt.md?raw';
+import nativeFallbackPrompt from './codex-native-fallback-prompt.json';
 
 import { writeFileAtomicIfUnchanged } from './codex-global-plugins.js';
 
@@ -53,18 +55,26 @@ function normalizeNativeCatalog(catalog: CodexModelCatalog): CodexModelCatalog {
   }) };
 }
 
-/** Mirrors the CLI's model_info_from_slug defaults, preserving prompt/tool behavior. */
+/** Mirrors rust-v0.162.1 models-manager/src/model_info.rs, preserving native defaults. */
 export function nativeCodexFallbackModel(slug: string, instructions = nativeFallbackPrompt) {
   return {
-    slug, display_name: slug, description: null, supported_reasoning_levels: [],
+    slug, display_name: slug, description: null, default_reasoning_level: null, supported_reasoning_levels: [],
     shell_type: 'unified_exec', visibility: 'none', supported_in_api: true, priority: 99,
-    base_instructions: nativeInstructions(instructions),
+    additional_speed_tiers: [], service_tiers: [], default_service_tier: null,
+    available_access_programs: null, availability_nux: null, upgrade: null,
+    model_messages: { instructions_template: nativeInstructions(instructions), instructions_variables: null },
     include_skills_usage_instructions: false, include_plugin_usage_instructions: false,
     include_apps_usage_instructions: false, supports_reasoning_summary_parameter: true,
-    default_reasoning_summary: 'auto', support_verbosity: false,
+    default_reasoning_summary: 'auto', support_verbosity: false, default_verbosity: null,
+    apply_patch_tool_type: null, web_search_tool_type: 'text', supports_image_detail_original: false,
     truncation_policy: { mode: 'bytes', limit: 10_000 },
     context_window: 272_000, max_context_window: 272_000,
-    effective_context_window_percent: 95, experimental_supported_tools: [],
+    auto_compact_token_limit: null, comp_hash: null, effective_context_window_percent: 95,
+    experimental_supported_tools: [], input_modalities: ['text', 'image'], used_fallback_model_metadata: true,
+    supports_search_tool: false, supports_experimental_context: false, use_responses_lite: false,
+    supports_reasoning_effort_updates: false, guardian: null, node_repl_auto_review_required: false,
+    node_repl_disabled: false, auto_review_model_override: null, model_specialty: null, tool_mode: null,
+    multi_agent_version: null, multi_agent_reasoning_effort: null,
   };
 }
 

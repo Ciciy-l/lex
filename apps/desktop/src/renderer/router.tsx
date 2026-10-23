@@ -5,7 +5,7 @@ import { RouteErrorFallback } from '@/components/error/RouteErrorFallback';
 import { SidebarWindowLayout } from '@/components/layout/SidebarWindowLayout';
 import { GhostPanelWindowLayout } from '@/components/layout/GhostPanelWindowLayout';
 import { SettingsView } from '@/components/settings/SettingsView';
-import { LoginPage } from '@/components/login/LoginPage';
+import { RootLoginPage } from '@/components/login/RootLoginPage';
 import { AddAccountLoginPage } from '@/components/login/AddAccountLoginPage';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { GuestRoute } from '@/components/auth/GuestRoute';
@@ -31,10 +31,11 @@ import { GhostMainViewFeatureLayout } from '@/features/plugin/GhostMainViewFeatu
  * 三层路由架构：
  *
  *   GuestRoute (未登录)
- *    └── /login                    → LoginPage
+ *    └── /login                    → RootLoginPage (Main-selected service)
  *
  *   ProtectedRoute (已登录) — 校验 canEnterApp（真登出或换号窗口）
  *    └── LocalDbGate               → 等 localDb.ensureReady（按 userId 切库）
+ *         ├── /add-account         → bypass DB errors; retain the owner's gate
  *         └── MainLayout            → 主功能区
  *              ├── /                → Navigate to /cc-agent
  *              ├── /cc-agent/...    → CCAgentFeatureLayout
@@ -48,7 +49,7 @@ export const router = createHashRouter([
     element: <GuestRoute />,
     // 登录线渲染崩溃时的全屏兜底(没有它 react-router 会渲染开发者默认错误页)。
     errorElement: <RouteErrorFallback />,
-    children: [{ index: true, element: <LoginPage /> }],
+    children: [{ index: true, element: <RootLoginPage /> }],
   },
   {
     path: '/',
@@ -58,13 +59,11 @@ export const router = createHashRouter([
     errorElement: <RouteErrorFallback />,
     children: [
       {
-        path: 'add-account',
-        element: <AddAccountLoginPage />,
-      },
-      {
-        // 主功能区入口 —— 经过 LocalDbGate（localDb 就绪）才能进
+        // Retain the owner-scoped gate across login navigation. The add-account
+        // route bypasses its decision so database recovery cannot block login.
         element: <LocalDbGate />,
         children: [
+          { path: 'add-account', element: <AddAccountLoginPage /> },
           // 右侧栏独立子窗口(?sidebarWindow=1)的根路由 —— 与 MainLayout 平级,
           // 只挂 SidebarWindowLayout(50px chrome + RightSidebarShell),不挂完整壳。
           {

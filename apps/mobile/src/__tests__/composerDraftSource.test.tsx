@@ -9,6 +9,23 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let root: Root | undefined;
 afterEach(() => { act(() => root?.unmount()); root = undefined; });
 
+it('notifies each subscription once when a synchronous render replaces its subscription', () => {
+  const source = createComposerDraftSource(textComposerDocument(''));
+  let calls = 0;
+  let unsubscribe = () => {};
+  const listener = () => {
+    if (++calls > 2) throw new Error('Subscription replacement must not extend the current notification');
+    unsubscribe();
+    unsubscribe = source.subscribe(listener);
+  };
+  unsubscribe = source.subscribe(listener);
+  expect(() => source.setDocument(textComposerDocument('typed'))).not.toThrow();
+  expect(calls).toBe(1);
+  source.setDocument(textComposerDocument('typed again'));
+  expect(calls).toBe(2);
+  unsubscribe();
+});
+
 it('typing and streamed dictation update subscribers without rendering the task or message list', () => {
   const source = createComposerDraftSource(textComposerDocument(''));
   const container = document.createElement('div');

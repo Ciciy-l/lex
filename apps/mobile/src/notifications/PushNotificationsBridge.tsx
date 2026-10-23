@@ -35,11 +35,13 @@ export function PushNotificationsBridge() {
   const pendingDeepLinkRef = useRef<string | null>(null);
   const authStateRef = useRef({
     initialized: auth.initialized,
-    isAuthenticated: auth.isAuthenticated,
+    isAuthenticated: auth.isAuthenticated && auth.canUseCindyServices,
+    isLexServer: auth.service?.kind === 'lex-server',
   });
   authStateRef.current = {
     initialized: auth.initialized,
-    isAuthenticated: auth.isAuthenticated,
+    isAuthenticated: auth.isAuthenticated && auth.canUseCindyServices,
+    isLexServer: auth.service?.kind === 'lex-server',
   };
   const apiFetchRef = useRef(auth.apiFetch);
   apiFetchRef.current = auth.apiFetch;
@@ -52,7 +54,7 @@ export function PushNotificationsBridge() {
   // 登录态就绪后同步注册状态(开关关闭 / 从未注册时是 no-op)
   useEffect(() => {
     if (!isPushSupported()) return;
-    if (!auth.initialized || !auth.isAuthenticated) return;
+    if (!auth.initialized || !auth.isAuthenticated || !auth.canUseCindyServices) return;
     let cancelled = false;
     void (async () => {
       // 只用当前会话补偿当前区域的注销，再按本机开关同步注册状态。
@@ -65,12 +67,12 @@ export function PushNotificationsBridge() {
     return () => {
       cancelled = true;
     };
-  }, [auth.accountGeneration, auth.initialized, auth.isAuthenticated, auth.user]);
+  }, [auth.accountGeneration, auth.initialized, auth.isAuthenticated, auth.canUseCindyServices, auth.user]);
 
   // APNs token 轮换 → 重新上报(仅开关开启且已登录时)
   useEffect(() => {
     if (!isPushSupported()) return;
-    if (!auth.initialized || !auth.isAuthenticated) return;
+    if (!auth.initialized || !auth.isAuthenticated || !auth.canUseCindyServices) return;
     const sub = Notifications.addPushTokenListener(() => {
       void (async () => {
         const enabled = await readPushEnabled();
@@ -81,7 +83,7 @@ export function PushNotificationsBridge() {
       })();
     });
     return () => sub.remove();
-  }, [auth.initialized, auth.isAuthenticated]);
+  }, [auth.initialized, auth.isAuthenticated, auth.canUseCindyServices]);
 
   const flushPendingDeepLink = useCallback((): void => {
     const target = pendingDeepLinkRef.current;
@@ -96,6 +98,7 @@ export function PushNotificationsBridge() {
   useEffect(() => {
     if (!isPushSupported()) return;
     const consumeResponse = (response: NotificationResponse): void => {
+      if (authStateRef.current.isLexServer) return;
       const deepLink = parseNotificationResponseDeepLink(response);
       if (!deepLink) return;
       const identifier = response.notification.request.identifier;
@@ -131,8 +134,9 @@ export function PushNotificationsBridge() {
   // auth 就绪后重放冷启动 / 点击期间暂存的深链。监听本身保持挂载，避免 auth
   // 状态变化重建 effect 时与 last-response 读取发生竞态。
   useEffect(() => {
+    if (auth.service?.kind === 'lex-server') pendingDeepLinkRef.current = null;
     flushPendingDeepLink();
-  }, [auth.initialized, auth.isAuthenticated, flushPendingDeepLink]);
+  }, [auth.initialized, auth.isAuthenticated, auth.canUseCindyServices, auth.service, flushPendingDeepLink]);
 
   return null;
 }

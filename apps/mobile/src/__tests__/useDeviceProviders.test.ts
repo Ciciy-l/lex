@@ -207,7 +207,8 @@ describe('useDeviceProviders deviceId-aware cache', () => {
     // 目录推送交给有 peer 可读性门控的单飞刷新器；只有仍属当前连接代的成功
     // 读取可以标记缓存，断线/撤权/设备移除会取消已排队的刷新。
     expect(ctxSrc).toContain('const catalogRefresh = createDeviceCatalogRefresh({');
-    expect(ctxSrc).toContain('canRead: (deviceId) => client === clientRef.current');
+    expect(ctxSrc).toContain('canRead: (deviceId) => connectionCurrent()');
+    expect(ctxSrc).toContain('isMobileAuthOwnerCurrent(connectionOwner)');
     expect(ctxSrc).toContain('catalogRefresh.wake(deviceId);');
     expect(ctxSrc).toContain('catalogRefreshDeviceIds.add(deviceId);');
     expect(ctxSrc).toContain('catalogRefresh.notify(deviceId);');

@@ -51,7 +51,7 @@ export interface ModelConfigFlyoutProps {
 /**
  * ModelConfigFlyout —— 模型行的**配置浮层**(model-selector-unified §1.3 / §1.5)。
  *
- * 自上而下:标题(+☆) → 来源 · 上下文 → 推理强度滑杆(+⚡) → 引擎选项 → 价格 → 状态底栏。
+ * 自上而下:标题 · 上下文(+☆) → 来源 → 推理强度滑杆(+⚡) → 引擎选项 → 价格 → 状态底栏。
  * 原生协议作为简短参考；具体选项展示当前路由的原生/兼容关系。
  *
  * 两条「不做假按钮」的硬边界:
@@ -91,6 +91,11 @@ export function ModelConfigFlyout({
   const contextWindow = contextLimit.limit ?? config.capability?.contextWindow ?? 0;
   const codexDefaultContext = config.engine === 'codex';
   const codexContext = codexDefaultContext ? contextLimit.codexContext ?? null : null;
+  const contextLabel = contextWindow > 0 ? t('newChat.modelSelector.meta.context', {
+    value: codexDefaultContext
+      ? codexContext ? formatContextWindow(codexContext.contextWindow) : t('settings.providers.models.advanced.codexContextUnknown')
+      : formatContextWindow(contextWindow),
+  }) : null;
   const starred = state === 'favorite' || justFavorited;
 
   const discount = price?.kind === 'priced' ? price.discount : undefined;
@@ -121,13 +126,21 @@ export function ModelConfigFlyout({
       aria-label={`${displayName} ${t('newChat.modelSelector.options')}`}
       className="flex flex-col"
     >
-      <div className="flex items-start gap-2">
+      <div className="flex min-w-0 items-center gap-2">
         <span
           title={displayName}
-          className="line-clamp-2 min-w-0 flex-1 break-words text-15 font-medium leading-[1.35] text-[var(--model-item-text)]"
+          className="min-w-0 flex-1 truncate text-15 font-medium leading-[1.35] text-[var(--model-item-text)]"
         >
           {displayName}
         </span>
+        {contextLabel && (
+          <span
+            title={contextLabel}
+            className="max-w-[60%] shrink-0 truncate text-12 text-[var(--text-secondary)]"
+          >
+            {contextLabel}
+          </span>
+        )}
         <button
           type="button"
           disabled={disabled}
@@ -156,22 +169,7 @@ export function ModelConfigFlyout({
 
       <div className="flex min-w-0 flex-col gap-1.5 border-b border-[var(--model-dropdown-border)] pb-2.5 pt-2 text-12 text-[var(--text-tertiary)]">
         {sourceControl ?? <span className="truncate" title={sourceLabel}>{sourceLabel}</span>}
-        {contextWindow > 0 && (
-          <span>
-            {t('newChat.modelSelector.meta.context', {
-              value: codexDefaultContext
-                ? codexContext ? formatContextWindow(codexContext.contextWindow) : t('settings.providers.models.advanced.codexContextUnknown')
-                : formatContextWindow(contextWindow),
-            })}
-          </span>
-        )}
       </div>
-
-      {codexDefaultContext && (
-        <p className="pt-1.5 text-11 leading-relaxed text-[var(--text-tertiary)]">
-          {t('ccAgent.layout.contextRing.codexAutoHint')}
-        </p>
-      )}
 
       {(showSlider || config.fastCapable) && (
         // 设计稿 .fly-ctrl:first-of-type:第一个控件行上距 14px。

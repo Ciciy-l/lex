@@ -58,7 +58,20 @@ pnpm --filter mobile test:smoke
 
 ## 专项入口
 
-### 浏览器登录与服务区
+### 登录服务、浏览器登录与服务区
+
+- Lex 首屏保留免登录空态与本机设置。Android 主动登录先选 Lex Server / Cindy；
+  iOS 不开放尚未适配的 Lex Server 入口。Cindy 继续使用原双区登录及浏览器流程。
+- Lex Server 地址是 HTTPS 根 origin；仅开发构建允许 loopback HTTP，正式构建在预检、
+  已保存账号激活、HTTP 与原生 WS 边界均拒绝 HTTP；不接受管理路径、API 路径、
+  用户信息、查询或片段。匿名预检共享 10 秒预算、每响应最多 64 KiB；HTTP 与 Android
+  专用 WebSocket 均不携带 Cookie、不跟随重定向，不关闭 TLS 校验。
+- 服务以 canonical origin 隔离，不把 Lex 当作第三个 region。待登录服务不会改变活动端点；
+  安全存储成功后才发布新 owner。SecureStore 沿用旧键，vault/session 版本兼容旧 Cindy
+  记录；读取失败不当空库，服务离线不清账号，Lex 旋转未知结果不会重放旧 token。
+- 切换保存账号不等于退出。明确退出移除当前成员并尝试剩余保存账号；最后账号退出回到
+  guest。Lex 不调用官方凭据交接、push、TURN、托管语音或 OSS 回退；设备、任务和普通
+  peer 文件仍按所选服务运行。产品更新来源和强更门独立保留。
 
 - 登录页挂载使用 `initialize`，不以 `reset` 清除正在浏览器完成的授权。Android
   系统浏览器返回 `dismiss` 时保留 PKCE，等待原始 Linking 回调；热回跳不导航，
@@ -71,7 +84,9 @@ pnpm --filter mobile test:smoke
   添加账号授权，不抢占原账号恢复。
 
 实现见 `src/auth/AuthContext.tsx`、`app/+native-intent.ts`；回归包括
-`browserAuthSession.test.tsx`、`personalLoginRealm.test.ts` 和 `nativeIntent.test.ts`。
+`browserAuthSession.test.tsx`、`mobileLexAuthSession.test.tsx`、`serviceTransport.test.ts`、
+`personalLoginRealm.test.ts` 和 `nativeIntent.test.ts`。Android WS 的重定向、Cookie、TLS
+及 401 分类回归位于 `modules/lex-service-websocket/android/src/test/`。
 
 ### 新建任务模型
 
@@ -83,6 +98,11 @@ pnpm --filter mobile test:smoke
   保持各引擎已有权限、来源、思考档位和快速模式合同。
 
 ### 消息缓存与首页偏好
+
+- 新写入的消息、历史、草稿、发件箱、目录与首页偏好按服务限定的账号 key 隔离，
+  wire 中的 device/member/session ID 不改。无法确认归属的旧裸键保留；Lex 不回读或
+  迁移这些 Cindy 记录。旧 Cindy 消息仅在其 owner 确认后迁到同名文件，不认领为 Lex
+  数据。退出只清当前账号作用域，不能清掉其它保存账号的草稿或缓存。
 
 - 阅读历史解除自动跟随后，只有明确向下且到达内容末端（24px 容差）才恢复，
   不用较宽的近底区域重新吸附。录音正常结束只恢复光标；用户点击输入框结束录音时才聚焦。

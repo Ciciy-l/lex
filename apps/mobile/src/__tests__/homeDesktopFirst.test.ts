@@ -154,6 +154,41 @@ describe('mobile Home startup reads', () => {
 });
 
 describe('mobile home desktop-first surface', () => {
+  function homeLogoutHarness(logout: () => Promise<void>) {
+    const source = readSource('src/session/HomeSurface.tsx');
+    const start = source.indexOf('const logout = useCallback');
+    const bodyStart = source.indexOf('async () => {', start) + 'async () => {'.length;
+    const bodyEnd = source.indexOf('\n  }, [auth, loggingOut, router, t]);', bodyStart);
+    expect(bodyEnd).toBeGreaterThan(bodyStart);
+    const replace = vi.fn(), alert = vi.fn(), setLoggingOut = vi.fn();
+    const execute = new Function('auth', 'router', 'Alert', 't', 'formatRemoteError', 'setLoggingOut', 'loggingOut',
+      `return (async () => {${source.slice(bodyStart, bodyEnd)}})();`) as (
+      auth: { logout(): Promise<void> }, router: { replace(path: string): void }, alerts: { alert(title: string, message: string): void },
+      t: (key: string) => string, format: (error: unknown) => string, setBusy: (busy: boolean) => void, busy: boolean,
+    ) => Promise<void>;
+    return { replace, alert, setLoggingOut, run: () => execute({ logout }, { replace }, { alert }, key => key, String, setLoggingOut, false) };
+  }
+
+  it('returns to the root only after the logout commit, allowing guest or a saved-account fallback', async () => {
+    let commit!: () => void;
+    const pending = new Promise<void>(resolve => { commit = resolve; });
+    const harness = homeLogoutHarness(() => pending);
+    const result = harness.run();
+    expect(harness.replace).not.toHaveBeenCalled();
+    commit(); await result;
+    expect(harness.replace).toHaveBeenCalledExactlyOnceWith('/');
+    expect(harness.alert).not.toHaveBeenCalled();
+    expect(harness.setLoggingOut.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it('preserves the current page when the durable logout fails', async () => {
+    const harness = homeLogoutHarness(async () => { throw new Error('fixture secure write failed'); });
+    await harness.run();
+    expect(harness.replace).not.toHaveBeenCalled();
+    expect(harness.alert).toHaveBeenCalledExactlyOnceWith('devices.list.alert.actionFailed', 'Error: fixture secure write failed');
+    expect(harness.setLoggingOut.mock.calls).toEqual([[true], [false]]);
+  });
+
   it('surfaces durable logout failures from the home drawer', () => {
     const source = readSource('src/session/HomeSurface.tsx');
     const logoutStart = source.indexOf('const logout = useCallback');
@@ -435,7 +470,7 @@ describe('mobile home desktop-first surface', () => {
     expect(source).toContain('const [deviceIdentityCacheReady, setDeviceIdentityCacheReady]');
     expect(source).toContain('loadDeviceIdentityCache()');
     expect(source).toContain('reconcileDeviceIdentities(');
-    expect(source).toContain('saveDeviceIdentityCache(result.cache)');
+    expect(source).toContain('saveDeviceIdentityCache(result.cache, homeOwner)');
     expect(source).toContain('loadDeviceSessionScheduleIndex(deviceId, invoke,');
     expect(source).toContain('replaceSessionScheduleIndexEntries(');
     expect(source).toContain("invoke<unknown[]>(device.deviceId, 'maker:list-active', [");
@@ -617,7 +652,7 @@ describe('mobile home desktop-first surface', () => {
     expect(source).toMatch(/startBoundedStartupRead\(\s*getCachedHomeListSnapshot\(homeCacheUserId\)/);
     expect(source).toContain('await syncInFlightRef.current;');
     expect(source).toMatch(/startBoundedStartupRead\(\s*loadDeviceIdentityCache\(\)/);
-    expect(source).toMatch(/startBoundedStartupRead<HomeViewPreferences \| null>\(\s*readHomeViewPreferences\(\)/);
+    expect(source).toMatch(/startBoundedStartupRead<HomeViewPreferences \| null>\(\s*readHomeViewPreferences\(homeOwner\)/);
     const preferenceHydration = source.slice(
       source.indexOf('// 冷启动恢复上次的首页视图偏好'),
       source.indexOf('// 卸载时取消所有延后中的 schedule-index hydration'),

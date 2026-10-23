@@ -3,7 +3,8 @@ import { resolve } from 'node:path';
 import ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, apiFetchRaw, registerAccountUnavailableHandler, type ApiFetchOptions } from '@/api/client';
-import { setMobileAuthOwner } from '@/auth/authOwnerGeneration';
+import { getMobileAuthOwner, setMobileAuthOwner } from '@/auth/authOwnerGeneration';
+import { authServiceFromScope } from '@cindy/auth-client';
 import { SharedTaskScopeChangedError } from '@cindy/device-link';
 import { useSharedTaskApi } from '@/device-link/useSharedTaskApi';
 
@@ -59,8 +60,11 @@ beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock);
   auth.apiFetch = new Function(
     'getAccessToken', 'refresh', 'terminateSession', 'userRef', 'ApiError', 'apiFetchRaw',
+    'authGenerationRef', 'activeAuthRealmRef', 'authServiceFromScope', 'authCodeError',
     compiled + '; return request;',
-  )(getAccessToken, refresh, terminateSession, { current: { id: 'account-a' } }, ApiError, apiFetchRaw);
+  )(getAccessToken, refresh, terminateSession, { current: { id: 'account-a' } }, ApiError, apiFetchRaw,
+    { get current() { return getMobileAuthOwner().generation; } }, { current: 'global' }, authServiceFromScope,
+    (code: string) => Object.assign(new Error(code), { code }));
 });
 afterEach(() => {
   vi.unstubAllGlobals();

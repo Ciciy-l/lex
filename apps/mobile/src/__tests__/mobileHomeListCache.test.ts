@@ -307,7 +307,7 @@ describe('mobileHomeListCache', () => {
     vi.useFakeTimers();
     // 登出场景:先 schedule 回写、再 clear——pending 定时器必须被取消,否则会把上一账号数据写回。
     scheduleHomeListSnapshotPersist(USER_ID, () => [makeSession('s-leak', 'dev-a')], 50);
-    await clearCachedHomeListSnapshot();
+    await clearCachedHomeListSnapshot(USER_ID);
     await vi.advanceTimersByTimeAsync(120);
     vi.useRealTimers();
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -332,7 +332,7 @@ describe('mobileHomeListCache', () => {
     expect(store.size).toBe(sizeBefore);
   });
 
-  it('clears every account key plus the deprecated v1 global key on logout', async () => {
+  it('clears only the selected account and preserves other saved and unowned legacy entries', async () => {
     const { __testing, cacheHomeListSnapshot, clearCachedHomeListSnapshot, getCachedHomeListSnapshot } =
       await import('@/session/mobileHomeListCache');
 
@@ -340,14 +340,16 @@ describe('mobileHomeListCache', () => {
     await cacheHomeListSnapshot('user-2', [makeSession('s-2', 'dev-b')]);
     store.set(__testing.legacyStorageKey, JSON.stringify({ version: 1, devices: [] }));
 
-    await clearCachedHomeListSnapshot();
-    expect(store.size).toBe(0);
+    await clearCachedHomeListSnapshot(USER_ID);
+    expect(store.has(__testing.storageKeyForUser(USER_ID))).toBe(false);
+    expect(store.has(__testing.storageKeyForUser('user-2'))).toBe(true);
+    expect(store.has(__testing.legacyStorageKey)).toBe(true);
 
-    // 废弃 v1 key 也会在读路径被顺带清掉(fire-and-forget)。
+    // Unqualified legacy data has no proven owner and is retained.
     store.set(__testing.legacyStorageKey, 'stale');
     await getCachedHomeListSnapshot(USER_ID);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(store.has(__testing.legacyStorageKey)).toBe(false);
+    expect(store.get(__testing.legacyStorageKey)).toBe('stale');
   });
 
   it('hydrateDeviceSessionsIfEmpty seeds an absent shard and never clobbers fresh data', async () => {

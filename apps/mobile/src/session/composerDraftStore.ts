@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getMobileAuthOwner, isMobileAuthOwnerCurrent, type MobileAuthOwnerGeneration } from '@/auth/authOwnerGeneration';
 import { composerDocumentsEqual, parseStoredComposerDocument, composerDocumentProjectedText, type ComposerDocument } from '@/session/composerDocument';
 
 const STORAGE_KEY_PREFIX = 'xdt.mobileComposerDraft.v1';
@@ -12,8 +13,8 @@ const pendingDocumentPersistTimers = new Map<string, ReturnType<typeof setTimeou
 const pendingStorageOperations = new Map<string, Promise<void>>();
 const documentDrafts = new Map<string, ComposerDocument>();
 
-export function saveComposerDraft(sessionId: string, text: string | null | undefined): void {
-  const normalizedSessionId = normalizeSessionId(sessionId);
+export function saveComposerDraft(sessionId: string, text: string | null | undefined, owner = getMobileAuthOwner()): void {
+  const normalizedSessionId = normalizeSessionId(sessionId, owner);
   if (!normalizedSessionId) return;
 
   const key = storageKeyForSession(normalizedSessionId);
@@ -31,8 +32,8 @@ export function saveComposerDraft(sessionId: string, text: string | null | undef
   schedulePersist(normalizedSessionId, key, value);
 }
 
-export function saveComposerDocumentDraft(sessionId: string, document: ComposerDocument): void {
-  const normalizedSessionId = normalizeSessionId(sessionId);
+export function saveComposerDocumentDraft(sessionId: string, document: ComposerDocument, owner = getMobileAuthOwner()): void {
+  const normalizedSessionId = normalizeSessionId(sessionId, owner);
   if (!normalizedSessionId) return;
   const key = documentStorageKeyForSession(normalizedSessionId);
   if (document.nodes.length === 0) {
@@ -48,19 +49,20 @@ export function saveComposerDocumentDraft(sessionId: string, document: ComposerD
   scheduleDocumentPersist(normalizedSessionId, key, document, serialized);
 }
 
-export function readComposerDocumentDraftSync(sessionId: string): ComposerDocument | null {
-  const normalizedSessionId = normalizeSessionId(sessionId);
+export function readComposerDocumentDraftSync(sessionId: string, owner = getMobileAuthOwner()): ComposerDocument | null {
+  const normalizedSessionId = normalizeSessionId(sessionId, owner);
   if (!normalizedSessionId || clearedDocumentDrafts.has(normalizedSessionId)) return null;
   return documentDrafts.get(normalizedSessionId) ?? null;
 }
 
-export async function readComposerDocumentDraft(sessionId: string): Promise<ComposerDocument | null> {
-  const normalizedSessionId = normalizeSessionId(sessionId);
+export async function readComposerDocumentDraft(sessionId: string, owner = getMobileAuthOwner()): Promise<ComposerDocument | null> {
+  const normalizedSessionId = normalizeSessionId(sessionId, owner);
   if (!normalizedSessionId) return null;
   const memory = documentDrafts.get(normalizedSessionId);
   if (memory) return memory;
   if (clearedDocumentDrafts.has(normalizedSessionId)) return null;
   const stored = await AsyncStorage.getItem(documentStorageKeyForSession(normalizedSessionId)).catch(() => null);
+  if (!isMobileAuthOwnerCurrent(owner)) return null;
   const freshMemory = documentDrafts.get(normalizedSessionId);
   if (freshMemory) return freshMemory;
   if (clearedDocumentDrafts.has(normalizedSessionId)) return null;
@@ -75,15 +77,15 @@ export async function readComposerDocumentDraft(sessionId: string): Promise<Comp
   }
 }
 
-export function readComposerDraftSync(sessionId: string): string | null {
-  const normalizedSessionId = normalizeSessionId(sessionId);
+export function readComposerDraftSync(sessionId: string, owner = getMobileAuthOwner()): string | null {
+  const normalizedSessionId = normalizeSessionId(sessionId, owner);
   if (!normalizedSessionId) return null;
   if (clearedDrafts.has(normalizedSessionId)) return null;
   return drafts.get(normalizedSessionId) ?? null;
 }
 
-export async function readComposerDraft(sessionId: string): Promise<string | null> {
-  const normalizedSessionId = normalizeSessionId(sessionId);
+export async function readComposerDraft(sessionId: string, owner = getMobileAuthOwner()): Promise<string | null> {
+  const normalizedSessionId = normalizeSessionId(sessionId, owner);
   if (!normalizedSessionId) return null;
 
   const memoryDraft = drafts.get(normalizedSessionId);
@@ -91,6 +93,7 @@ export async function readComposerDraft(sessionId: string): Promise<string | nul
   if (clearedDrafts.has(normalizedSessionId)) return null;
 
   const storedDraft = await AsyncStorage.getItem(storageKeyForSession(normalizedSessionId)).catch(() => null);
+  if (!isMobileAuthOwnerCurrent(owner)) return null;
   const freshMemoryDraft = drafts.get(normalizedSessionId);
   if (freshMemoryDraft !== undefined) return freshMemoryDraft;
   if (clearedDrafts.has(normalizedSessionId)) return null;
@@ -100,13 +103,14 @@ export async function readComposerDraft(sessionId: string): Promise<string | nul
 }
 
 export async function consumeComposerDraft(sessionId: string): Promise<string | null> {
-  const value = await readComposerDraft(sessionId);
-  clearComposerDraft(sessionId);
+  const owner = getMobileAuthOwner();
+  const value = await readComposerDraft(sessionId, owner);
+  clearComposerDraft(sessionId, owner);
   return value;
 }
 
-export function clearComposerDraft(sessionId: string): void {
-  const normalizedSessionId = normalizeSessionId(sessionId);
+export function clearComposerDraft(sessionId: string, owner = getMobileAuthOwner()): void {
+  const normalizedSessionId = normalizeSessionId(sessionId, owner);
   if (!normalizedSessionId) return;
   cancelPendingPersist(normalizedSessionId);
   cancelPendingDocumentPersist(normalizedSessionId);
@@ -120,18 +124,20 @@ export function clearComposerDraft(sessionId: string): void {
   ]));
 }
 
-export async function clearComposerDrafts(): Promise<void> {
-  cancelAllPendingPersists();
-  cancelAllPendingDocumentPersists();
-  drafts.clear();
-  documentDrafts.clear();
-  clearedDrafts.clear();
-  clearedDocumentDrafts.clear();
+export async function clearComposerDrafts(accountKey = getMobileAuthOwner().accountKey): Promise<void> {
+  const owns = (key: string) => { try { return !!accountKey && JSON.parse(key)[0] === accountKey; } catch { return false; } };
+  for (const key of new Set([...drafts.keys(), ...documentDrafts.keys(), ...pendingPersistTimers.keys(), ...pendingDocumentPersistTimers.keys()])) {
+    if (!owns(key)) continue;
+    cancelPendingPersist(key); cancelPendingDocumentPersist(key);
+    drafts.delete(key); documentDrafts.delete(key);
+    clearedDrafts.add(key); clearedDocumentDrafts.add(key);
+  }
   await drainPendingStorageOperations();
   const keys = await AsyncStorage.getAllKeys().catch(() => [] as readonly string[]);
-  const ownedKeys = keys.filter((key) => (
-    key.startsWith(`${STORAGE_KEY_PREFIX}.`) || key.startsWith(`${DOCUMENT_STORAGE_KEY_PREFIX}.`)
-  ));
+  const ownedKeys = keys.filter(key => [STORAGE_KEY_PREFIX, DOCUMENT_STORAGE_KEY_PREFIX].some(prefix => {
+    if (!accountKey || !key.startsWith(prefix + '.')) return false;
+    try { return JSON.parse(decodeURIComponent(key.slice(prefix.length + 1)))[0] === accountKey; } catch { return false; }
+  }));
   if (ownedKeys.length === 0) return;
   await AsyncStorage.multiRemove(ownedKeys).catch(() => undefined);
 }
@@ -186,7 +192,8 @@ export async function reconcileCommittedComposerDraft(
 ): Promise<void> {
   const id = normalizeSessionId(sessionId);
   guard();
-  await flushComposerDraftWrites(id);
+  if (!id) throw new Error('OUTBOX_OWNER_REQUIRED');
+  await flushComposerDraftWrites(sessionId);
   await enqueueStorageOperation(id, async () => {
     guard();
     const documentKey = documentStorageKeyForSession(id);
@@ -224,8 +231,8 @@ export async function reconcileCommittedComposerDraft(
   }, true);
 }
 
-function normalizeSessionId(sessionId: string): string {
-  return sessionId.trim();
+function normalizeSessionId(sessionId: string, owner: MobileAuthOwnerGeneration = getMobileAuthOwner()): string {
+  return sessionId.trim() && owner.accountKey && isMobileAuthOwnerCurrent(owner) ? JSON.stringify([owner.accountKey, sessionId.trim()]) : '';
 }
 
 function storageKeyForSession(normalizedSessionId: string): string {
@@ -271,16 +278,6 @@ function cancelPendingDocumentPersist(normalizedSessionId: string): void {
   if (!timer) return;
   clearTimeout(timer);
   pendingDocumentPersistTimers.delete(normalizedSessionId);
-}
-
-function cancelAllPendingPersists(): void {
-  for (const timer of pendingPersistTimers.values()) clearTimeout(timer);
-  pendingPersistTimers.clear();
-}
-
-function cancelAllPendingDocumentPersists(): void {
-  for (const timer of pendingDocumentPersistTimers.values()) clearTimeout(timer);
-  pendingDocumentPersistTimers.clear();
 }
 
 async function persistIfCurrent(normalizedSessionId: string, key: string, value: string): Promise<void> {
@@ -329,8 +326,8 @@ async function drainPendingStorageOperations(normalizedSessionId?: string): Prom
 }
 
 export const __testing = {
-  documentStorageKeyForSession,
+  documentStorageKeyForSession: (id: string) => documentStorageKeyForSession(normalizeSessionId(id)),
   persistDebounceMs: PERSIST_DEBOUNCE_MS,
-  storageKeyForSession,
+  storageKeyForSession: (id: string) => storageKeyForSession(normalizeSessionId(id)),
   storageKeyPrefix: STORAGE_KEY_PREFIX,
 };

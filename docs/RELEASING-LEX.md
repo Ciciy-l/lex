@@ -24,6 +24,7 @@ the committed concise Simplified Chinese `release-notices/<version>.md` from the
 release commit and appends the actual signing mode in Chinese. Both that Markdown file and the
 structured five-language JSON notice are required before packaging. A version
 without a prerelease suffix creates a stable draft, independently of signing.
+Write both notices according to the [public notice content rules](../release-notices/README.md#public-notice-content).
 For unsigned desktop releases, Windows packages are unsigned; macOS apps use
 ad-hoc signing and their DMG container is unsigned, so first installation can trigger SmartScreen or
 Gatekeeper warnings. The updater still verifies SHA-256 and can apply the

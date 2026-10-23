@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Outlet, useNavigate } from 'react-router-dom';
+import { Outlet, useMatch, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
 import { useAppShellCover } from '@/contexts/AppShellCoverContext';
@@ -44,6 +44,7 @@ export function LocalDbGate() {
   const { dataOwnerId, mode, logout, exitLocalMode } = useAuth();
   const { reportLocalDbGate } = useAppShellCover();
   const navigate = useNavigate();
+  const addingAccount = useMatch('/add-account') !== null;
   const [decision, setDecision] = useState<GateDecision>({ phase: 'checking' });
   const [retryNonce, setRetryNonce] = useState(0);
   const retryCountRef = useRef(0);
@@ -148,7 +149,10 @@ export function LocalDbGate() {
   }, [dataOwnerId, retryNonce, t]);
 
   useEffect(() => {
-    if (!dataOwnerId || decision.phase === 'checking') {
+    if (addingAccount) {
+      // Release the cover for login without changing the retained DB decision.
+      reportLocalDbGate('ready');
+    } else if (!dataOwnerId || decision.phase === 'checking') {
       reportLocalDbGate('pending');
     } else if (decision.phase === 'fatal') {
       reportLocalDbGate('fatal');
@@ -158,7 +162,9 @@ export function LocalDbGate() {
     return () => {
       reportLocalDbGate('pending');
     };
-  }, [dataOwnerId, decision, reportLocalDbGate]);
+  }, [addingAccount, dataOwnerId, decision, reportLocalDbGate]);
+
+  if (addingAccount) return <Outlet />;
 
   if (!dataOwnerId || decision.phase === 'checking') {
     // 主界面还不能画。视觉盖由 AppShellCover + Splash / 品牌层承接

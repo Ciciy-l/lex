@@ -91,7 +91,7 @@
   "hostOfflineBody": "Sharing for this task is closed and the invitation has expired. Ask the host to share again and send a new invitation.",
   "closedToast": "Stopped sharing for {{count}} tasks",
   "closeFailedToast": "Some shares could not be closed ({{count}}). Retry later.",
-  "invitationDifferentServer": "This invitation belongs to another Cindy service. Open the link in the matching app.",
+  "invitationDifferentServer": "This invitation belongs to another service. Switch to that service before joining.",
   "managementIntro": "Manage the tasks you share and join.",
   "manageSharing": "Manage Sharing",
   "joinedTab": "Joined by Me",

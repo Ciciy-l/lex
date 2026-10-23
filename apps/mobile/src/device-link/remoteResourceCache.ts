@@ -1,3 +1,4 @@
+import { getMobileAuthOwner, isMobileAuthOwnerCurrent } from '@/auth/authOwnerGeneration';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isMobileRemoteCollectionSupported, normalizeRemoteCollectionItems, parseRemoteResourceTargets, type HostedRemoteCollectionItem, type RemoteHomeCollection } from './remoteResources';
 
@@ -40,6 +41,8 @@ function normalize(raw: unknown): Snapshot {
 }
 
 export async function readRemoteResourceSnapshot(userId: string): Promise<Snapshot> {
+  const owner = getMobileAuthOwner();
+  userId = scopedUserId(userId);
   if (!userId) return empty();
   const cached = snapshots.get(userId);
   if (cached) return cached;
@@ -47,18 +50,20 @@ export async function readRemoteResourceSnapshot(userId: string): Promise<Snapsh
   const raw = await AsyncStorage.getItem(PREFIX + userId).catch(() => null);
   let value = empty();
   try { if (raw && raw.length <= MAX_CHARS) value = normalize(JSON.parse(raw)); } catch { /* cache miss */ }
-  if (epoch !== expected) return empty();
+  if (epoch !== expected || !isMobileAuthOwnerCurrent(owner)) return empty();
   if (!snapshots.has(userId)) snapshots.set(userId, value);
   return snapshots.get(userId)!;
 }
 
 async function update(userId: string, change: (snapshot: Snapshot) => void): Promise<void> {
+  const owner = getMobileAuthOwner();
+  userId = scopedUserId(userId);
   if (!userId) return;
   const expected = epoch;
   const previous = writes.get(userId) ?? Promise.resolve();
   const next = previous.then(async () => {
     const snapshot = await readRemoteResourceSnapshot(userId);
-    if (expected !== epoch) return;
+    if (expected !== epoch || !isMobileAuthOwnerCurrent(owner)) return;
     change(snapshot);
     const cleaned = normalize(snapshot);
     snapshots.set(userId, cleaned); emit();
@@ -87,12 +92,14 @@ export const markRemoteResourceRead = (userId: string, deviceId: string, resourc
   if (Number.isFinite(at) && at >= 0) s.read[key] = Math.max(s.read[key] ?? 0, at);
 });
 export function isRemoteResourceUnread(userId: string, deviceId: string, resourceId: string, at?: number): boolean {
-  const read = snapshots.get(userId)?.read[remoteResourceReadKey(deviceId, resourceId)];
+  const read = snapshots.get(scopedUserId(userId))?.read[remoteResourceReadKey(deviceId, resourceId)];
   return at !== undefined && read !== undefined && at > read;
 }
-export async function clearRemoteResourceCache(): Promise<void> {
+export async function clearRemoteResourceCache(accountKey = getMobileAuthOwner().accountKey): Promise<void> {
   epoch += 1; snapshots.clear(); emit();
   await Promise.allSettled([...writes.values()]);
   const keys = await AsyncStorage.getAllKeys().catch(() => []);
-  await AsyncStorage.multiRemove(keys.filter((key) => key.startsWith(PREFIX))).catch(() => undefined);
+  await AsyncStorage.multiRemove(keys.filter((key) => !!accountKey && key === PREFIX + accountKey)).catch(() => undefined);
 }
+
+function scopedUserId(id: string): string { return id && id === getMobileAuthOwner().accountKey ? id : ''; }

@@ -27,6 +27,7 @@ import { MainWindowActionButton, MainWindowEmptyState, RemoteListSyncingPlacehol
 import { mobileInteractionStyles } from '@/components/mobileInteractionStyles';
 import { SimpleStackHeader, simpleScrollInsetProps, simpleScrollScreenSafeAreaEdges } from '@/platform/chrome';
 import { useAuth } from '@/auth/AuthContext';
+import { getMobileAuthOwner } from '@/auth/authOwnerGeneration';
 import { remoteResourceConnectionState, isRemoteResourceHostOnline, readRemoteCollectionCache, writeRemoteCollectionCache } from '@/device-link/remoteResourceAvailability';
 import { useDeviceLink } from '@/device-link/DeviceLinkContext';
 import {
@@ -87,7 +88,8 @@ function RemoteCollectionScreen() {
   const { accountGeneration, user } = useAuth();
   useSyncExternalStore(subscribeRemoteResourceCache, remoteResourceCacheRevision);
   const [hydratedOwner, setHydratedOwner] = useState('');
-  const cacheOwner = `${user?.id ?? ''}:${accountGeneration}`;
+  const accountKey = getMobileAuthOwner().accountKey;
+  const cacheOwner = `${accountKey}:${accountGeneration}`;
   const accountRef = useRef(accountGeneration);
   accountRef.current = accountGeneration;
   const [replyEpochs, setReplyEpochs] = useState<Record<string, number>>({});
@@ -143,13 +145,13 @@ function RemoteCollectionScreen() {
     setItems((current) => {
       const merged = mergeRemoteCollectionHostShards(current, next, successfulDeviceIds, targets);
       writeRemoteCollectionCache(cacheOwner, collectionId, merged);
-      void cacheRemoteResourceItems(user?.id ?? '', collectionId, merged);
+      void cacheRemoteResourceItems(accountKey, collectionId, merged);
       return merged;
     });
     setError(allHostsFailed ? failures.slice(0, 2).join('\n') : null);
     setLoading(false);
     setRefreshing(false);
-  }, [accountGeneration, cacheOwner, collectionId, connectionEpoch, getPresenceAvailability, hydratedOwner, i18n.language, invoke, relayStatus, t, targets, presenceKey, user?.id]);
+  }, [accountGeneration, cacheOwner, collectionId, connectionEpoch, getPresenceAvailability, hydratedOwner, i18n.language, invoke, relayStatus, t, targets, presenceKey, accountKey]);
 
   const requestRefresh = useRemoteSyncCoordinator(
     (run) => read(run.reasons.includes('visible'), run.isStale), JSON.stringify([cacheOwner, collectionId]),
@@ -162,13 +164,13 @@ function RemoteCollectionScreen() {
     setItemsAccount(accountGeneration);
     setReplyEpochs({});
     let cancelled = false;
-    void readRemoteResourceSnapshot(user?.id ?? '').then((snapshot) => {
+    void readRemoteResourceSnapshot(accountKey).then((snapshot) => {
       if (cancelled) return;
       setItems((current) => current.length ? current : snapshot.items[collectionId] ?? []);
       setHydratedOwner(cacheOwner);
     });
     return () => { cancelled = true; };
-  }, [accountGeneration, cacheOwner, collectionId, user?.id]);
+  }, [accountGeneration, cacheOwner, collectionId, accountKey]);
 
   useFocusEffect(useCallback(() => {
     active.current = true;

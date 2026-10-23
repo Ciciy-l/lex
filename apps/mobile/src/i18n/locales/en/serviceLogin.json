@@ -1,0 +1,17 @@
+{
+  "chooseService": "Choose a sign-in service",
+  "serverAddress": "Server address",
+  "serverHint": "Use the device service origin with HTTPS. Only development builds allow HTTP on loopback.",
+  "emailLogin": "Sign in with email",
+  "email": "Email address",
+  "code": "Verification code",
+  "login": "Sign in",
+  "sendCode": "Send code",
+  "guestTitle": "Your tasks, across devices",
+  "guestHint": "Sign in to connect a computer and continue its tasks. Local settings are available without an account.",
+  "nativeUpdateRequired": "Install the new Android app to connect to Lex Server.",
+  "serverError": "Could not verify the server. Check the address, HTTPS certificate and server availability.",
+  "service": "Service",
+  "cindyServices": "Cindy services",
+  "continue": "Continue"
+}

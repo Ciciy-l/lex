@@ -158,4 +158,20 @@ describe('homeViewPreferenceStore', () => {
     store.set(__testing.storageKey, 'not-json');
     await expect(readHomeViewPreferences()).resolves.toEqual({ ...defaultPrefs });
   });
+  it('keeps account device/project preferences separate and preserves unowned legacy bytes', async () => {
+    const { getMobileAuthOwner, setMobileAuthOwner } = await import('@/auth/authOwnerGeneration');
+    const { saveHomeViewPreferences, readHomeViewPreferences, __testing } = await import('@/session/homeViewPreferenceStore');
+    store.set(__testing.legacyStorageKey, 'unowned-old-preferences');
+    setMobileAuthOwner('same-member', 'lex-server:https://a.test'); const a = getMobileAuthOwner();
+    await saveHomeViewPreferences({ selectedDevice: { deviceId: 'A', name: 'A computer' }, manualProjectOrder: ['A project'] }, a);
+    setMobileAuthOwner('same-member', 'lex-server:https://b.test');
+    expect((await readHomeViewPreferences()).selectedDevice).toBeNull();
+    await saveHomeViewPreferences({ selectedDevice: { deviceId: 'late-A', name: 'late' } }, a);
+    expect((await readHomeViewPreferences()).selectedDevice).toBeNull();
+    setMobileAuthOwner('same-member', 'lex-server:https://a.test');
+    expect(await readHomeViewPreferences()).toMatchObject({ selectedDevice: { deviceId: 'A', name: 'A computer' }, manualProjectOrder: ['A project'] });
+    expect(store.get(__testing.legacyStorageKey)).toBe('unowned-old-preferences');
+    setMobileAuthOwner(null);
+  });
+
 });

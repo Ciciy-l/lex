@@ -91,7 +91,7 @@
   "hostOfflineBody": "이 세션의 공유는 종료되었고 초대는 만료되었습니다. 호스트에게 공유를 다시 시작하고 새 초대를 보내달라고 요청하세요.",
   "closedToast": "{{count}}개 세션의 공유를 중지했습니다",
   "closeFailedToast": "중지하지 못한 공유가 있습니다({{count}}건). 나중에 다시 시도할 수 있습니다.",
-  "invitationDifferentServer": "다른 Cindy 서비스의 초대입니다. 해당 앱에서 링크를 여세요.",
+  "invitationDifferentServer": "다른 서비스의 초대입니다. 해당 서비스로 전환한 후 참여하세요.",
   "managementIntro": "시작하거나 참여한 공유를 관리합니다.",
   "manageSharing": "공유 관리",
   "joinedTab": "참여한 공유",

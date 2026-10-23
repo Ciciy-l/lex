@@ -1,5 +1,8 @@
 import { buildAttachmentOssRef, isSharedTaskAttachment } from '@cindy/device-link';
 import { apiFetchRaw } from '@/api/client';
+import { getActiveMobileAuthService } from '@/auth/authService';
+import { authServiceScope } from '@cindy/auth-client';
+import { getMobileAuthOwner, isMobileAuthOwnerCurrent, type MobileAuthOwnerGeneration } from '@/auth/authOwnerGeneration';
 import { canMobilePeerUpload, tryMobilePeerUpload } from '@/device-link/peerFileRegistry';
 import { DEVICE_LINK_API_BASE_URL } from '@/config/env';
 import { i18n } from '@/i18n';
@@ -49,6 +52,27 @@ interface UploadDeps {
   snapshotFile?: (uri: string) => Promise<{ uri: string; size: number; cleanup?: () => Promise<void> }>;
 }
 
+interface AttachmentRequestContext {
+  readonly baseUrl: string;
+  readonly assertCurrent: () => void;
+}
+// In-memory upload results can outlive their screen/controller. Keep their
+// original authority without persisting credentials or changing wire records.
+const uploadedRequestContexts = new WeakMap<object, AttachmentRequestContext>();
+
+/** Keep the upload's endpoint and owner together through hashing, PUT and disposal. */
+function captureAttachmentRequest(owner = getMobileAuthOwner()): AttachmentRequestContext {
+  const baseUrl = DEVICE_LINK_API_BASE_URL;
+  const service = getActiveMobileAuthService();
+  const scope = service ? authServiceScope(service) : null;
+  return { baseUrl, assertCurrent: () => {
+    const currentService = getActiveMobileAuthService();
+    if (!isMobileAuthOwnerCurrent(owner) || DEVICE_LINK_API_BASE_URL !== baseUrl ||
+      (currentService ? authServiceScope(currentService) : null) !== scope) throw new Error('AUTH_FLOW_SUPERSEDED');
+    if (service?.kind === 'lex-server') throw new Error('SERVICE_CAPABILITY_UNAVAILABLE');
+  } };
+}
+
 /** presign 是小 POST,不该吃满默认 20s 超时;弱网抖动重试一次(重复 presign 无副作用,PUT 前不产生对象)。 */
 const PRESIGN_TIMEOUT_MS = 12_000;
 const PRESIGN_MAX_ATTEMPTS = 2;
@@ -69,12 +93,15 @@ export function effectiveUploadMimeType(mimeType: string | undefined): string {
 
 export async function presignMobileAttachmentUpload(
   candidate: MobileAttachmentUploadCandidate,
-  options: { token: string | null; sharedTaskId?: string; deps?: UploadDeps },
+  options: { token: string | null; sharedTaskId?: string; deps?: UploadDeps; request?: AttachmentRequestContext },
 ): Promise<MobileAttachmentPresignResult> {
+  const request = options.request ?? captureAttachmentRequest();
+  request.assertCurrent();
   const apiFetch = options.deps?.apiFetch ?? apiFetchRaw;
   const result = await withTransientRemoteRetry(
-    () => apiFetch<MobileAttachmentPresignResult>('/api/device-link/media/presign-put', {
-      baseUrl: DEVICE_LINK_API_BASE_URL,
+    () => { request.assertCurrent(); return apiFetch<MobileAttachmentPresignResult>('/api/device-link/media/presign-put', {
+      baseUrl: request.baseUrl,
+      assertCurrent: request.assertCurrent,
       method: 'POST',
       token: options.token,
       timeoutMs: PRESIGN_TIMEOUT_MS,
@@ -84,7 +111,7 @@ export async function presignMobileAttachmentUpload(
         ext: uploadExtForName(candidate.name),
         ...(options.sharedTaskId ? { sharedTaskId: options.sharedTaskId } : {}),
       },
-    }),
+    }); },
     { maxAttempts: PRESIGN_MAX_ATTEMPTS },
   );
   const normalized = normalizePresignResult(result);
@@ -305,12 +332,13 @@ export async function uploadMobileAttachment(
   body: MobileAttachmentUploadBody,
   options: { token: string | null; sharedTaskId?: string; id?: string; deps?: UploadDeps },
 ): Promise<RemoteSerializedAttachment> {
+  const requestOptions = { ...options, request: captureAttachmentRequest() };
   // presign 前先校验体积:超出 OSS 上限的文件若先 presign + PUT、再在
   // buildMobileUploadedAttachment 处被拒,会在 device-link OSS 桶里留下永不被引用的孤儿对象。
   assertMobileDocumentSize(candidate.size);
   assertMobileOssAttachmentSize(candidate.size);
   const sha256 = await sha256MobileAttachmentBody(body, candidate.size);
-  const presigned = await presignMobileAttachmentUpload(candidate, options);
+  const presigned = await presignMobileAttachmentUpload(candidate, requestOptions);
   await putMobileAttachmentUpload(presigned.putUrl, body, candidate.mimeType, options.deps);
   const attachment = buildMobileUploadedAttachment({
     id: options.id,
@@ -323,6 +351,7 @@ export async function uploadMobileAttachment(
   if (!attachment) {
     throw new Error(i18n.t('composer.upload.noFileRead'));
   }
+  uploadedRequestContexts.set(attachment, requestOptions.request);
   return attachment;
 }
 
@@ -339,6 +368,7 @@ export async function uploadMobileAttachmentFromFile(
     signal?: AbortSignal;
   },
 ): Promise<RemoteSerializedAttachment> {
+  const requestOptions = { ...options, request: captureAttachmentRequest() };
   assertMobileDocumentSize(candidate.size);
   // 直连不设体积上限;超过 OSS 上限的附件只能直连——先确认直连可用(只查对端能力),
   // 不可用就在快照和摘要之前失败,不白复制、白读一遍数 GB 的文件。
@@ -374,7 +404,7 @@ export async function uploadMobileAttachmentFromFile(
       // 直连没走通:OSS 保底只收上限以内的附件,presign 前拦下,避免孤儿对象。
       assertMobileOssAttachmentSize(candidate.size);
     }
-    const presigned = await presignMobileAttachmentUpload(candidate, options);
+    const presigned = await presignMobileAttachmentUpload(candidate, requestOptions);
     try {
       await putMobileAttachmentUploadFromFile(
         presigned.putUrl,
@@ -383,11 +413,11 @@ export async function uploadMobileAttachmentFromFile(
         options.deps,
         {
           signal: options.signal,
-          onLateSuccess: () => { void deleteMobileAttachmentUpload(presigned.key, options).catch(() => undefined); },
+          onLateSuccess: () => { void deleteMobileAttachmentUpload(presigned.key, requestOptions).catch(() => undefined); },
         },
       );
     } catch (error) {
-      await deleteMobileAttachmentUpload(presigned.key, options).catch(() => undefined);
+      await deleteMobileAttachmentUpload(presigned.key, requestOptions).catch(() => undefined);
       throw error;
     }
     const attachment = buildMobileUploadedAttachment({
@@ -401,6 +431,7 @@ export async function uploadMobileAttachmentFromFile(
     if (!attachment) {
       throw new Error(i18n.t('composer.upload.noFileRead'));
     }
+    uploadedRequestContexts.set(attachment, requestOptions.request);
     return attachment;
   } finally {
     await snapshot.cleanup?.()?.catch(() => undefined);
@@ -432,11 +463,14 @@ async function snapshotMobileAttachmentFile(uri: string): Promise<{
 /** 删除中转区对象(owner 校验在服务端)。 */
 export async function deleteMobileAttachmentUpload(
   ossKey: string,
-  options: { token: string | null; sharedTaskId?: string; deps?: UploadDeps },
+  options: { token: string | null; sharedTaskId?: string; deps?: UploadDeps; request?: AttachmentRequestContext },
 ): Promise<void> {
+  const request = options.request ?? captureAttachmentRequest();
+  request.assertCurrent();
   const apiFetch = options.deps?.apiFetch ?? apiFetchRaw;
   await apiFetch<{ deleted: boolean }>('/api/device-link/media', {
-    baseUrl: DEVICE_LINK_API_BASE_URL,
+    baseUrl: request.baseUrl,
+    assertCurrent: request.assertCurrent,
     method: 'DELETE',
     token: options.token,
     body: { key: ossKey },
@@ -450,18 +484,22 @@ export async function deleteMobileAttachmentUpload(
  */
 export function discardMobileUploadedAttachment(
   attachment: { path?: string },
-  options: { getToken: () => Promise<string | null>; deps?: UploadDeps },
+  options: { getToken: () => Promise<string | null>; deps?: UploadDeps; owner?: MobileAuthOwnerGeneration },
 ): void {
   const ref = typeof attachment.path === 'string' && isAttachmentOssRef(attachment.path)
     ? parseAttachmentOssRef(attachment.path)
     : null;
   if (!ref) return;
+  if (options.owner && !isMobileAuthOwnerCurrent(options.owner)) return;
+  const request = uploadedRequestContexts.get(attachment) ?? captureAttachmentRequest(options.owner);
   void (async () => {
     try {
+      request.assertCurrent();
       const token = await options.getToken();
       if (!token) return;
       await deleteMobileAttachmentUpload(ref.ossKey, {
         token,
+        request,
         deps: options.deps,
       });
     } catch {

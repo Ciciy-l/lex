@@ -4,6 +4,9 @@ import { installPeerUpload } from '@/device-link/peerFileRegistry';
 import { buildPeerAttachmentRef, parsePeerAttachmentRef } from '@cindy/device-link';
 import { DEVICE_LINK_API_BASE_URL } from '@/config/env';
 import { i18n } from '@/i18n';
+const serviceFixture = vi.hoisted(() => ({ lex: false }));
+vi.mock('@/auth/authService', () => ({ getActiveMobileAuthService: () => serviceFixture.lex
+  ? { kind: 'lex-server', origin: 'https://lex.fixture.invalid' } : null }));
 import { buildAttachmentOssRef, parseAttachmentOssRef } from '@/session/attachmentOssRef';
 import {
   discardMobileUploadedAttachment,
@@ -24,6 +27,19 @@ const readFileChunk = vi.fn(async (_uri: string, _position: number, length: numb
 );
 
 describe('mobileAttachmentUpload', () => {
+  it('rejects Lex cloud fallback before presign or upload while preserving the peer path', async () => {
+    serviceFixture.lex = true;
+    const apiFetch = vi.fn();
+    const uploadFile = vi.fn();
+    const off = installPeerUpload(async () => null);
+    try {
+      await expect(uploadMobileAttachmentFromFile({ name: 'a.txt', size: 4 }, 'file:///source', {
+        deviceId: 'host-a', token: 'fixture-lex', deps: { apiFetch, uploadFile, readFileChunk },
+      })).rejects.toThrow('SERVICE_CAPABILITY_UNAVAILABLE');
+      expect(apiFetch).not.toHaveBeenCalled();
+      expect(uploadFile).not.toHaveBeenCalled();
+    } finally { off(); serviceFixture.lex = false; }
+  });
   it('uploads prepared bytes to the captured peer without presigning OSS', async () => {
     const apiFetch = vi.fn();
     const peer = vi.fn(async (_device, _uri, metadata) => buildPeerAttachmentRef({ ...metadata, ticket: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }));
@@ -89,6 +105,7 @@ describe('mobileAttachmentUpload', () => {
 
     expect(apiFetch).toHaveBeenCalledWith('/api/device-link/media/presign-put', {
       baseUrl: DEVICE_LINK_API_BASE_URL,
+      assertCurrent: expect.any(Function),
       method: 'POST',
       token: 'token-1',
       timeoutMs: 12_000,
@@ -632,6 +649,7 @@ describe('mobileAttachmentUpload', () => {
 
     expect(apiFetch).toHaveBeenCalledWith('/api/device-link/media', {
       baseUrl: DEVICE_LINK_API_BASE_URL,
+      assertCurrent: expect.any(Function),
       method: 'DELETE',
       token: 'token-1',
       body: { key: 'cindy/device-link/user-1/photo.png' },

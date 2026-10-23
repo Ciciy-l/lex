@@ -134,7 +134,8 @@ export function AccountSwitcherSheet({
           {auth.savedAccounts.map((account) => {
             const { imageUrl, subtitle: accountSubtitle, title } =
               presentSavedAccount(account);
-            const subtitle = [accountSubtitle, loginText(account.realm === 'cn' ? 'serviceRealmCn' : 'serviceRealmGlobal')].filter(Boolean).join(' · ');
+            const subtitle = [accountSubtitle, account.service?.kind === 'lex-server' ? null
+              : loginText(account.realm === 'cn' ? 'serviceRealmCn' : 'serviceRealmGlobal')].filter(Boolean).join(' · ');
             const switching = switchingKey === account.accountKey;
             return (
               <Pressable

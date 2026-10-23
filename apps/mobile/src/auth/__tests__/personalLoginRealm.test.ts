@@ -9,7 +9,8 @@ vi.mock('@react-native-async-storage/async-storage', () => ({ default: {
 } }));
 vi.mock('../mobileAccountVault', () => ({ readMobileAccountVault: mocks.vault }));
 vi.mock('../secureStorage', () => ({ getSecureItem: mocks.secure }));
-import { parsePersonalLoginRealm, readPersonalLoginRealm, readStartupAuthRealm, savePersonalLoginRealm } from '../personalLoginRealm';
+import { parsePersonalLoginRealm, readPersonalLoginRealm, readStartupAuthRealm, readStartupAuthScope, savePersonalLoginRealm } from '../personalLoginRealm';
+import { serializeAuthSessionRecord } from '@cindy/auth-client';
 
 beforeEach(() => {
   mocks.values.clear(); vi.clearAllMocks();
@@ -18,6 +19,29 @@ beforeEach(() => {
 });
 
 describe('personal login realm preference', () => {
+  it('proves guest absence but resolves a stored Lex origin before endpoint startup', async () => {
+    await expect(readStartupAuthScope()).resolves.toBeNull();
+    const service = { kind: 'lex-server' as const, origin: 'https://a.fixture.invalid:8443' };
+    mocks.vault.mockResolvedValue({ activeAccountKey: 'active', resources: { active: { realm: 'global', service } } });
+    mocks.secure.mockClear();
+    await expect(readStartupAuthScope()).resolves.toBe('lex-server:https://a.fixture.invalid:8443');
+    expect(mocks.secure).not.toHaveBeenCalled();
+  });
+  it('keeps old Cindy session and refresh-only upgrades on their saved realm', async () => {
+    mocks.secure.mockResolvedValueOnce(serializeAuthSessionRecord('cn', 'invalid-fixture'));
+    await expect(readStartupAuthScope()).resolves.toBe('cn');
+    await savePersonalLoginRealm('cn');
+    mocks.secure.mockImplementation(async key => key === 'cindy.mobile.auth.refreshToken' ? 'invalid-fixture' : null);
+    await expect(readStartupAuthScope()).resolves.toBe('cn');
+  });
+  it('does not mark corrupt, unreadable, or undecryptable storage as guest', async () => {
+    mocks.secure.mockResolvedValue('malformed-fixture');
+    await expect(readStartupAuthScope()).rejects.toThrow('AUTH_STORAGE_UNAVAILABLE');
+    mocks.secure.mockRejectedValue(new Error('fixture decrypt failure'));
+    await expect(readStartupAuthScope()).rejects.toThrow('fixture decrypt failure');
+    mocks.vault.mockRejectedValue(new Error('fixture vault read failure'));
+    await expect(readStartupAuthScope()).rejects.toThrow('fixture vault read failure');
+  });
   it('defaults to Global and serializes successive user choices', async () => {
     expect(parsePersonalLoginRealm('other')).toBe('global');
     expect(await readPersonalLoginRealm()).toBe('global');
@@ -49,7 +73,8 @@ describe('personal login realm preference', () => {
     expect(selection).toContain('pendingLoginTicketRef.current = null');
     expect(selection).not.toContain('await');
     expect(source).toContain('if (expectedEpoch !== undefined && expectedEpoch !== loginFlowEpochRef.current) return;');
-    expect(source).toContain('if (!additionalLoginRef.current) activateMobileSessionRealm(personalRealm)');
+    // Selecting a pending realm cannot redirect the current account's service.
+    expect(selection).not.toContain('activateMobileAuthScope(');
     const gate = readFileSync(resolve(process.cwd(), 'src/config/useStartupEndpointGate.ts'), 'utf8');
     expect(gate).toContain('explicitRealm.current ?? await readStartupAuthRealm()');
     expect(gate).toContain('realmManifestBaseUrls[selected]');

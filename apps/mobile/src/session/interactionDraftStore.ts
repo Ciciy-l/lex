@@ -1,3 +1,5 @@
+import { getMobileAuthOwner, isMobileAuthOwnerCurrent, type MobileAuthOwnerGeneration } from '@/auth/authOwnerGeneration';
+
 export interface AskUserDraft {
   answers: Record<string, string>;
   currentIndex: number;
@@ -15,32 +17,32 @@ export interface PlanReviewDraft {
 const askUserDrafts = new Map<string, AskUserDraft>();
 const planReviewDrafts = new Map<string, PlanReviewDraft>();
 
-export function readAskUserDraft(requestId: string): AskUserDraft | null {
-  const draft = askUserDrafts.get(requestId);
+export function readAskUserDraft(requestId: string, owner = getMobileAuthOwner()): AskUserDraft | null {
+  const draft = askUserDrafts.get(scopedRequest(requestId, owner));
   return draft ? cloneDraft(draft) : null;
 }
 
-export function saveAskUserDraft(requestId: string, draft: AskUserDraft): void {
-  if (!requestId) return;
-  askUserDrafts.set(requestId, cloneDraft(draft));
+export function saveAskUserDraft(requestId: string, draft: AskUserDraft, owner = getMobileAuthOwner()): void {
+  if (!scopedRequest(requestId, owner)) return;
+  askUserDrafts.set(scopedRequest(requestId, owner), cloneDraft(draft));
 }
 
-export function clearAskUserDraft(requestId: string): void {
-  askUserDrafts.delete(requestId);
+export function clearAskUserDraft(requestId: string, owner = getMobileAuthOwner()): void {
+  askUserDrafts.delete(scopedRequest(requestId, owner));
 }
 
-export function readPlanReviewDraft(requestId: string): PlanReviewDraft | null {
-  const draft = planReviewDrafts.get(requestId);
+export function readPlanReviewDraft(requestId: string, owner = getMobileAuthOwner()): PlanReviewDraft | null {
+  const draft = planReviewDrafts.get(scopedRequest(requestId, owner));
   return draft ? clonePlanReviewDraft(draft) : null;
 }
 
-export function savePlanReviewDraft(requestId: string, draft: PlanReviewDraft): void {
-  if (!requestId) return;
-  planReviewDrafts.set(requestId, clonePlanReviewDraft(draft));
+export function savePlanReviewDraft(requestId: string, draft: PlanReviewDraft, owner = getMobileAuthOwner()): void {
+  if (!scopedRequest(requestId, owner)) return;
+  planReviewDrafts.set(scopedRequest(requestId, owner), clonePlanReviewDraft(draft));
 }
 
-export function clearPlanReviewDraft(requestId: string): void {
-  planReviewDrafts.delete(requestId);
+export function clearPlanReviewDraft(requestId: string, owner = getMobileAuthOwner()): void {
+  planReviewDrafts.delete(scopedRequest(requestId, owner));
 }
 
 export function clearAllInteractionDrafts(): void {
@@ -65,3 +67,5 @@ function clonePlanReviewDraft(draft: PlanReviewDraft): PlanReviewDraft {
     planText: draft.planText,
   };
 }
+
+function scopedRequest(id: string, owner: MobileAuthOwnerGeneration): string { return id && owner.accountKey && isMobileAuthOwnerCurrent(owner) ? JSON.stringify([owner.accountKey, id]) : ''; }

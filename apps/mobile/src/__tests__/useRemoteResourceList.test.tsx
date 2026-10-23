@@ -3,6 +3,7 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HostedRemoteCollectionItem, RemoteResourceHostTarget } from '@/device-link/remoteResources';
+import { getMobileAuthOwner, setMobileAuthOwner } from '@/auth/authOwnerGeneration';
 const h = vi.hoisted(() => ({
   auth: { user: { id: 'owner' }, accountGeneration: 1 },
   link: { connectionEpoch: 1, status: 'online', presenceVersion: 1, getPresenceAvailability: vi.fn(() => true as boolean | null),
@@ -37,12 +38,13 @@ let result: ReturnType<typeof useRemoteResourceList>;
 function Probe({ enabled = true }: { enabled?: boolean }) { result = useRemoteResourceList('projects', targets, enabled); return null; }
 async function render(enabled = true) { root ??= createRoot(document.createElement('div')); await act(async () => root!.render(createElement(Probe, { enabled }))); }
 beforeEach(() => {
+  setMobileAuthOwner('owner', 'global');
   vi.clearAllMocks(); h.auth.accountGeneration = 1; h.auth.user.id = 'owner'; h.cached = [];
   h.link.status = 'online'; h.link.connectionEpoch = 1; h.link.getPresenceAvailability.mockReturnValue(true);
   h.list.mockResolvedValue({ items: [] }); h.link.openLink.mockResolvedValue(undefined);
   h.snapshot.mockImplementation(async () => ({ home: [], items: { projects: h.cached }, read: {} }));
 });
-afterEach(() => { act(() => root?.unmount()); root = undefined; vi.useRealTimers(); });
+afterEach(() => { act(() => root?.unmount()); root = undefined; vi.useRealTimers(); setMobileAuthOwner(null); });
 describe('shared real resource list', () => {
   it('reconciles deletion from a successful host, retains a failed host as offline, and reports partial failures', async () => {
     h.cached = [cached(targets[0], 'deleted'), cached(targets[1], 'offline')];
@@ -55,7 +57,7 @@ describe('shared real resource list', () => {
     expect(result.isOnline(targets[0])).toBe(true);
     expect(result.isOnline(targets[1])).toBe(false);
     expect(result.error).toContain('host unavailable');
-    expect(h.persist).toHaveBeenCalledWith('owner', 'projects', result.items);
+    expect(h.persist).toHaveBeenCalledWith(getMobileAuthOwner().accountKey, 'projects', result.items);
   });
   it('bounds cache hydration and never resurrects stale entries when a late cache arrives after live deletion', async () => {
     vi.useFakeTimers();
@@ -88,12 +90,13 @@ describe('shared real resource list', () => {
     h.cached = [cached(targets[0], 'private')];
     await render();
     h.cached = []; h.auth.accountGeneration = 2; h.auth.user.id = 'next-owner';
+    setMobileAuthOwner('next-owner', 'global');
     h.list.mockResolvedValue({ items: [] });
     await render();
     expect(result.items).toEqual([]);
     await act(async () => settle({ items: [item('old-account-reply')] }));
     expect(result.items).toEqual([]);
-    expect(h.persist.mock.calls.some(([owner, , rows]) => owner === 'next-owner' && rows.some((row: HostedRemoteCollectionItem) => row.item.ref.id === 'old-account-reply'))).toBe(false);
+    expect(h.persist.mock.calls.some(([owner, , rows]) => owner === getMobileAuthOwner().accountKey && rows.some((row: HostedRemoteCollectionItem) => row.item.ref.id === 'old-account-reply'))).toBe(false);
   });
   it('refreshes from an offline cache after reconnect and cancels requests while the picker is closed', async () => {
     h.cached = [cached(targets[0], 'old')];

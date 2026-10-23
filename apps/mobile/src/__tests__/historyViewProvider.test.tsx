@@ -14,6 +14,7 @@ import { isHistoryViewUnavailable } from '@cindy/maker-shared/message-window';
 import { DeviceLinkProvider, useDeviceLink, type DeviceLinkContextValue } from '../device-link/DeviceLinkContext';
 import { acquireDeviceSendSlot, resetDeviceResponsivenessTracking, settleDeviceSend, unresponsiveDevicesStore } from '../device-link/unresponsiveDevicesStore';
 import { revokedDevicesStore } from '../device-link/revokedDevicesStore';
+import { setMobileAuthOwner } from '../auth/authOwnerGeneration';
 
 const auth = vi.hoisted(() => ({
   isAuthenticated: true,
@@ -48,6 +49,7 @@ vi.mock('@react-native-async-storage/async-storage', () => ({ default: {
   getAllKeys: vi.fn(async () => []), multiRemove: vi.fn(async () => {}),
 } }));
 vi.mock('@/device-link/rnWebSocket', () => ({ createRnWebSocket: vi.fn() }));
+vi.mock('@/device-link/lexServiceWebSocket', () => ({ createLexServiceWebSocket: vi.fn() }));
 vi.mock('@/debug/mobileDebugLog', () => ({ mobileDebugLog: vi.fn() }));
 vi.mock('@/debug/visualMock', () => ({ prepareVisualMockDeviceLinkContext: vi.fn() }));
 vi.mock('@cindy/maker-shared/device-responsiveness', async (importOriginal) => {
@@ -64,6 +66,7 @@ const transport = vi.hoisted(() => {
     statusChanged: (status: DeviceLinkStatus) => void = () => {};
     presenceChanged: (snapshot: PresenceSnapshot) => void = () => {};
     peerReset: Parameters<DeviceLinkClient['onPeerTransportReset']>[0] = () => {};
+    beforeLink: Parameters<DeviceLinkClient['onReliableFrameBeforeLink']>[0] = () => false;
     frame: Parameters<DeviceLinkClient['onFrame']>[0] = () => {};
     openLink = vi.fn<(deviceId: string) => Promise<LinkAcceptPayload>>();
     invoke = vi.fn<DeviceLinkClient['invoke']>(async (_deviceId, _payload, _timeout, options) => {
@@ -84,7 +87,7 @@ const transport = vi.hoisted(() => {
     onPeerTransportReset(listener: Client['peerReset']) { this.peerReset = listener; return () => {}; }
     onConnectionIssue = () => () => {};
     onFrame(listener: Client['frame']) { this.frame = listener; return () => {}; }
-    onReliableFrameBeforeLink = () => () => {};
+    onReliableFrameBeforeLink(listener: Client['beforeLink']) { this.beforeLink = listener; return () => {}; }
   }
   return { Client, clients: [] as Client[] };
 });
@@ -116,6 +119,7 @@ async function readHistory() {
 }
 
 beforeEach(async () => {
+  setMobileAuthOwner('test-account', 'global');
   networkEvents.state = 'active';
   auth.accountGeneration = 1;
   transport.clients.length = 0;
@@ -125,6 +129,28 @@ beforeEach(async () => {
 afterEach(async () => { await act(async () => root.unmount()); });
 
 describe('Provider queued send guards', () => {
+  it('fences old transport and lifecycle callbacks synchronously when the service owner changes', async () => {
+    const client = transport.clients[0];
+    const oldApp = networkEvents.app;
+    const oldNetwork = networkEvents.network;
+    await act(async () => { setMobileAuthOwner('test-account', 'lex-server:https://other.fixture.invalid'); });
+    expect(client.stop).toHaveBeenCalled();
+    await act(async () => {
+      client.statusChanged('online');
+      client.presenceChanged({ deviceId: 'old-host', deviceName: 'Old host', platform: 'win32',
+        appVersion: 'test', lastSeenAt: 0, online: true, busy: false, remoteControlEnabled: true });
+      client.peerReset({ deviceId: 'old-host', reason: 'ack-timeout', connectionEpoch: 1, linkGeneration: 1, seq: 1 });
+      expect(client.beforeLink('old-host')).toBe(false);
+      oldApp('active');
+      oldNetwork({ type: 'WIFI', isConnected: true, isInternetReachable: true });
+    });
+    expect(client.connectNow).not.toHaveBeenCalled();
+    expect(client.restartConnection).not.toHaveBeenCalled();
+    expect(client.notifyNetworkChanged).not.toHaveBeenCalled();
+    expect(client.openLink).not.toHaveBeenCalled();
+    expect(client.invoke).not.toHaveBeenCalled();
+    expect(context.lastPresenceSnapshot).toBeNull();
+  });
   it('rejects a write cancelled after admission without sending or counting a remote timeout', async () => {
     resetDeviceResponsivenessTracking();
     const client = transport.clients[0];

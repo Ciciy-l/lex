@@ -307,7 +307,7 @@ export default function SettingsScreen() {
 
 
   useEffect(() => {
-    if (!auth.isAuthenticated) {
+    if (!auth.canUseCindyServices) {
       setAccountDeletionAvailable(false);
       return;
     }
@@ -326,7 +326,7 @@ export default function SettingsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [auth.getAccountDeletionAvailability, auth.isAuthenticated]);
+  }, [auth.getAccountDeletionAvailability, auth.canUseCindyServices]);
 
   const copyRow = useCallback(async (row: MobileSettingsRow) => {
     if (!row.copyValue) return;
@@ -406,7 +406,7 @@ export default function SettingsScreen() {
     setLoggingOut(true);
     try {
       await auth.logout();
-      router.replace('/login');
+      router.replace('/');
     } catch (error) {
       Alert.alert(t('devices.list.alert.actionFailed'), formatRemoteError(error));
     } finally {
@@ -740,7 +740,7 @@ export default function SettingsScreen() {
           motionEnabled={debugDisclosureMotionEnabled}
         >
         {/* 账号头部:身份 + 连接状态一次性呈现,下面分组不再重复 */}
-        <View style={styles.headerCard} testID="settings.accountHeader">
+        {auth.isAuthenticated ? <View style={styles.headerCard} testID="settings.accountHeader">
           <MobileUserAvatar imageUrl={auth.user?.avatar} name={overview.header.name} size="large" />
           <View style={styles.headerTexts}>
             <Text style={styles.headerName} numberOfLines={1}>{overview.header.name}</Text>
@@ -754,9 +754,10 @@ export default function SettingsScreen() {
               </Text>
             </View>
           </View>
-        </View>
+        </View> : <MainWindowActionButton action={{ label: t('serviceLogin.login'), onPress: () => router.push('/login'), testID: 'settings.login' }} />}
+        {auth.service?.kind === 'lex-server' ? <Text style={styles.headerEmail}>{[new URL(auth.service.origin).host, auth.user?.orgName].filter(Boolean).join(' · ')}</Text> : null}
 
-        <SettingsGroup title={t('sharedTask.manageSharing')}>
+        {auth.isAuthenticated ? <SettingsGroup title={t('sharedTask.manageSharing')}>
           {[
             <ActionInfoRow
               accessibilityLabel={t('sharedTask.manageSharing')}
@@ -767,7 +768,7 @@ export default function SettingsScreen() {
               value={t('sharedTask.tabOwned')}
             />,
           ]}
-        </SettingsGroup>
+        </SettingsGroup> : null}
 
         {/* 版本:只保留统一检查入口;允许整包分发时先查整包,否则直接查热更。 */}
         {IS_LEX_MOBILE ? <LexMobileInfoSection /> : (
@@ -826,7 +827,7 @@ export default function SettingsScreen() {
         )}
 
         {/* 通知:任务完成推送(仅 iOS;Android 待 FCM/厂商通道) */}
-        {isPushSupported() ? (
+        {auth.canUseCindyServices && isPushSupported() ? (
           <SettingsGroup title={t('settings.notifications.sectionTitle')}>
             <SettingsSwitchRow
               accessibilityLabel={t('settings.notifications.taskDone')}
@@ -844,7 +845,7 @@ export default function SettingsScreen() {
         ) : null}
 
         {/* 语音词典:只读查看电脑上的词典(正本在电脑,增删改回电脑做) */}
-        <SettingsGroup
+        {auth.canUseCindyServices ? <SettingsGroup
           footer={t('settings.voiceDictionary.hint')}
           title={t('settings.voiceDictionary.sectionTitle')}
         >
@@ -856,7 +857,7 @@ export default function SettingsScreen() {
             testID="settings.voiceDictionary.row"
             value={t('settings.voiceDictionary.entryCount', { count: dictionaryEntries.length })}
           />
-        </SettingsGroup>
+        </SettingsGroup> : null}
 
         {/* 显示语言:默认跟随系统,手动选择即持久化 override(恢复跟随系统 = 清除 override) */}
         <SettingsGroup
@@ -1038,7 +1039,7 @@ export default function SettingsScreen() {
         {/* 法律信息:隐私政策/用户协议始终显示(链接区域分流走 legalLinks 单点);
             使用统计开关与它们同组(合规要求关闭途径可被找到);
             App 备案号仅国内版显示。 */}
-        <SettingsGroup title={t('settings.legal.sectionTitle')}>
+        {auth.canUseCindyServices ? <SettingsGroup title={t('settings.legal.sectionTitle')}>
           {!IS_LEX_MOBILE ? <SettingsSwitchRow
             accessibilityLabel={t('settings.legal.analytics')}
             disabled={analyticsBusy || !analyticsReady}
@@ -1087,10 +1088,10 @@ export default function SettingsScreen() {
               value="沪ICP备11033765号-89A"
             />
           ) : null}
-        </SettingsGroup>
+        </SettingsGroup> : null}
 
         {/* 账号操作:退出保持明确(先确认);注销账号仅保留低调的次要文字入口。 */}
-        <DisclosureItem style={styles.dangerArea} testID="settings.accountActions">
+        {auth.isAuthenticated ? <DisclosureItem style={styles.dangerArea} testID="settings.accountActions">
           <Text style={styles.dangerHint}>
             {t('settings.account.logoutHint')}
           </Text>
@@ -1123,7 +1124,7 @@ export default function SettingsScreen() {
               </Text>
             </Pressable>
           ) : null}
-        </DisclosureItem>
+        </DisclosureItem> : null}
         </ListDisclosureScope>
       </ScrollView>
       <SheetModal

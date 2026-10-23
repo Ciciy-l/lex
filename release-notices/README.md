@@ -14,6 +14,22 @@ uses it for the draft body. It appends the actual desktop signing mode after the
 reviewed text in Chinese. The title remains `Lex v<version>` without a signing suffix.
 Stable versus RC is determined by the version suffix, independently of signing.
 
+## Public notice content
+
+These rules apply to both the public Markdown release body and all five locales
+of the in-app JSON notice:
+
+- Describe only user-visible features, improvements, fixes, and essential
+  installation or upgrade instructions. Explain what changes for the user rather
+  than how it was implemented.
+- Keep internal development and testing details, acceptance-test machines and
+  model selections, CI statistics, candidate identifiers, and review history in
+  the PR or internal reports, not in release notices.
+- Explain known limitations that affect use in plain user language. Removing
+  internal details must not hide those limitations or overstate support.
+
+## Validation and publication
+
 Validate without publishing:
 
 ```sh

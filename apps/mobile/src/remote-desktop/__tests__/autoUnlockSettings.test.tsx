@@ -32,8 +32,10 @@ vi.mock("react-native", () => ({
   },
 }));
 vi.mock("@/auth/AuthContext", () => ({
-  useAuth: () => ({ getAccessToken: async () => "test-token" }),
+  useAuth: () => ({ getAccessToken: async () => "test-token", canUseCindyServices: true }),
 }));
+// These are the existing Cindy/iOS credential cases. Lex denial has its own boundary suite.
+vi.mock("@/auth/authService", () => ({ isCindyMobileSession: () => true }));
 vi.mock("@/auth/deviceId", () => ({
   ensureDeviceId: async () => "test-phone",
 }));

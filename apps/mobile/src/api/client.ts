@@ -1,4 +1,7 @@
 import { i18n } from '@/i18n';
+import { mobileServiceFetch } from '@/auth/serviceTransport';
+import { getMobileAuthOwner, isMobileAuthOwnerCurrent } from '@/auth/authOwnerGeneration';
+import { getActiveMobileAuthService } from '@/auth/authService';
 
 export class ApiError extends Error {
   constructor(
@@ -45,7 +48,17 @@ export async function apiFetchRaw<T>(
   path: string,
   opts: ApiFetchOptions,
 ): Promise<T> {
-  opts.assertCurrent?.();
+  const owner = getMobileAuthOwner();
+  const service = getActiveMobileAuthService();
+  const callerAssert = opts.assertCurrent;
+  const assertCurrent = () => {
+    callerAssert?.();
+    if (owner.accountKey && !isMobileAuthOwnerCurrent(owner)) throw new Error('AUTH_FLOW_SUPERSEDED');
+    if (service?.kind === 'lex-server' && opts.token && (opts.baseUrl !== service.origin ||
+      !/^\/api\/device-link\/(devices|identities|shared-tasks)(?:\/|$|\?)/u.test(path))) throw new Error('SERVICE_CAPABILITY_UNAVAILABLE');
+  };
+  opts = { ...opts, assertCurrent };
+  assertCurrent();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
   if (opts.cache === 'no-store') {
@@ -63,7 +76,7 @@ export async function apiFetchRaw<T>(
     const requestPromise = (async (): Promise<{ response: Response; data: unknown }> => {
       // A caller may have awaited token setup since apiFetchRaw entered.
       opts.assertCurrent?.();
-      const nextResponse = await fetch(opts.baseUrl + path, {
+      const nextResponse = await mobileServiceFetch(opts.baseUrl + path, {
         method: opts.method ?? 'GET',
         headers,
         body: opts.body === undefined ? undefined : JSON.stringify(opts.body),

@@ -622,8 +622,8 @@ describe('mobile session composer desktop-first surface', () => {
     expect(source).toContain('readComposerDocumentDraft,');
     expect(source).toContain('readComposerDocumentDraftSync,');
     expect(source).toContain('saveComposerDocumentDraft,');
-    expect(source).toContain('saveComposerDocumentDraft(sessionId, value);');
-    expect(source).toContain('saveComposerDraft(sessionId, projected);');
+    expect(source).toContain('saveComposerDocumentDraft(sessionId, value, outboxOwner);');
+    expect(source).toContain('saveComposerDraft(sessionId, projected, outboxOwner);');
     expect(source).toContain('void flushComposerDraftWrites(sessionId);');
     expect(source).toContain('readComposerDraftSync(sessionId)');
     expect(source).toContain('const immediateDocumentSnapshot = immediateDocument;');

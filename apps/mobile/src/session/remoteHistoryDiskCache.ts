@@ -13,7 +13,7 @@ export function historyDiskAuthority(deviceId: string, sessionId: string) {
   const owner = getMobileAuthOwner();
   const realm = getActiveMobileSessionRealm();
   const generation = epoch;
-  const key = JSON.stringify([realm, owner.accountId, deviceId, sessionId]);
+  const key = JSON.stringify([realm, owner.accountKey, deviceId, sessionId]);
   const keyEpoch = keyEpochs.get(key) ?? 0;
   keyEpochs.set(key, keyEpoch);
   const ownerCurrent = () => !!owner.accountId && isMobileAuthOwnerCurrent(owner) && realm === getActiveMobileSessionRealm();
@@ -90,13 +90,13 @@ export async function writeHistoryDisk(authority: Authority, snapshot: HistoryVi
   } catch { return false; /* Retain outbox ownership when caching fails. */ }
 }
 
-export function clearHistoryDisk(deviceId?: string, sessionId?: string): Promise<void> {
+export function clearHistoryDisk(deviceId?: string, sessionId?: string, accountKey = getMobileAuthOwner().accountKey): Promise<void> {
   // Fence late reads, pending debounce callbacks and unmount writes synchronously.
   const matches = (key: string) => {
     try {
-      const [, , device, session] = JSON.parse(key);
-      return (deviceId === undefined || device === deviceId) && (sessionId === undefined || session === sessionId);
-    } catch { return true; }
+      const [, owner, device, session] = JSON.parse(key);
+      return !!accountKey && owner === accountKey && (deviceId === undefined || device === deviceId) && (sessionId === undefined || session === sessionId);
+    } catch { return false; }
   };
   if (deviceId === undefined && sessionId === undefined) { epoch++; keyEpochs.clear(); }
   else for (const [key, value] of keyEpochs) if (matches(key)) keyEpochs.set(key, value + 1);

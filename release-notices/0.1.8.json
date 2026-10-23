@@ -1,0 +1,61 @@
+{
+  "version": "0.1.8",
+  "date": "2026-10-23",
+  "contentByLocale": {
+    "zh-CN": {
+      "intro": "Lex 0.1.8 为 Android 带来 Lex Server 登录，并改善桌面登录导航、模型选择和手机输入的稳定性。",
+      "topics": [
+        { "id": "android-services", "title": "Android 登录服务", "text": "可选择 Lex Server、Cindy 或免登录进入，支持保存、恢复、切换和退出账号；不同服务的账号互不影响。" },
+        { "id": "desktop-sign-in", "title": "顺畅的桌面登录", "text": "修复 Lex Server 重新登录进入错误页面的问题；从登录服务选择页返回时，不再重复显示“Lex正在唤醒”。" },
+        { "id": "model-controls", "title": "精简模型选项", "text": "模型名称与上下文容量同行显示，选项更紧凑。" },
+        { "id": "mobile-input", "title": "更稳定的手机输入", "text": "修复手机连续输入时可能报错的问题，并改善返回应用后的草稿恢复。" },
+        { "id": "codex-compatibility", "title": "Codex 任务启动", "text": "修复部分 Codex 任务无法启动的问题。" },
+        { "id": "upgrade", "title": "升级须知", "text": "Android 需下载完整 APK，直接覆盖安装即可，请勿先卸载。桌面安装包的实际签名状态以发行页为准；暂不提供 iOS 安装包。" }
+      ]
+    },
+    "zh-TW": {
+      "intro": "Lex 0.1.8 為 Android 帶來 Lex Server 登入，並改善桌面登入導覽、模型選擇與手機輸入的穩定性。",
+      "topics": [
+        { "id": "android-services", "title": "Android 登入服務", "text": "可選擇 Lex Server、Cindy 或免登入進入，支援儲存、還原、切換與登出帳號；不同服務的帳號互不影響。" },
+        { "id": "desktop-sign-in", "title": "順暢的桌面登入", "text": "修正 Lex Server 重新登入時開啟錯誤頁面的問題；從登入服務選擇頁返回時，不再重複等待啟動。" },
+        { "id": "model-controls", "title": "精簡模型選項", "text": "模型名稱與上下文容量顯示於同一行，選項更精簡。" },
+        { "id": "mobile-input", "title": "更穩定的手機輸入", "text": "修正手機連續輸入時可能發生錯誤的問題，並改善返回應用程式後的草稿還原。" },
+        { "id": "codex-compatibility", "title": "Codex 任務啟動", "text": "修正部分 Codex 任務無法啟動的問題。" },
+        { "id": "upgrade", "title": "升級須知", "text": "Android 需下載完整 APK，直接覆蓋安裝即可，請勿先解除安裝。桌面安裝套件的實際簽章狀態以發行頁為準；暫不提供 iOS 安裝套件。" }
+      ]
+    },
+    "en": {
+      "intro": "Lex 0.1.8 adds Lex Server sign-in on Android and improves desktop sign-in navigation, model controls, and mobile input stability.",
+      "topics": [
+        { "id": "android-services", "title": "Android sign-in services", "text": "Choose Lex Server, Cindy, or continue without signing in. Save, restore, switch, and sign out of accounts, with accounts on different services kept separate." },
+        { "id": "desktop-sign-in", "title": "Smoother desktop sign-in", "text": "Fixed Lex Server opening the wrong page when signing in again, and the repeated startup wait when returning from the sign-in service chooser." },
+        { "id": "model-controls", "title": "Simpler model options", "text": "The model name and context capacity now share one line, making the options more compact." },
+        { "id": "mobile-input", "title": "More stable mobile input", "text": "Fixed errors that could occur while typing continuously on mobile and improved draft recovery when returning to the app." },
+        { "id": "codex-compatibility", "title": "Starting Codex tasks", "text": "Fixed an issue that prevented some Codex tasks from starting." },
+        { "id": "upgrade", "title": "Upgrading", "text": "For Android, download the full APK and install it over the existing app without uninstalling first. See the release page for the actual signing status of desktop installers. No iOS installer is available yet." }
+      ]
+    },
+    "ja": {
+      "intro": "Lex 0.1.8 は Android に Lex Server ログインを追加し、デスクトップのログイン操作、モデル設定、モバイル入力の安定性を改善します。",
+      "topics": [
+        { "id": "android-services", "title": "Android のログインサービス", "text": "Lex Server、Cindy、またはログインせずに開始する方法を選べます。アカウントの保存・復元・切り替え・ログアウトに対応し、異なるサービスのアカウントは互いに影響しません。" },
+        { "id": "desktop-sign-in", "title": "スムーズなデスクトップログイン", "text": "Lex Server への再ログイン時に誤った画面が開く問題を修正しました。ログインサービスの選択画面から戻る際に、起動待ちを繰り返さなくなりました。" },
+        { "id": "model-controls", "title": "簡潔なモデル設定", "text": "モデル名とコンテキスト容量を同じ行に表示し、設定項目をコンパクトにまとめました。" },
+        { "id": "mobile-input", "title": "安定したモバイル入力", "text": "スマートフォンで連続入力するとエラーになる場合がある問題を修正し、アプリに戻った際の下書きの復元を改善しました。" },
+        { "id": "codex-compatibility", "title": "Codex タスクの開始", "text": "一部の Codex タスクを開始できない問題を修正しました。" },
+        { "id": "upgrade", "title": "アップグレード", "text": "Android は完全な APK をダウンロードし、アンインストールせずに上書きインストールしてください。デスクトップ用インストーラーの実際の署名状態はリリースページをご確認ください。iOS 用のインストーラーはまだ提供していません。" }
+      ]
+    },
+    "ko": {
+      "intro": "Lex 0.1.8은 Android에 Lex Server 로그인을 추가하고 데스크톱 로그인 탐색, 모델 설정, 모바일 입력 안정성을 개선합니다.",
+      "topics": [
+        { "id": "android-services", "title": "Android 로그인 서비스", "text": "Lex Server, Cindy 또는 로그인 없이 시작하는 방식을 선택할 수 있습니다. 계정 저장, 복원, 전환, 로그아웃을 지원하며 서로 다른 서비스의 계정은 영향을 주지 않습니다." },
+        { "id": "desktop-sign-in", "title": "더 원활한 데스크톱 로그인", "text": "Lex Server에 다시 로그인할 때 잘못된 화면이 열리는 문제를 수정했습니다. 로그인 서비스 선택 화면에서 돌아올 때 시작 대기를 반복하지 않습니다." },
+        { "id": "model-controls", "title": "간결한 모델 설정", "text": "모델 이름과 컨텍스트 용량을 같은 줄에 표시해 설정 항목을 더 간결하게 정리했습니다." },
+        { "id": "mobile-input", "title": "더 안정적인 모바일 입력", "text": "휴대폰에서 연속으로 입력할 때 오류가 발생할 수 있는 문제를 수정하고 앱으로 돌아왔을 때의 초안 복원을 개선했습니다." },
+        { "id": "codex-compatibility", "title": "Codex 작업 시작", "text": "일부 Codex 작업을 시작할 수 없는 문제를 수정했습니다." },
+        { "id": "upgrade", "title": "업그레이드 안내", "text": "Android는 전체 APK를 다운로드해 기존 앱을 제거하지 말고 덮어 설치하세요. 데스크톱 설치 파일의 실제 서명 상태는 릴리스 페이지를 확인하세요. iOS 설치 파일은 아직 제공하지 않습니다." }
+      ]
+    }
+  }
+}

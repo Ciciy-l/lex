@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { RemoteSession } from '@/session/types';
+import { getMobileAuthOwner } from '@/auth/authOwnerGeneration';
 
 // 「首页设备 + 会话列表」冷启动持久缓存:冷启动时先用上次 loadHome 成功后的 last-known 快照
 // 乐观画出列表(消除首屏强制 spinner),fresh loadHome 回来后由 store 正常对账覆盖并回写缓存。
@@ -45,7 +46,6 @@ function storageKeyForUser(userId: string): string {
 // 读取快照;无缓存 / JSON 损坏 / 形状不对 / userId 缺失一律静默返回空数组(乐观 hydrate 不应抛错)。
 export async function getCachedHomeListSnapshot(userId: string): Promise<CachedHomeDeviceSnapshot[]> {
   // 废弃的 v1 全局 key 顺带清掉(fire-and-forget,不阻塞冷启动首帧)。
-  void AsyncStorage.removeItem(LEGACY_STORAGE_KEY).catch(() => undefined);
   if (!userId.trim()) return [];
   const raw = await AsyncStorage.getItem(storageKeyForUser(userId)).catch(() => null);
   if (!raw) return [];
@@ -119,7 +119,7 @@ export function scheduleHomeListSnapshotPersist(
 // 登出清空:必须先取消 pending 回写定时器——否则登出清掉缓存后,残留定时器会把上一账号的
 // 快照重新写回(跨账号数据泄漏)。隐私口径:显式登出后设备上不留任何账号的列表快照,
 // 因此清的是全部 v2 前缀 key(不只当前账号)+ 废弃的 v1 全局 key。
-export async function clearCachedHomeListSnapshot(): Promise<void> {
+export async function clearCachedHomeListSnapshot(accountKey = getMobileAuthOwner().accountKey): Promise<void> {
   // 自增代际,作废所有 in-flight 的 cacheHomeListSnapshot 写入(见其代际核对)。
   writeEpoch += 1;
   if (persistTimer) {
@@ -128,8 +128,8 @@ export async function clearCachedHomeListSnapshot(): Promise<void> {
   }
   pendingCollect = null;
   const keys = await AsyncStorage.getAllKeys().catch(() => [] as readonly string[]);
-  const targets = keys.filter((key) => key.startsWith(STORAGE_KEY_PREFIX));
-  await AsyncStorage.multiRemove([...targets, LEGACY_STORAGE_KEY]).catch(() => undefined);
+  const targets = keys.filter((key) => !!accountKey && key === storageKeyForUser(accountKey));
+  if (targets.length) await AsyncStorage.multiRemove(targets);
 }
 
 // 按物理设备 id(deviceLinkDeviceId)分组:store 种入时按 shard 维度回放,与 setDeviceSessions 对齐。

@@ -270,8 +270,10 @@ export function MobileOutboxBridge() {
           },
         );
         if (!isCurrent() || !mobileDurableOutbox.getSnapshot().includes(r)) {
-          // Use the captured credential for this old owner's object, never a new account's token.
+          // Disposal may run after a realm switch. An invalid owner leaves the
+          // object to bucket lifecycle rather than sending its bearer elsewhere.
           discardMobileUploadedAttachment(attachment, {
+            owner,
             getToken: async () => token,
           });
           throw new Error("OUTBOX_OWNER_CHANGED");

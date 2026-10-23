@@ -56,6 +56,9 @@ describe('composerDraftStore', () => {
   });
 
   beforeEach(async () => {
+    vi.resetModules();
+    const { setMobileAuthOwner } = await import('@/auth/authOwnerGeneration');
+    setMobileAuthOwner('fixture-member', 'global');
     vi.useRealTimers();
     vi.clearAllMocks();
     const { clearComposerDrafts } = await import('@/session/composerDraftStore');
@@ -322,4 +325,20 @@ describe('composerDraftStore', () => {
 
     expect(store.get(key)).toBe('new draft');
   });
+  it('isolates identical task drafts across services and rejects a stale owner callback', async () => {
+    const { getMobileAuthOwner, setMobileAuthOwner } = await import('@/auth/authOwnerGeneration');
+    const drafts = await import('@/session/composerDraftStore');
+    setMobileAuthOwner('same-member', 'lex-server:https://a.test'); const a = getMobileAuthOwner();
+    drafts.saveComposerDraft('same-task', 'A draft', a);
+    await drafts.flushComposerDraftWrites();
+    const keyA = drafts.__testing.storageKeyForSession('same-task');
+    setMobileAuthOwner('same-member', 'lex-server:https://b.test');
+    expect(await drafts.readComposerDraft('same-task')).toBeNull();
+    drafts.saveComposerDraft('same-task', 'B draft'); drafts.saveComposerDraft('same-task', 'late A', a);
+    await drafts.flushComposerDraftWrites(); await drafts.clearComposerDrafts();
+    expect(store.get(keyA)).toBe('A draft');
+    setMobileAuthOwner('same-member', 'lex-server:https://a.test');
+    expect(await drafts.readComposerDraft('same-task')).toBe('A draft');
+  });
+
 });

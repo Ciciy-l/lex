@@ -2899,12 +2899,12 @@ function SessionScreen() {
     composerDraftSource.setDocument(value);
     voiceDictionaryLearningTrackerRef.current?.inspectDraft(projected);
     if (options?.persist !== false) {
-      saveComposerDocumentDraft(sessionId, value);
+      saveComposerDocumentDraft(sessionId, value, outboxOwner);
       // Keep the legacy string mirror during the one-way migration window so
       // older builds do not turn a rich draft into an empty composer.
-      saveComposerDraft(sessionId, projected);
+      saveComposerDraft(sessionId, projected, outboxOwner);
     }
-  }, [composerDraftSource, sessionId]);
+  }, [composerDraftSource, sessionId, outboxOwner]);
 
   const applyComposerDraft = useCallback((value: string, options?: { persist?: boolean }) => {
     const document = reconcileComposerProjectedText(composerDocumentRef.current, value);
@@ -6299,8 +6299,8 @@ function SessionScreen() {
           if (!isSendOwnerCurrent() || !sendScopeStillAlive()) {
             const stored = readComposerDocumentDraftSync(sessionId);
             if (stored && composerDocumentsEqual(stored, documentBeforeSend)) {
-              saveComposerDraft(sessionId, '');
-              saveComposerDocumentDraft(sessionId, emptyComposerDocument());
+              saveComposerDraft(sessionId, '', outboxOwner);
+              saveComposerDocumentDraft(sessionId, emptyComposerDocument(), outboxOwner);
               clearQuotes(sessionId);
             }
             return;
@@ -8770,8 +8770,8 @@ function SessionScreen() {
         draft?.quotes ?? [],
         draft?.orderedBody,
       );
-      saveComposerDocumentDraft(forked.id, forkDocument);
-      saveComposerDraft(forked.id, composerDocumentProjectedText(forkDocument));
+      saveComposerDocumentDraft(forked.id, forkDocument, outboxOwner);
+      saveComposerDraft(forked.id, composerDocumentProjectedText(forkDocument), outboxOwner);
       clearQuotes(forked.id);
       router.push({
         pathname: '/sessions/[sessionId]',

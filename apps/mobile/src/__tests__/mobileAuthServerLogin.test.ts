@@ -287,7 +287,9 @@ describe('mobile auth-server login', () => {
     expect(authSource).toContain('pendingAccountRefreshTokenRef');
     expect(authSource).toContain('commitMobileLoginSessions(');
     expect(authSource).toContain('.refreshAccount(');
-    expect(authSource).toContain('.logoutAccount(');
+    // Removing one saved membership must revoke its captured device session,
+    // without revoking a Passport still used by another saved membership.
+    expect(authSource).toContain('authClientFor(did, scope).logout(token)');
     expect(authSource).not.toContain(
       'setSecureItem(LEGACY_ACCOUNT_REFRESH_TOKEN_KEY',
     );
@@ -325,7 +327,7 @@ describe('mobile auth-server login', () => {
     const crashReconcile = refreshBody.indexOf(
       'reconcileMobileActiveAuthSession({',
     );
-    const networkRefresh = refreshBody.indexOf('.refresh(', crashReconcile);
+    const networkRefresh = refreshBody.indexOf('refreshMobileResourceSingleFlight(', crashReconcile);
     expect(crashReconcile).toBeGreaterThan(-1);
     expect(networkRefresh).toBeGreaterThan(crashReconcile);
     expect(refreshBody).toContain(
@@ -427,7 +429,11 @@ describe('mobile auth-server login', () => {
     );
     expect(switchRefreshAccount).toBeGreaterThan(-1);
     expect(switchReadMemberships).toBeGreaterThan(switchRefreshAccount);
-    expect(switchBody).toContain('replaceMobileResourceSessionIfCurrent({');
+    expect(switchBody).toContain('refreshMobileResourceSingleFlight(client, realm, resource.refreshToken, accountKey)');
+    const resourceRefresh = readFileSync(resolve(process.cwd(), 'src/auth/mobileResourceRefresh.ts'), 'utf8');
+    expect(resourceRefresh).toContain('replaceMobileResourceSessionIfCurrent({');
+    expect(resourceRefresh).toContain('expectedRefreshToken: consumed');
+    expect(resourceRefresh).toContain('storedAuthServiceScope(current) !== scope');
     expect(switchBody).toContain('removeMobileResourceSessionIfCurrent({');
     expect(switchBody).toContain(
       'expectedRefreshToken: resource.refreshToken',
@@ -461,7 +467,8 @@ describe('mobile auth-server login', () => {
     expect(refreshBody).toContain('const refreshCandidates = reconciledAuth.refreshCandidates;');
     expect(refreshBody).toContain('for (const [index, candidate] of refreshCandidates.entries())');
     expect(refreshBody).toContain('rejectedRefreshTokens.push(candidate.refreshToken);');
-    expect(refreshBody).toContain('compatibilityRefreshTokens: refreshCandidates');
+    expect(refreshBody).toContain('compatibilityRefreshTokens: [pair.refreshToken, ...refreshCandidates');
+    expect(refreshBody).toContain('storedAuthServiceScope(refreshCandidate) === storedAuthServiceScope(candidate)');
     expect(refreshBody).toContain("if (resourceCommit === 'inactive') {");
     expect(refreshBody).toContain('selectedSession = candidate;');
     expect(refreshBody).toContain(
@@ -524,10 +531,10 @@ describe('mobile auth-server login', () => {
     expect(runtimeClear).toBeLessThan(activeVaultCommit);
     expect(rollbackWrite).toBeGreaterThan(runtimeClear);
     expect(switchBody.slice(runtimeClear, rollbackWrite)).toContain(
-      'activateMobileSessionRealm(realm!);',
+      'activateMobileAuthScope(realm!);',
     );
     expect(switchBody.slice(rollbackWrite)).toContain(
-      'activateMobileSessionRealm(previousRealm);',
+      'activateMobileAuthScope(previousRealm);',
     );
     expect(switchBody).not.toContain('const oldSession = initialVault');
   });
@@ -550,7 +557,7 @@ describe('mobile auth-server login', () => {
       runtimeClear,
     );
     const ownerCommit = switchBody.indexOf(
-      'activateMobileSessionRealm(realm!);',
+      'activateMobileAuthScope(realm!);',
       receiptClear,
     );
 
@@ -639,7 +646,7 @@ describe('mobile auth-server login', () => {
       previousSessionSnapshot,
     );
     const ownerCommit = acceptBody.indexOf(
-      'activateMobileSessionRealm(committedRealm);',
+      'activateMobileAuthScope(committedRealm);',
       runtimeClear,
     );
     const rollback = acceptBody.indexOf(
@@ -657,7 +664,7 @@ describe('mobile auth-server login', () => {
     expect(ownerCommit).toBeGreaterThan(runtimeClear);
     expect(rollback).toBeGreaterThan(ownerCommit);
     expect(acceptBody.slice(rollback)).toContain(
-      'activateMobileSessionRealm(previousRealm);',
+      'activateMobileAuthScope(previousRealm);',
     );
   });
 
@@ -672,7 +679,7 @@ describe('mobile auth-server login', () => {
       authSource.indexOf('const getAccessToken = useCallback', logoutStart),
     );
     const durableClear = logoutBody.indexOf(
-      'clearMobileLoginCredentialsForLogout({',
+      'removeMobileLoginAccountForLogout({',
     );
     const receiptClear = logoutBody.indexOf(
       'clearReceipt: () => persistAccountDeletionReceipt(null),',
