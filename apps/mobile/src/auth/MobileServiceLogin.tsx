@@ -70,7 +70,7 @@ export function MobileServiceLogin({ renderCindy, onClose }: { renderCindy(back:
           {screen === 'services' ? <>
             {Platform.OS === 'android' ? action('Lex Server', () => { auth.clearAuthError(); setScreen('address'); }, 'login.service.lex', !supportsLexServiceWebSocket()) : null}
             {Platform.OS === 'android' && !supportsLexServiceWebSocket() ? <Text style={styles.hint}>{t('serviceLogin.nativeUpdateRequired')}</Text> : null}
-            {action('Cindy', () => { void run(async () => { if (await auth.selectLoginService({ kind: 'cindy', realm: auth.loginRealm }) && mounted.current) setScreen('cindy'); }); }, 'login.service.cindy')}
+            {action('Cindy', () => { void run(async () => { if (await auth.selectLoginService({ kind: 'cindy' }) && mounted.current) setScreen('cindy'); }); }, 'login.service.cindy')}
           </> : screen === 'address' ? <>
             <Text style={styles.hint}>{t('serviceLogin.serverHint')}</Text>
             <TextInput style={styles.input} value={origin} onChangeText={value => { setOrigin(value); auth.clearAuthError(); }}
@@ -98,8 +98,10 @@ export function MobileServiceLogin({ renderCindy, onClose }: { renderCindy(back:
               {action(t('serviceLogin.sendCode'), () => { void sendCode(); }, 'login.server.sendCode', !isValidEmail(email))}
             </>}
           </>}
-          {auth.authError ? <Text accessibilityRole="alert" style={styles.error} testID="login.service.error">{['INVALID_SERVER_URL', 'SERVER_HTTPS_REQUIRED', 'SERVER_UNAVAILABLE', 'INVALID_SERVER_RESPONSE', 'UNSUPPORTED_SERVER_AUTH', 'LEX_SERVER_NATIVE_UPDATE_REQUIRED'].includes(auth.authError)
-            ? t('serviceLogin.serverError') : authErrorText(auth.authError)}</Text> : null}
+          {auth.authError ? <Text accessibilityRole="alert" style={styles.error} testID="login.service.error">{['INVALID_SERVER_URL', 'SERVER_HTTPS_REQUIRED', 'INVALID_SERVICE_ORIGIN'].includes(auth.authError)
+            ? t('serviceLogin.serverAddressError')
+            : ['SERVER_UNAVAILABLE', 'INVALID_SERVER_RESPONSE', 'UNSUPPORTED_SERVER_AUTH', 'LEX_SERVER_NATIVE_UPDATE_REQUIRED'].includes(auth.authError)
+              ? t('serviceLogin.serverError') : authErrorText(auth.authError)}</Text> : null}
         </View>
       </ScrollView>
     </KeyboardAvoidingView>

@@ -11,6 +11,7 @@
   "guestHint": "로그인하여 컴퓨터에 연결하고 작업을 이어가세요. 로컬 설정은 로그인 없이 사용할 수 있습니다.",
   "nativeUpdateRequired": "Lex Server에 연결하려면 새 Android 앱을 설치하세요.",
   "serverError": "서버를 확인할 수 없습니다. 주소, HTTPS 인증서 및 서버 상태를 확인하세요.",
+  "serverAddressError": "HTTPS를 사용하는 서버 루트 주소를 입력하세요. 경로, 쿼리 매개변수 또는 프래그먼트는 포함하지 마세요.",
   "service": "로그인 서비스",
   "cindyServices": "Cindy 서비스",
   "continue": "계속"

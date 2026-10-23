@@ -11,6 +11,7 @@
   "guestHint": "Sign in to connect a computer and continue its tasks. Local settings are available without an account.",
   "nativeUpdateRequired": "Install the new Android app to connect to Lex Server.",
   "serverError": "Could not verify the server. Check the address, HTTPS certificate and server availability.",
+  "serverAddressError": "Enter the server root address using HTTPS, without a path, query or fragment.",
   "service": "Service",
   "cindyServices": "Cindy services",
   "continue": "Continue"

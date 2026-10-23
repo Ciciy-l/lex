@@ -11,6 +11,7 @@
   "guestHint": "登入後連線電腦，檢視並繼續電腦上的任務。無需登入也可使用本機設定。",
   "nativeUpdateRequired": "請安裝新版 Android 應用程式後連線 Lex Server。",
   "serverError": "無法驗證伺服器。請檢查位址、HTTPS 憑證及服務是否可用。",
+  "serverAddressError": "請輸入使用 HTTPS 的伺服器根位址，不要包含路徑、查詢參數或片段",
   "service": "登入服務",
   "cindyServices": "Cindy 服務",
   "continue": "繼續"
