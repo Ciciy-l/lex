@@ -298,7 +298,7 @@ export interface AuthContextValue {
   service: AuthService | null;
   pendingService: AuthService | null;
   canUseCindyServices: boolean;
-  selectLoginService(service: AuthService): Promise<boolean>;
+  selectLoginService(service: AuthService | { kind: 'cindy' }): Promise<boolean>;
   cancelLoginService(): Promise<void>;
   user: MobileUser | null;
   deviceId: string | null;
@@ -1970,35 +1970,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await persistPendingOAuth(null);
   }, [persistPendingOAuth, updateLoginState]);
 
-  const selectLoginService = useCallback(async (service: AuthService): Promise<boolean> => {
+  const selectLoginService = useCallback(async (service: AuthService | { kind: 'cindy' }): Promise<boolean> => {
     if (terminalLogoutInFlightRef.current) return false;
     const cancellation = cancelLoginService();
     const epoch = loginFlowEpochRef.current;
+    const generation = authGenerationRef.current;
+    const assertCurrent = () => {
+      assertLoginFlowCurrent(epoch);
+      if (authGenerationRef.current !== generation) throw authCodeError('AUTH_FLOW_SUPERSEDED');
+    };
     const controller = new AbortController(); preflightRef.current = controller;
     setIsBusy(true);
     try {
       await cancellation;
-      assertLoginFlowCurrent(epoch);
+      assertCurrent();
       if (service.kind === 'lex-server' && !supportsLexServiceWebSocket()) throw authCodeError('LEX_SERVER_NATIVE_UPDATE_REQUIRED');
-      const selected = service.kind === 'lex-server'
-        ? await preflightMobileLexServer(service.origin, controller.signal) : service;
-      assertLoginFlowCurrent(epoch);
+      let selected: AuthService;
+      if (service.kind === 'lex-server') {
+        selected = await preflightMobileLexServer(service.origin, controller.signal);
+      } else {
+        // Entering Cindy is not an explicit region choice. Hydrate the saved
+        // preference only on this intent, before any realm-specific request.
+        const realm = 'realm' in service ? service.realm : personalRealmReadyRef.current
+          ? personalRealmRef.current
+          : await (IS_LEX_MOBILE && getMobileEndpointRealmConfig().crossRealmOrgLoginEnabled
+            ? readPersonalLoginRealm() : BUILD_AUTH_REGION);
+        selected = { kind: 'cindy', realm };
+      }
+      assertCurrent();
       if (selected.kind === 'cindy') { personalRealmRef.current = selected.realm; personalRealmReadyRef.current = true; setLoginRealm(selected.realm); }
       pendingServiceRef.current = selected; setPendingService(selected);
       pendingAuthRealmRef.current = authServiceScope(selected);
       sessionRecoverySuspendedRef.current = true;
       const did = deviceIdRef.current ?? await prepareBetaChannelForCurrentDevice();
-      assertLoginFlowCurrent(epoch);
+      assertCurrent();
       await loadMobileAuthScope(authServiceScope(selected));
-      assertLoginFlowCurrent(epoch);
+      assertCurrent();
       const providers = await authClientFor(did, authServiceScope(selected)).getProviders();
-      assertLoginFlowCurrent(epoch);
+      assertCurrent();
       loginProvidersRef.current = providers;
       deviceIdRef.current = did; setDeviceId(did);
       updateLoginState(reduceAuthFlow(null, { type: 'providers-loaded', providers }));
       return true;
-    } catch (error) { if (epoch === loginFlowEpochRef.current) setAuthError(authErrorCode(error)); return false; }
-    finally { if (epoch === loginFlowEpochRef.current) { setIsBusy(false); preflightRef.current = null; } }
+    } catch (error) { if (epoch === loginFlowEpochRef.current && generation === authGenerationRef.current) setAuthError(authErrorCode(error)); return false; }
+    finally { if (epoch === loginFlowEpochRef.current && preflightRef.current === controller) { setIsBusy(false); preflightRef.current = null; } }
   }, [cancelLoginService, assertLoginFlowCurrent, prepareBetaChannelForCurrentDevice, updateLoginState]);
 
   const dispatchLoginAction = useCallback(

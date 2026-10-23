@@ -30,6 +30,7 @@
 
 import * as http from 'node:http';
 import * as crypto from 'node:crypto';
+import { listenBrowserLoopback } from '../utils/browserLoopbackListener.js';
 
 import { GHOST_OAUTH_RESERVED_AUTHORIZE_PARAMS, ghostNetworkHostMatches } from '../../shared/ghost.js';
 import {
@@ -512,6 +513,11 @@ async function runGhostOauthFlow(
     new Promise((resolve, reject) => {
       const srv = http.createServer();
       srv.on('error', reject);
+      if (!config.redirectPort) {
+        void listenBrowserLoopback(srv).then(port => resolve({ server: srv, port }), reject);
+        return;
+      }
+      // Explicit redirect ports must remain exact for provider registrations.
       srv.listen(config.redirectPort ?? 0, '127.0.0.1', () => {
         const addr = srv.address();
         if (typeof addr === 'object' && addr && typeof addr.port === 'number') {

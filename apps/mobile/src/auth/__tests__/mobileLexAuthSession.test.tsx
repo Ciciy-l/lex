@@ -2,6 +2,7 @@
 import React, { act, useEffect, useRef } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import serviceCopy from '../../i18n/locales/en/serviceLogin.json';
 
 const native = vi.hoisted(() => ({
   http: vi.fn(),
@@ -34,11 +35,32 @@ const native = vi.hoisted(() => ({
   state: 0,
 }));
 
-vi.mock('expo-router', () => ({ useRouter: () => ({ replace: native.replaceRoute }) }));
+vi.mock('expo-router', () => ({ useRouter: () => ({ replace: native.replaceRoute }), Stack: { Screen: () => null } }));
+vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => (serviceCopy as Record<string, string>)[key.replace('serviceLogin.', '')] ?? key }) }));
+vi.mock('@/theme', () => ({
+  useTheme: () => ({ colors: {} }), useThemedStyles: () => ({}),
+  spacing: {}, radius: {}, typeScale: {}, lineHeight: {}, fontWeight: {},
+}));
+vi.mock('@/components/AppText', () => ({
+  Text: ({ children, testID }: { children: React.ReactNode; testID?: string }) => <span data-testid={testID}>{children}</span>,
+  TextInput: ({ value, onChangeText, testID }: { value: string; onChangeText(value: string): void; testID: string }) =>
+    <input data-testid={testID} value={value} onInput={event => onChangeText(event.currentTarget.value)} readOnly />,
+}));
+vi.mock('@/components/MobilePrimitives', () => ({
+  MainWindowActionButton: ({ action }: { action: { label: string; onPress(): void; testID: string; disabled?: boolean; busy?: boolean } }) =>
+    <button data-testid={action.testID} disabled={action.disabled || action.busy} onClick={action.onPress}>{action.label}</button>,
+}));
+vi.mock('@/platform/chrome/SimpleStackHeader', () => ({ SimpleStackHeader: ({ onBack }: { onBack(): void }) => <button data-testid="back" onClick={onBack}>Back</button> }));
+vi.mock('react-native-safe-area-context', () => ({ SafeAreaView: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
 vi.mock('../../../app/(auth)/login', () => ({
   LoginScreen: ({ onClose }: { onClose?: () => void }) => { native.closeAccount = onClose; return null; },
 }));
 vi.mock('react-native', () => ({
+  View: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  ScrollView: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  KeyboardAvoidingView: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  StyleSheet: { create: (styles: unknown) => styles },
+  BackHandler: { addEventListener: () => ({ remove() {} }) },
   Platform: { get OS() { return native.platform; } },
   AppState: { addEventListener: () => ({ remove() {} }) },
   Linking: {
@@ -57,7 +79,7 @@ vi.mock('expo-web-browser', () => ({
 }));
 vi.mock('expo-modules-core', () => ({ requireNativeModule: () => ({ addCustomField() {} }) }));
 vi.mock('@/config/env', () => ({
-  BUILD_AUTH_REGION: 'cn', MOBILE_REDIRECT_URL: 'cindycn://auth',
+  BUILD_AUTH_REGION: 'global', MOBILE_REDIRECT_URL: 'cindycn://auth',
   WECHAT_APP_ID: '', WECHAT_UNIVERSAL_LINK: '',
   IS_OTA_SELFHOST: false, MOBILE_VISUAL_MOCK_ENABLED: false,
   OAUTH_BROKER_API_BASE_URL: 'https://auth.example.invalid',
@@ -107,6 +129,7 @@ vi.mock('@/update/betaChannelStore', () => ({ prepareBetaChannelForDevice: async
 vi.mock('@/update/fetchLatestRelease', () => ({}));
 
 import { AuthProvider, useAuth } from '../AuthContext';
+import { MobileServiceLogin } from '../MobileServiceLogin';
 import { getMobileAuthOwner, setMobileAuthOwner } from '../authOwnerGeneration';
 import { clearActiveMobileAuthScope } from '../authService';
 import { readMobileAccountVault, MOBILE_ACCOUNT_VAULT_KEY } from '../mobileAccountVault';
@@ -122,7 +145,7 @@ async function server(url: string, init?: RequestInit): Promise<Response> {
   const { origin, pathname } = new URL(url);
   if (pathname === '/health') return json({ status: 'ok', service: 'Lex Admin Server', capabilities: ['device-link'] });
   if (pathname === '/ready') return json({ status: 'ready' });
-  if (pathname.endsWith('/providers')) return json(providers);
+  if (pathname.endsWith('/providers')) return json({ ...providers, region: origin === 'https://cn.auth.example.invalid' ? 'cn' : 'global' });
   if (pathname.endsWith('/discovery')) return json({ methods: [{ type: 'email_code' }] });
   if (pathname.endsWith('/request-code')) return json({ status: 'sent' });
   if (pathname.endsWith('/verify-code')) return json(multi ? { status: 'select_account', loginTicket: 'test-ticket',
@@ -141,9 +164,22 @@ async function server(url: string, init?: RequestInit): Promise<Response> {
   if (pathname === '/api/auth/logout') return json({ status: 'ok' });
   throw new Error('Unexpected fixture endpoint ' + pathname);
 }
-let root: Root, auth: ReturnType<typeof useAuth>;
+let root: Root, container: HTMLDivElement, auth: ReturnType<typeof useAuth>;
 function Probe() { auth = useAuth(); return null; }
-async function mount() { root = createRoot(document.createElement('div')); await act(async () => { root.render(<AuthProvider><Probe /></AuthProvider>); }); }
+function CindyLoginProbe() {
+  const current = useAuth();
+  useEffect(() => { void current.dispatchLoginAction({ type: 'initialize' }); }, [current.dispatchLoginAction]);
+  return <output data-testid="cindy-realm">{current.loginRealm}</output>;
+}
+async function mount() { container = document.createElement('div'); root = createRoot(container); await act(async () => { root.render(<AuthProvider><Probe /></AuthProvider>); }); }
+async function showServiceChooser() {
+  await act(async () => { root.render(<AuthProvider><Probe /><MobileServiceLogin renderCindy={() => <CindyLoginProbe />} /></AuthProvider>); });
+}
+async function click(id: string) {
+  const button = container.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`);
+  expect(button, id).not.toBeNull(); expect(button!.disabled, id).toBe(false);
+  await act(async () => { button!.click(); });
+}
 async function select(origin: string) { await act(async () => { expect(await auth.selectLoginService({ kind: 'lex-server', origin })).toBe(true); }); }
 async function login(origin = 'https://a.test') {
   await select(origin);
@@ -157,10 +193,128 @@ beforeEach(async () => {
   native.writeSecure.mockReset().mockImplementation(async (key, value) => { native.storage.set(key, value); });
   native.deleteSecure.mockReset().mockImplementation(async key => { native.storage.delete(key); });
   native.initialUrl.mockReset().mockResolvedValue(null); native.readPersonalRealm.mockReset().mockResolvedValue('global');
+  native.crossRealm = false; native.savePersonalRealm.mockReset().mockResolvedValue(undefined);
   native.loadRealm.mockReset().mockResolvedValue(undefined); native.activateRealm.mockClear(); native.unregisterPush.mockReset().mockResolvedValue(undefined);
   clearActiveMobileAuthScope(); setMobileAuthOwner(null); await mount();
 });
 afterEach(async () => { await act(async () => root.unmount()); setMobileAuthOwner(null); clearActiveMobileAuthScope(); });
+
+describe('service chooser restores the personal realm without changing the active owner', () => {
+  it.each(['cn', 'global'] as const)('opens Cindy with saved/default %s before requesting providers', async realm => {
+    native.crossRealm = true; native.readPersonalRealm.mockResolvedValue(realm);
+    await showServiceChooser();
+    expect(native.readPersonalRealm).not.toHaveBeenCalled();
+    expect(native.http).not.toHaveBeenCalled();
+    await click('login.service.cindy');
+    expect(container.querySelector('[data-testid="cindy-realm"]')?.textContent).toBe(realm);
+    expect(auth.pendingService).toEqual({ kind: 'cindy', realm });
+    expect(native.readPersonalRealm).toHaveBeenCalledTimes(1);
+    expect(native.loadRealm).toHaveBeenCalledExactlyOnceWith(realm);
+    expect(native.http.mock.calls.map(([url]) => new URL(url).origin)).toEqual([`https://${realm}.auth.example.invalid`]);
+    expect(auth.service).toBeNull(); expect(getMobileAuthOwner().accountKey).toBe('');
+    expect(native.savePersonalRealm).not.toHaveBeenCalled();
+  });
+
+  it('fails closed on a saved-realm read error and retries through the same chooser', async () => {
+    native.crossRealm = true; native.readPersonalRealm.mockRejectedValueOnce(new Error('AUTH_STORAGE_UNAVAILABLE')).mockResolvedValue('cn');
+    await showServiceChooser(); await click('login.service.cindy');
+    expect(auth.authError).toBe('AUTH_STORAGE_UNAVAILABLE');
+    expect(auth.pendingService).toBeNull(); expect(auth.isBusy).toBe(false);
+    expect(native.http).not.toHaveBeenCalled(); expect(native.loadRealm).not.toHaveBeenCalled();
+    await click('login.service.cindy');
+    expect(auth.pendingService).toEqual({ kind: 'cindy', realm: 'cn' });
+    expect(auth.authError).toBeNull();
+  });
+
+  it('keeps a newer explicit Global choice when an old saved cn read finishes', async () => {
+    native.crossRealm = true;
+    let finish!: (realm: string) => void;
+    native.readPersonalRealm.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    await showServiceChooser(); await click('login.service.cindy');
+    expect(native.readPersonalRealm).toHaveBeenCalledTimes(1);
+    await act(async () => { expect(await auth.dispatchLoginAction({ type: 'select-realm', realm: 'global' })).toBe(true); });
+    await act(async () => { finish('cn'); });
+    expect(auth.loginRealm).toBe('global'); expect(auth.isBusy).toBe(false);
+    expect(native.savePersonalRealm).toHaveBeenCalledWith('global');
+    expect(native.http.mock.calls.every(([url]) => new URL(url).origin === 'https://global.auth.example.invalid')).toBe(true);
+    expect(auth.pendingService).toBeNull();
+  });
+
+  it.each(['cancel', 'lex', 'reenter'] as const)('discards the old preference read after %s', async action => {
+    native.crossRealm = true;
+    let finish!: (realm: string) => void;
+    native.readPersonalRealm.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValue('global');
+    await showServiceChooser(); await click('login.service.cindy');
+    expect(native.readPersonalRealm).toHaveBeenCalledTimes(1);
+    await click('back');
+    expect(auth.pendingService).toBeNull();
+    if (action === 'lex') await select('https://a.test');
+    if (action === 'reenter') {
+      // A cancelled route is remounted on a fresh entry, just as the router does.
+      await act(async () => { root.render(<AuthProvider><Probe /></AuthProvider>); });
+      await showServiceChooser(); await click('login.service.cindy');
+    }
+    await act(async () => { finish('cn'); });
+    expect(auth.loginRealm).toBe('global');
+    expect(auth.pendingService).toEqual(action === 'lex' ? { kind: 'lex-server', origin: 'https://a.test' }
+      : action === 'reenter' ? { kind: 'cindy', realm: 'global' } : null);
+    expect(native.http.mock.calls.some(([url]) => new URL(url).origin === 'https://cn.auth.example.invalid')).toBe(false);
+    expect(auth.service).toBeNull(); expect(getMobileAuthOwner().accountKey).toBe('');
+  });
+
+  it('keeps the active Lex owner while loading a Cindy preference for an additional account', async () => {
+    await login(); const owner = getMobileAuthOwner(), service = auth.service;
+    await act(async () => { await auth.beginAddAccount(); });
+    native.crossRealm = true; native.readPersonalRealm.mockResolvedValue('cn'); native.activateRealm.mockClear();
+    await showServiceChooser(); await click('login.service.cindy');
+    expect(auth.pendingService).toEqual({ kind: 'cindy', realm: 'cn' });
+    expect(auth.service).toEqual(service); expect(getMobileAuthOwner()).toEqual(owner);
+    expect(native.activateRealm).not.toHaveBeenCalled();
+  });
+
+  it('does not apply a late Cindy preference after a saved-account switch', async () => {
+    await login(); await act(async () => { await auth.beginAddAccount(); }); await login('https://b.test');
+    await act(async () => { await auth.beginAddAccount(); });
+    native.crossRealm = true;
+    let finish!: (realm: string) => void;
+    native.readPersonalRealm.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    await showServiceChooser(); await click('login.service.cindy');
+    expect(native.readPersonalRealm).toHaveBeenCalledTimes(1);
+    const keyA = accountVaultKey(authServiceScope({ kind: 'lex-server', origin: 'https://a.test' }), 'test-member');
+    await act(async () => { await auth.switchAccount(keyA); });
+    const owner = getMobileAuthOwner();
+    await act(async () => { finish('cn'); });
+    expect(auth.service).toEqual({ kind: 'lex-server', origin: 'https://a.test' });
+    expect(auth.pendingService).toBeNull(); expect(auth.loginRealm).toBe('global');
+    expect(auth.isBusy).toBe(false);
+    expect(getMobileAuthOwner()).toEqual(owner);
+    expect(native.http.mock.calls.some(([url]) => new URL(url).origin === 'https://cn.auth.example.invalid')).toBe(false);
+  });
+});
+
+describe('service address errors on the real chooser', () => {
+  it.each(['http://127.0.0.1:3101', 'https://server.test/api', 'https://server.test?query=1', 'https://server.test/#fragment'])(
+    'explains the root HTTPS requirement without fetching %s', async origin => {
+      await showServiceChooser(); await click('login.service.lex');
+      const input = container.querySelector<HTMLInputElement>('[data-testid="login.server.address"]')!;
+      await act(async () => {
+        input.value = origin; input.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      await click('login.server.continue');
+      expect(native.http).not.toHaveBeenCalled();
+      expect(auth.pendingService).toBeNull();
+      expect(container.querySelector('[data-testid="login.service.error"]')?.textContent).toBe(
+        'Enter the server root address using HTTPS, without a path, query or fragment.',
+      );
+    },
+  );
+  it('keeps an unavailable HTTPS service distinct from an invalid address', async () => {
+    native.http.mockRejectedValue(new TypeError('fixture offline'));
+    await showServiceChooser();
+    await act(async () => { expect(await auth.selectLoginService({ kind: 'lex-server', origin: 'https://server.test' })).toBe(false); });
+    expect(container.querySelector('[data-testid="login.service.error"]')?.textContent).toBe(serviceCopy.serverError);
+  });
+});
 
 describe('Lex auth commits with real AuthProvider, client and encrypted-vault contract', () => {
   it('starts a real guest without querying official authentication services', () => { expect(auth.initialized).toBe(true); expect(auth.isAuthenticated).toBe(false); expect(native.http).not.toHaveBeenCalled(); expect(getMobileAuthOwner().accountKey).toBe(''); });

@@ -6,6 +6,7 @@
 import { createHash } from 'node:crypto';
 import * as http from 'node:http';
 import { describe, expect, it, vi } from 'vitest';
+import { listenBrowserLoopback } from '../../utils/browserLoopbackListener.js';
 
 import {
   cancelActiveGhostOauthFlow,
@@ -58,12 +59,7 @@ function browserRedirect(
 /** 探一个当前空闲的 loopback 端口。它只保证"探测那一刻"空闲,见 pinnedPortCase。 */
 async function probeFreePort(): Promise<number> {
   const probe = http.createServer();
-  const port = await new Promise<number>((resolve) => {
-    probe.listen(0, '127.0.0.1', () => {
-      const addr = probe.address();
-      resolve(typeof addr === 'object' && addr ? addr.port : 0);
-    });
-  });
+  const port = await listenBrowserLoopback(probe);
   await new Promise((r) => probe.close(r));
   return port;
 }
@@ -103,6 +99,50 @@ function isListenFailed(value: unknown): boolean {
 }
 
 describe('startGhostOauthFlow', () => {
+  it('retains the listener error handler after automatic allocation completes', async () => {
+    const originalAddress = http.Server.prototype.address;
+    let listener: http.Server | undefined;
+    const address = vi.spyOn(http.Server.prototype, 'address').mockImplementation(function (this: http.Server) {
+      listener = this;
+      return originalAddress.call(this);
+    });
+    try {
+      const result = await startGhostOauthFlow({
+        config: { ...BASE_CONFIG, pkce: false },
+        fetchImpl: vi.fn(async () => jsonResponse({ access_token: 'test-listener-error' })) as unknown as typeof fetch,
+        openExternal: url => {
+          expect(() => listener!.emit('error', new Error('synthetic late listener error'))).not.toThrow();
+          return browserRedirect(url, au => ({ code: 'test-code', state: au.searchParams.get('state') ?? '' }));
+        },
+      });
+      expect(result).toMatchObject({ ok: true });
+    } finally { address.mockRestore(); cancelActiveGhostOauthFlow(); }
+  });
+
+  it('does not publish an OS-allocated browser-blocked callback port', async () => {
+    const originalAddress = http.Server.prototype.address;
+    const address = vi.spyOn(http.Server.prototype, 'address').mockImplementationOnce(function (this: http.Server) {
+      const actual = originalAddress.call(this);
+      if (!actual || typeof actual === 'string') throw new Error('Expected loopback listener');
+      return { ...actual, port: 6000 };
+    });
+    let publishedPort = 0;
+    try {
+      const result = await startGhostOauthFlow({
+        config: { ...BASE_CONFIG, pkce: false },
+        fetchImpl: vi.fn(async () => jsonResponse({ access_token: 'test-browser-port' })) as unknown as typeof fetch,
+        openExternal: url => {
+          publishedPort = Number(new URL(new URL(url).searchParams.get('redirect_uri')!).port);
+          expect(publishedPort).not.toBe(6000);
+          return browserRedirect(url, au => ({ code: 'test-code', state: au.searchParams.get('state') ?? '' }));
+        },
+      });
+      expect(result).toMatchObject({ ok: true });
+      expect(publishedPort).toBeGreaterThan(0);
+      expect(address.mock.calls.length).toBeGreaterThanOrEqual(2);
+    } finally { address.mockRestore(); cancelActiveGhostOauthFlow(); }
+  });
+
   it('browserRedirect 把 loopback callback 传输失败直接交给调用方', async () => {
     const authorizeUrl = new URL(BASE_CONFIG.authorizeUrl);
     authorizeUrl.searchParams.set('redirect_uri', 'http://127.0.0.1:1/callback');
@@ -486,12 +526,7 @@ describe('startGhostOauthFlow', () => {
 
   it('redirectPort 被外部占用:reclaimPort 回收成功后自动重试并完成授权', async () => {
     const blocker = http.createServer();
-    const heldPort = await new Promise<number>((resolve) => {
-      blocker.listen(0, '127.0.0.1', () => {
-        const addr = blocker.address();
-        resolve(typeof addr === 'object' && addr ? addr.port : 0);
-      });
-    });
+    const heldPort = await listenBrowserLoopback(blocker);
     const reclaimPort = vi.fn(async (p: number) => {
       expect(p).toBe(heldPort);
       // 模拟"强杀占用进程":关掉占用监听后放行重试。
