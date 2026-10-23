@@ -49,6 +49,7 @@ vi.mock('react-native', () => ({
   },
   Keyboard: { dismiss() {} },
 }));
+vi.mock('expo/fetch', () => ({ fetch: vi.fn(() => { throw new Error('Unexpected fixture network'); }) }));
 vi.mock('expo-web-browser', () => ({
   maybeCompleteAuthSession() {}, openAuthSessionAsync: native.open,
 }));
@@ -103,7 +104,8 @@ vi.mock('@/auth/pkce', () => ({
 }));
 vi.mock('@/auth/deviceId', () => ({ ensureDeviceId: async () => 'fixture-device', hasStoredDeviceId: async () => true }));
 vi.mock('@/auth/mobileAccountVault', () => ({
-  readMobileAccountVault: async () => null,
+  readMobileAccountVault: async () => ({ version: 2, activeAccountKey: null, resources: {}, passports: {} }),
+  removeMobileLoginAccountForLogout: native.logoutCleanup,
   clearMobileLoginCredentialsForLogout: native.logoutCleanup,
   listMobileSavedAccounts: () => [],
   reconcileMobileActiveAuthSession: async () => null,
@@ -178,6 +180,8 @@ function callbackUrl(state = JSON.parse(native.storage.get(pendingKey)!).state a
 
 async function start(kind: 'sso' | 'social' = 'sso') {
   await act(async () => {
+    // The new service chooser defers provider initialization until Cindy is selected.
+    if (!auth.loginState) await auth.dispatchLoginAction({ type: 'initialize' });
     await auth.dispatchLoginAction(kind === 'sso'
       ? { type: 'discover-sso-org', org: 'example.invalid' }
       : { type: 'start-social-browser', provider: 'wechat', label: 'WeChat' });
@@ -354,7 +358,8 @@ describe('browser auth session lifecycle (real AuthProvider, mocked native/netwo
     expect(native.exchange).not.toHaveBeenCalled();
     await act(async () => { await auth.beginAddAccount(); });
     expect(native.storage.has(pendingKey)).toBe(false);
-    expect(auth.loginState?.step).toBe('identifier');
+    expect(auth.loginState).toBeNull();
+    expect(auth.pendingService).toBeNull();
   });
 
   it('handles a terminal native success redirect on iOS through the same error path', async () => {
@@ -856,7 +861,10 @@ describe('browser auth session lifecycle (real AuthProvider, mocked native/netwo
     await start();
     const url = callbackUrl();
     let failCleanup!: (error: Error) => void;
-    const boundary = action === 'logout' ? native.logoutCleanup : native.unregisterPush;
+    // No current account: logout must retire only the pending browser flow.
+    if (action === 'logout') native.writeSecure.mockRejectedValueOnce(new Error('fixture write unavailable'));
+    const boundary = action === 'logout' ? native.deleteSecure : native.unregisterPush;
+    boundary.mockClear();
     boundary.mockImplementationOnce(() => new Promise((_, reject) => { failCleanup = reject; }));
     let closing!: Promise<unknown>;
     await act(async () => { closing = auth[action]().catch(error => error); });
@@ -1231,6 +1239,8 @@ describe('browser auth session lifecycle (real AuthProvider, mocked native/netwo
     await start();
     const oldUrl = callbackUrl();
     await act(async () => { await auth.beginAddAccount(); });
+    expect(auth.loginState).toBeNull();
+    await act(async () => { await auth.dispatchLoginAction({ type: 'initialize' }); });
     expect(auth.loginState?.step).toBe('identifier');
     expect(native.storage.has(pendingKey)).toBe(false);
     await start();

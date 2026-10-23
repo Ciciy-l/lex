@@ -3,6 +3,7 @@ import { AppState } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/auth/AuthContext';
+import { getMobileAuthOwner } from '@/auth/authOwnerGeneration';
 import { useDeviceLink } from '@/device-link/DeviceLinkContext';
 import { startFocusedTopicSubscription } from '@/device-link/focusedTopicSubscription';
 import {
@@ -19,11 +20,12 @@ import { startBoundedStartupRead } from './mobileHomeStartup';
 /** One roster reader for resource routes, home and the picker. Host shards reconcile independently. */
 export function useRemoteResourceList(collectionId: string, targets: readonly RemoteResourceHostTarget[], enabled = true) {
   const { user, accountGeneration } = useAuth();
+  const accountKey = getMobileAuthOwner().accountKey;
   const { t, i18n } = useTranslation();
   const { connectionEpoch, status, presenceVersion, getPresenceAvailability, invoke, openLink,
     onRemoteResourceChanged, subscribe, unsubscribe } = useDeviceLink();
   useSyncExternalStore(subscribeRemoteResourceCache, remoteResourceCacheRevision);
-  const owner = `${user?.id ?? ''}:${accountGeneration}`;
+  const owner = `${accountKey}:${accountGeneration}`;
   const binding = JSON.stringify([owner, collectionId]);
   const bindingRef = useRef(binding); bindingRef.current = binding;
   const [hydrated, setHydrated] = useState('');
@@ -40,7 +42,7 @@ export function useRemoteResourceList(collectionId: string, targets: readonly Re
     let cancelled = false;
     const cached = readRemoteCollectionCache(owner, collectionId);
     setState({ binding, items: cached, replies: {}, loading: true, refreshing: false, error: null });
-    const cacheRead = startBoundedStartupRead(readRemoteResourceSnapshot(user?.id ?? ''), { home: [], items: {}, read: {} });
+    const cacheRead = startBoundedStartupRead(readRemoteResourceSnapshot(accountKey), { home: [], items: {}, read: {} });
     // A slow local cache must not hold up live reads. A late cache never replaces a fresh roster.
     void cacheRead.initial.then(({ value: snapshot }) => {
       if (cancelled || bindingRef.current !== binding) return;
@@ -48,7 +50,7 @@ export function useRemoteResourceList(collectionId: string, targets: readonly Re
       setHydrated(binding);
     });
     return () => { cancelled = true; generation.current += 1; };
-  }, [binding, collectionId, owner, user?.id]);
+  }, [binding, collectionId, owner, accountKey]);
 
   const read = useCallback(async (visible: boolean, isStale: () => boolean) => {
     if (!enabled || !active.current || hydrated !== binding || !collectionId) return;
@@ -96,8 +98,8 @@ export function useRemoteResourceList(collectionId: string, targets: readonly Re
   useEffect(() => {
     if (state.binding !== binding || state.loading || hydrated !== binding) return;
     writeRemoteCollectionCache(owner, collectionId, state.items);
-    void cacheRemoteResourceItems(user?.id ?? '', collectionId, state.items);
-  }, [binding, collectionId, hydrated, owner, state.items, state.loading, state.binding, user?.id]);
+    void cacheRemoteResourceItems(accountKey, collectionId, state.items);
+  }, [binding, collectionId, hydrated, owner, state.items, state.loading, state.binding, accountKey]);
   useFocusEffect(useCallback(() => {
     if (!enabled) return;
     active.current = true;

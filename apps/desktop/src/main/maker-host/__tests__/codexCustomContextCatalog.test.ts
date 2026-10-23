@@ -3,7 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
-import nativeFallbackPrompt from '../codex-native-fallback-prompt.md?raw';
+import { createHash } from 'node:crypto';
+import nativeFallbackPrompt from '../codex-native-fallback-prompt.json';
 
 import {
   extractBundledCodexModelCatalog,
@@ -38,6 +39,13 @@ async function createFixtureBinary(
 }
 
 describe('Codex custom context model catalog', () => {
+  it('preserves the byte-exact Apache-2.0 native prompt shared by Codex 0.153 and 0.162.1', () => {
+    const bytes = Buffer.from(nativeFallbackPrompt);
+    // Public upstream Git blob; an independently obtained source, not a fixture generated from this asset.
+    expect(createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`), bytes])).digest('hex'))
+      .toBe('907ff8b877026871b088f01f4366cea36e1f02cd');
+  });
+
   it('extracts the complete embedded catalog across chunk boundaries', async () => {
     const catalog = {
       models: [
@@ -164,6 +172,16 @@ describe('Codex custom context model catalog', () => {
     })).rejects.toThrow('native fallback metadata changed');
   });
 
+  it('rejects a whitespace-modified native prompt instead of relaxing byte verification', async () => {
+    const { root, binaryPath } = await createFixtureBinary({ models: [{ slug: 'gpt-5.6-sol' }] });
+    const trimmed = nativeFallbackPrompt.replace(/ +$/gm, '');
+    expect(trimmed).not.toBe(nativeFallbackPrompt);
+    await fs.appendFile(binaryPath, trimmed);
+    await expect(prepareCodexCustomContextCatalog({ binaryPath, codexHome: root,
+      modelId: 'gpt-5.4-mini', contextWindow: 400_000, scanChunkBytes: 64,
+    })).rejects.toThrow('native fallback metadata changed');
+  });
+
   it('uses a newly discovered GPT model absent from the installed binary', async () => {
     const { root, binaryPath } = await createFixtureBinary({ models: [{ slug: 'gpt-5.4' }] });
     const native = { slug: 'gpt-6-astra', context_window: 272_000, max_context_window: 872_000,
@@ -208,7 +226,7 @@ describe('Codex custom context model catalog', () => {
   it('uses native unknown-model defaults for GLM instead of cloning GPT behavior', () => {
     const result = patchCodexModelMaxContextWindow({ models: [{ slug: 'gpt-5.4', multi_agent_version: 'v2' }] }, 'glm-5.3', 500_000);
     expect(result.models[1]).toEqual({ ...nativeCodexFallbackModel('glm-5.3'), max_context_window: 500_000 });
-    expect(result.models[1].multi_agent_version).toBeUndefined();
+    expect(result.models[1].multi_agent_version).toBeNull();
   });
 
   it('reuses one immutable catalog across concurrent session starts', async () => {

@@ -1,0 +1,17 @@
+{
+  "chooseService": "选择登录服务",
+  "serverAddress": "服务器地址",
+  "serverHint": "请输入设备服务的根地址。须使用 HTTPS，仅开发构建允许回环地址使用 HTTP。",
+  "emailLogin": "邮箱登录",
+  "email": "邮箱地址",
+  "code": "验证码",
+  "login": "登录",
+  "sendCode": "发送验证码",
+  "guestTitle": "在设备间继续任务",
+  "guestHint": "登录后连接电脑，查看并继续电脑上的任务。无需登录也可使用本机设置。",
+  "nativeUpdateRequired": "请安装新版 Android 应用后连接 Lex Server。",
+  "serverError": "无法验证服务器。请检查地址、HTTPS 证书及服务是否可用。",
+  "service": "登录服务",
+  "cindyServices": "Cindy 服务",
+  "continue": "继续"
+}

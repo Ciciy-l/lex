@@ -31,7 +31,8 @@ internal class MobileCredentialClient(context: Context, activity: () -> Fragment
     fun close() { toSave?.ciphertext?.fill(0); toSave = null; attempt = null; commands.clear(); abandoned.clear(); channel.close() }
   }
   private val installation by lazy { CredentialInstallation(context) }
-  private val vault by lazy { CredentialVault(context, installation, activity) }
+  private val vaultValue = lazy { CredentialVault(context, installation, activity) }
+  private val vault by vaultValue
   private val configureLock = Mutex()
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
   private var owner: Owner? = null
@@ -196,7 +197,9 @@ internal class MobileCredentialClient(context: Context, activity: () -> Fragment
   fun close(handle: String) { if (session?.handle == handle) close() }
   fun close() {
     val state = session; epoch++; session = null; state?.close(); monitor?.cancel(); monitor = null
-    vault.cancel(); if (state != null) invalidated(state.handle)
+    // Lex/guest cleanup must not create an unused official credential installation.
+    if (vaultValue.isInitialized()) vault.cancel()
+    if (state != null) invalidated(state.handle)
   }
   fun reset() { close(); owner = null; token = ""; key = null; identity = null }
   fun destroy() { reset(); scope.cancel() }

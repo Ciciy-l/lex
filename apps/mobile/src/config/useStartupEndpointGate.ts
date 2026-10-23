@@ -11,7 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { AuthRegion } from '@cindy/auth-client';
 import { IS_LEX_MOBILE } from './lexMobile';
-import { readStartupAuthRealm, savePersonalLoginRealm } from '@/auth/personalLoginRealm';
+import { readStartupAuthRealm, readStartupAuthScope, savePersonalLoginRealm } from '@/auth/personalLoginRealm';
 import { isTestFlightBuild } from '@/platform/appDistribution';
 import { runStartupEndpointResolve } from './clientEndpointStartup';
 import {
@@ -70,6 +70,9 @@ export function useStartupEndpointGate(): StartupEndpointGate {
     const current = ++generation.current;
     void (async () => {
       if (IS_LEX_MOBILE) {
+        const scope = await readStartupAuthScope();
+        if (cancelled || current !== generation.current) return null;
+        if (scope !== 'cn' && scope !== 'global' && !explicitRealm.current) return { ok: true as const };
         const selected = explicitRealm.current ?? await readStartupAuthRealm();
         if (cancelled || current !== generation.current) return null;
         setRealm(selected);

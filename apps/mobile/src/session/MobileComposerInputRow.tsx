@@ -27,6 +27,7 @@ import { iconSize, iconStroke, useTheme, useThemedStyles, type ThemeColors } fro
 import { motionDuration, motionEasing, radius, spacing } from '@/theme/tokens';
 import { useReduceMotionEnabled } from '@/hooks/useReduceMotion';
 import { useVoicePillWidthStyle } from './voicePillWidthMotion';
+import { getActiveMobileAuthService } from '@/auth/authService';
 import {
   COMPOSER_SINGLE_LINE_HEIGHT,
   COMPOSER_TEXT_HORIZONTAL_PADDING,
@@ -417,7 +418,7 @@ export function MobileComposerInputRow({
         </View>
         </ComposerFoldingSection>
       ) : null}
-      {voicePlacement?.inline || voicePlacement?.floating ? (
+      {getActiveMobileAuthService()?.kind !== 'lex-server' && (voicePlacement?.inline || voicePlacement?.floating) ? (
         <View
           pointerEvents="box-none"
           style={[

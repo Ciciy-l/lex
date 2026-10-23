@@ -121,7 +121,7 @@ test('extractRouterFacts: 真实 router.tsx 的三类去向逐条钉死', () => 
     '/cc-agent/scheduled SchedulerPage',
     '/ghost-panel-window GhostPanelWindowLayout',
     '/issues IssueTrackerFeatureLayout',
-    '/login LoginPage',
+    '/login RootLoginPage',
     '/maker-experimental MakerExperimentalView',
     '/plugins GhostPluginPage',
     '/settings SettingsView',

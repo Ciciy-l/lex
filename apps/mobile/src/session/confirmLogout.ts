@@ -3,8 +3,8 @@ import type { TFunction } from 'i18next';
 
 /**
  * Every sign-out entry (settings, home drawer, partner home and drawer) asks
- * first: signing out clears this phone's saved accounts and local mirror, and
- * running tasks stop reporting here. Switching accounts already warns; the
+ * first: signing out removes the current saved account and its local mirror,
+ * keeping other accounts; that account's tasks stop reporting here. Switching accounts already warns; the
  * heavier action must not be quieter.
  */
 export function confirmLogout(t: TFunction, hasRunningTasks: boolean, onConfirm: () => void): void {

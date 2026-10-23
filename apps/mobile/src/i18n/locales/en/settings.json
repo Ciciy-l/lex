@@ -152,8 +152,8 @@
   },
   "account": {
     "logoutConfirmTitle": "Sign out?",
-    "logoutConfirmRunning": "Some sessions are still running. They keep running on your computer, but this phone stops receiving and controlling them, and every account and local mirror saved on this phone is cleared.",
-    "logoutHint": "Signing out clears every account saved on this phone and its local remote mirror. Sessions on your computer are not affected.",
+    "logoutConfirmRunning": "Some tasks are still running on your computer. This phone will stop receiving and controlling tasks for the current account. Only this account and its local remote mirror are removed; other saved accounts are kept. Tasks on your computer keep running.",
+    "logoutHint": "Signing out removes only the current account and its local remote mirror from this phone. Other saved accounts and tasks on your computer are kept.",
     "logout": "Sign Out",
     "loggingOut": "Signing out",
     "loggingOutAccessibility": "Signing out"

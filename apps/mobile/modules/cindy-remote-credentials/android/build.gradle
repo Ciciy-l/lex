@@ -12,6 +12,7 @@ android {
     versionName '0.1.0'
   }
   sourceSets.main.assets.srcDirs += '../../../../../packages/remote-credentials-native/Sources/CindyRemoteCredentials/Resources'
+  testOptions { unitTests.returnDefaultValues = true }
 }
 dependencies {
   implementation 'com.nimbusds:nimbus-jose-jwt:10.9.1'
@@ -19,6 +20,7 @@ dependencies {
 }
 
 dependencies {
+  testImplementation 'junit:junit:4.13.2'
   testImplementation 'org.json:json:20240303'
 }
 // A test-only JVM peer used by Swift's opt-in two-process interoperability test.

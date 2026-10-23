@@ -1,3 +1,5 @@
+import { accountVaultKey, authServiceScope, passportVaultKey, type AuthServiceScope } from '@cindy/auth-client';
+import { refreshMobileResourceSingleFlight } from '../mobileResourceRefresh';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const secureStorage = vi.hoisted(() => ({
@@ -28,6 +30,7 @@ import {
   commitMobileSavedAccountActivation,
   listMobileSavedAccounts,
   mutateMobileAccountVault,
+  markMobileRotationStarted, readMobileAccountVault, removeMobileLoginAccountForLogout,
   parseMobileAccountVault,
   reconcileMobileActiveAuthSession,
   removeMobilePassportSessionIfCurrent,
@@ -59,7 +62,7 @@ describe('mobile account vault', () => {
 
   it('falls back to an empty read-only projection for malformed encrypted content', () => {
     expect(parseMobileAccountVault('{bad-json')).toEqual({
-      version: 1,
+      version: 2,
       activeAccountKey: null,
       resources: {},
       passports: {},
@@ -149,7 +152,8 @@ describe('mobile account vault', () => {
       refreshToken: 'resource-old',
     };
     const writePersistedSession = vi.fn(
-      async (refreshToken: string, realm: 'cn' | 'global') => {
+      async (refreshToken: string, realm: import('@cindy/auth-client').AuthServiceScope) => {
+        if (realm !== 'cn' && realm !== 'global') throw new Error('Expected Cindy fixture');
         session = { version: 1, realm, refreshToken };
       },
     );
@@ -677,7 +681,7 @@ describe('mobile account vault', () => {
     expect(secureStorage.set).not.toHaveBeenCalled();
   });
 
-  it('lets a completed explicit login recover malformed content with exact rollback', async () => {
+  it('does not let an explicit login replace malformed encrypted content', async () => {
     const malformed = '{bad-json';
     const input = {
       pair: {
@@ -703,29 +707,14 @@ describe('mobile account vault', () => {
     };
     secureStorage.value = malformed;
 
-    await expect(
-      commitMobileLoginSessions(input, async () => {
-        throw new Error('owner commit failed');
-      }),
-    ).rejects.toThrow('owner commit failed');
+    const ownerCommit = vi.fn(async () => undefined);
+    await expect(commitMobileLoginSessions(input, ownerCommit)).rejects.toThrow();
     expect(secureStorage.value).toBe(malformed);
-
-    await commitMobileLoginSessions(input, async () => undefined);
-
-    const recovered = parseMobileAccountVault(secureStorage.value);
-    const accountKey = JSON.stringify(['global', metadata.membershipId]);
-    expect(recovered.activeAccountKey).toBe(accountKey);
-    expect(recovered.resources[accountKey]?.refreshToken).toBe('resource-refresh');
-    expect(recovered.passports).toEqual(
-      expect.objectContaining({
-        [JSON.stringify(['global', metadata.passportId])]: expect.objectContaining({
-          accountRefreshToken: 'account-refresh',
-        }),
-      }),
-    );
+    expect(ownerCommit).not.toHaveBeenCalled();
+    expect(secureStorage.set).not.toHaveBeenCalled();
   });
 
-  it('preserves valid vault children while explicit login filters a damaged child', async () => {
+  it('preserves the entire opaque vault when an explicit login encounters a damaged child', async () => {
     const existingKey = JSON.stringify(['global', metadata.membershipId]);
     const newMetadata = {
       ...metadata,
@@ -748,7 +737,8 @@ describe('mobile account vault', () => {
       passports: {},
     });
 
-    await commitMobileLoginSessions(
+    const original = secureStorage.value;
+    await expect(commitMobileLoginSessions(
       {
         pair: {
           accessToken: 'new-access',
@@ -772,13 +762,10 @@ describe('mobile account vault', () => {
         memberships: [newMetadata],
       },
       async () => undefined,
-    );
+    )).rejects.toThrow('Saved resource credential could not be read safely');
 
-    const recovered = parseMobileAccountVault(secureStorage.value);
-    const newKey = JSON.stringify(['global', newMetadata.membershipId]);
-    expect(recovered.resources[existingKey]?.refreshToken).toBe('existing-refresh');
-    expect(recovered.resources[newKey]?.refreshToken).toBe('new-refresh');
-    expect(recovered.resources.damaged).toBeUndefined();
+    expect(secureStorage.value).toBe(original);
+    expect(secureStorage.set).not.toHaveBeenCalled();
   });
 
   it('does not rewrite a vault containing a damaged resource child', async () => {
@@ -1031,5 +1018,73 @@ describe('mobile account vault', () => {
     );
     expect(sessionRaw).toBeNull();
     expect(clearReceipt).toHaveBeenCalledOnce();
+  });
+});
+
+
+describe('mobile service-scoped credential lifecycle', () => {
+  const scopeA = authServiceScope({ kind: 'lex-server', origin: 'https://a.test' });
+  const scopeB = authServiceScope({ kind: 'lex-server', origin: 'https://b.test' });
+  const pair = (suffix: string) => ({ accessToken: 'test-access-' + suffix, refreshToken: 'test-resource-' + suffix,
+    membership: { ...metadata, id: metadata.membershipId, passportId: metadata.passportId } });
+  const login = (realm: AuthServiceScope, suffix: string) => commitMobileLoginSessions({ pair: pair(suffix), realm,
+    passportId: metadata.passportId, accountRefreshToken: 'test-passport-' + suffix, memberships: [metadata] }, async () => {});
+  beforeEach(() => { secureStorage.value = null; secureStorage.readError = null; vi.clearAllMocks(); });
+  it('keeps legacy Cindy keys while isolating identical memberships and passports at two origins', async () => {
+    await login('global', 'official'); await login(scopeA, 'a'); await login(scopeB, 'b');
+    const vault = await readMobileAccountVault(); expect(vault.version).toBe(2);
+    expect(Object.keys(vault.resources)).toHaveLength(3); expect(Object.keys(vault.passports)).toHaveLength(3);
+    expect(vault.resources[accountVaultKey('global', metadata.membershipId)]).toMatchObject({ realm: 'global', refreshToken: 'test-resource-official' });
+    expect(vault.resources[accountVaultKey(scopeA, metadata.membershipId)]).toMatchObject({ realm: 'global', service: { kind: 'lex-server', origin: 'https://a.test' } });
+  });
+  it('persists unknown rotation and never replays that Lex generation after an offline result', async () => {
+    await login(scopeA, 'a'); const key = accountVaultKey(scopeA, metadata.membershipId);
+    const client = { refresh: vi.fn(async () => { expect((await readMobileAccountVault()).resources[key].rotation).toBe('unknown'); throw new Error('test offline'); }) };
+    await expect(refreshMobileResourceSingleFlight(client, scopeA, 'test-resource-a', key)).rejects.toThrow('test offline');
+    await expect(refreshMobileResourceSingleFlight(client, scopeA, 'test-resource-a', key)).rejects.toThrow('SAVED_ACCOUNT_REAUTH_REQUIRED');
+    expect(client.refresh).toHaveBeenCalledTimes(1); expect((await readMobileAccountVault()).resources[key].refreshToken).toBe('test-resource-a');
+  });
+  it('shares one Resource rotation across runtime refresh and saved-account switching', async () => {
+    await login(scopeA, 'a'); let finish!: (value: ReturnType<typeof pair>) => void;
+    const client = { refresh: vi.fn(() => new Promise<ReturnType<typeof pair>>(resolve => { finish = resolve; })) };
+    const key = accountVaultKey(scopeA, metadata.membershipId);
+    const first = refreshMobileResourceSingleFlight(client, scopeA, 'test-resource-a', key);
+    const second = refreshMobileResourceSingleFlight(client, scopeA, 'test-resource-a', key);
+    expect(second).toBe(first); await vi.waitFor(() => expect(client.refresh).toHaveBeenCalledTimes(1)); finish(pair('rotated')); await first;
+    const resource = (await readMobileAccountVault()).resources[key]; expect(resource.refreshToken).toBe('test-resource-rotated'); expect(resource.rotation).toBeUndefined();
+  });
+  it('does not dispatch a rotating request when the unknown marker cannot be persisted', async () => {
+    await login(scopeA, 'a'); const previous = secureStorage.value;
+    secureStorage.set.mockRejectedValueOnce(new Error('test storage failure')); const client = { refresh: vi.fn() };
+    await expect(refreshMobileResourceSingleFlight(client, scopeA, 'test-resource-a', accountVaultKey(scopeA, metadata.membershipId))).rejects.toThrow('test storage failure');
+    expect(client.refresh).not.toHaveBeenCalled(); expect(secureStorage.value).toBe(previous);
+  });
+  it('preserves an unknown Passport rotation when a concurrent metadata request keeps its old token', async () => {
+    await login(scopeA, 'a');
+    const key = passportVaultKey(scopeA, metadata.passportId);
+    await markMobileRotationStarted({ family: 'passport', key, token: 'test-passport-a' });
+    expect(await replaceMobilePassportSessionIfCurrent({ realm: scopeA, passportId: metadata.passportId,
+      expectedAccountRefreshToken: 'test-passport-a', accountRefreshToken: 'test-passport-a', memberships: [metadata] })).toBe(true);
+    expect((await readMobileAccountVault()).passports[key].rotation).toBe('unknown');
+    await expect(markMobileRotationStarted({ family: 'passport', key, token: 'test-passport-a' })).rejects.toThrow('SAVED_ACCOUNT_REAUTH_REQUIRED');
+    expect(await replaceMobilePassportSessionIfCurrent({ realm: scopeA, passportId: metadata.passportId,
+      expectedAccountRefreshToken: 'test-passport-a', accountRefreshToken: 'test-passport-rotated', memberships: [metadata] })).toBe(true);
+    expect((await readMobileAccountVault()).passports[key].rotation).toBeUndefined();
+  });
+  it('removes only the captured service account and prevents Passport discovery from restoring it', async () => {
+    await login(scopeA, 'a'); await login(scopeB, 'b'); await login('global', 'official');
+    const key = accountVaultKey(scopeA, metadata.membershipId);
+    await removeMobileLoginAccountForLogout({ accountKey: key, readSessionRaw: async () => 'test-session', clearSession: async () => {}, restoreSessionRaw: async () => {}, clearReceipt: async () => {}, assertCurrent: () => {} });
+    const vault = await readMobileAccountVault(); expect(vault.resources[key]).toBeUndefined(); expect(vault.passports[passportVaultKey(scopeA, metadata.passportId)]).toBeUndefined();
+    expect(vault.resources[accountVaultKey(scopeB, metadata.membershipId)]).toBeDefined(); expect(listMobileSavedAccounts(vault)).toHaveLength(2);
+    expect(vault.removedAccountKeys).toEqual([key]);
+    await login(scopeA, 'again'); expect((await readMobileAccountVault()).removedAccountKeys).not.toContain(key);
+  });
+  it('rolls back scoped logout when storage or its epoch fails before publication', async () => {
+    await login(scopeA, 'a'); const previous = secureStorage.value;
+    await expect(removeMobileLoginAccountForLogout({ accountKey: accountVaultKey(scopeA, metadata.membershipId), readSessionRaw: async () => 'test-session',
+      clearSession: async () => { throw new Error('test delete failed'); }, restoreSessionRaw: async () => {}, clearReceipt: async () => {}, assertCurrent: () => {} })).rejects.toThrow('test delete failed');
+    expect(secureStorage.value).toBe(previous);
+    await expect(markMobileRotationStarted({ family: 'passport', key: passportVaultKey(scopeB, metadata.passportId), token: 'test' })).rejects.toThrow('AUTH_FLOW_SUPERSEDED');
   });
 });

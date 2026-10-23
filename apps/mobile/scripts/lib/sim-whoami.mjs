@@ -6,8 +6,7 @@ import {
 } from "../../../../scripts/shared/pnpm-invocation.mjs";
 import { dirname, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mobileClientBundleEnv } from "../../../../scripts/shared/client-endpoint-build-env.mjs";
-import { withLocalMobileRegionConfig } from "./mobile-dev-region.mjs";
+import { mobileSimulatorBuildEnv } from "./mobile-dev-variant.mjs";
 
 const mobileDir = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const SIMULATOR_UDID_PATTERN = /^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/;
@@ -274,9 +273,7 @@ export function resolveMobileSimulatorBundleId(region, options = {}) {
         env: { ...opts.env, ...(invocation.env ?? {}) },
       });
     });
-  const buildEnv = withLocalMobileRegionConfig(
-    mobileClientBundleEnv({ authRegion: region }),
-  );
+  const buildEnv = mobileSimulatorBuildEnv(region, { lex: options.lex, platform: options.platform === 'android' ? 'win32' : options.platform });
   let raw;
   try {
     raw = run(
@@ -305,7 +302,7 @@ export function resolveMobileSimulatorBundleId(region, options = {}) {
       cause: error,
     });
   }
-  const bundleId = config?.ios?.bundleIdentifier;
+  const bundleId = options.platform === 'android' ? config?.android?.package : config?.ios?.bundleIdentifier;
   if (typeof bundleId !== "string" || !bundleId.trim()) {
     throw new Error(`Expo config 缺少 ios.bundleIdentifier(region=${region})`);
   }

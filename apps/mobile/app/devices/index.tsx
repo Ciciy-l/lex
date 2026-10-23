@@ -1,8 +1,10 @@
 import { useAuth } from '@/auth/AuthContext';
 import { MobileHome } from '@/session/HomeSurface';
+import { GuestHome } from '@/auth/GuestHome';
 
 export default function HomeScreen() {
-  const { accountGeneration } = useAuth();
+  const { accountGeneration, isAuthenticated } = useAuth();
+  if (!isAuthenticated) return <GuestHome />;
   return <MobileHome key={accountGeneration} />;
 }
 

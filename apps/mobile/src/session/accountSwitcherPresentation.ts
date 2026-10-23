@@ -16,7 +16,7 @@ export function presentSavedAccount(
     imageUrl: isOrg ? account.orgLogoUrl : account.avatarUrl,
     title: isOrg
       ? account.orgName || account.displayName
-      : account.displayName || account.email || 'Cindy',
-    subtitle: isOrg ? account.displayName : account.email,
+      : account.displayName || account.email || (account.service?.kind === 'lex-server' ? new URL(account.service.origin).host : 'Cindy'),
+    subtitle: [account.service?.kind === 'lex-server' ? new URL(account.service.origin).host : null, isOrg ? account.displayName : account.email].filter(Boolean).join(' · ') || null,
   };
 }

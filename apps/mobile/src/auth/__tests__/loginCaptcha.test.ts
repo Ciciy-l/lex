@@ -176,9 +176,11 @@ describe('AuthContext captcha 闸接线(静态源码断言)', () => {
   });
 
   it('request-code 的 email/phone 都按 requiredFor 动作过闸,取消不派发', () => {
+    const cindyActionStart = authContextSource.indexOf("if (action.type === 'initialize')");
+    const requestStart = authContextSource.indexOf("if (action.type === 'request-code')", cindyActionStart);
     const branch = authContextSource.slice(
-      authContextSource.indexOf("if (action.type === 'request-code')"),
-      authContextSource.indexOf("if (action.type === 'verify-code')"),
+      requestStart,
+      authContextSource.indexOf("if (action.type === 'verify-code')", requestStart),
     );
     expect(branch).toContain('ensureCaptchaGate(action.kind, personalRealm)');
     expect(branch).toContain('if (!gate.proceed) return false;');

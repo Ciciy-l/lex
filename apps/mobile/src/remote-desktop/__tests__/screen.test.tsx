@@ -6,6 +6,7 @@ import RemoteDesktopScreen from "../RemoteDesktopScreen";
 import { RemoteDesktopDisplaySettings } from "../RemoteDesktopDisplaySettings";
 import { AppState } from "react-native";
 import { goBackGuarded } from "@/utils/backGuard";
+vi.mock("@/auth/authService", () => ({ isCindyMobileSession: () => true }));
 
 vi.mock("../useAutoUnlockSettings", () => ({
   useAutoUnlockSettings: (
@@ -266,7 +267,7 @@ vi.mock("@/device-link/DeviceLinkContext", () => ({
   }),
 }));
 vi.mock("@/auth/AuthContext", () => ({
-  useAuth: () => ({ apiFetch: fixture.apiFetch }),
+  useAuth: () => ({ apiFetch: fixture.apiFetch, canUseCindyServices: true }),
 }));
 vi.mock("@/config/env", () => ({
   DEVICE_LINK_API_BASE_URL: "https://relay.example.test",

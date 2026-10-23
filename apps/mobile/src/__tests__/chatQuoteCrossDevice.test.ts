@@ -45,7 +45,7 @@ describe('mobile cross-device quote wiring', () => {
     const source = readSource('app/sessions/[sessionId].tsx');
 
     expect(source).toContain('const forkDocument = draft?.document ?? migrateLegacyComposerDraft(');
-    expect(source).toContain('saveComposerDocumentDraft(forked.id, forkDocument);');
+    expect(source).toContain('saveComposerDocumentDraft(forked.id, forkDocument, outboxOwner);');
     expect(source).toContain('applyComposerDocument(state.draftDocument ?? migrateLegacyComposerDraft(');
     expect(source).toContain('serializeComposerDocument(documentAtSend)');
   });

@@ -32,7 +32,7 @@ describe('AuthContext 注入点(静态源码断言)', () => {
 
   it('注入形态 = 真实 CindyAuthClient + fetch 构造参数(scenarioFetch ?? 真 fetch)', () => {
     expect(authContextSource).toContain(
-      'fetch: scenarioFetch ?? (async (input, init) => fetch(input, init))',
+      "fetch: region === 'cn' || region === 'global' ? scenarioFetch ?? mobileServiceFetch : mobileServiceFetch",
     );
     expect(authContextSource.match(/new CindyAuthClient\(/g)).toHaveLength(1);
   });

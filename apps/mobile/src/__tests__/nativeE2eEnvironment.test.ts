@@ -275,9 +275,9 @@ describe('native e2e environment', () => {
     expect(cleanupBody).toContain('deleteSecureItem(AUTH_SESSION_KEY).catch(() => undefined)');
     expect(cleanupBody.indexOf('await clearAllMobileVoiceCredentials().catch(() => undefined);')).toBeLessThan(refreshTokenDelete);
     expect(cleanupBody.indexOf('await clearAllMobileVoiceInputHistories().catch(() => undefined);')).toBeLessThan(refreshTokenDelete);
-    const logoutStart = authContext.indexOf('const logout = useCallback(async () => {');
-    const logoutBody = authContext.slice(logoutStart, authContext.indexOf('}, [', logoutStart));
-    expect(logoutBody).toContain('clearMobileLoginCredentialsForLogout({');
+    const logoutStart = authContext.indexOf('const logout = useCallback(');
+    const logoutBody = authContext.slice(logoutStart, authContext.indexOf('const getAccessToken', logoutStart));
+    expect(logoutBody).toContain('removeMobileLoginAccountForLogout({');
     expect(logoutBody).toContain(
       'clearReceipt: () => persistAccountDeletionReceipt(null),',
     );

@@ -1,0 +1,17 @@
+{
+  "chooseService": "選擇登入服務",
+  "serverAddress": "伺服器位址",
+  "serverHint": "請輸入裝置服務的根位址。須使用 HTTPS，僅開發建置允許回環位址使用 HTTP。",
+  "emailLogin": "電子郵件登入",
+  "email": "電子郵件地址",
+  "code": "驗證碼",
+  "login": "登入",
+  "sendCode": "傳送驗證碼",
+  "guestTitle": "在裝置間繼續任務",
+  "guestHint": "登入後連線電腦，檢視並繼續電腦上的任務。無需登入也可使用本機設定。",
+  "nativeUpdateRequired": "請安裝新版 Android 應用程式後連線 Lex Server。",
+  "serverError": "無法驗證伺服器。請檢查位址、HTTPS 憑證及服務是否可用。",
+  "service": "登入服務",
+  "cindyServices": "Cindy 服務",
+  "continue": "繼續"
+}

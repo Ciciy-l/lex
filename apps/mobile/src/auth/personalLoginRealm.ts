@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { parseAuthSessionRecord, type AuthRegion } from '@cindy/auth-client';
+import { parseAuthSessionRecord, storedAuthServiceScope, type AuthRegion, type AuthServiceScope } from '@cindy/auth-client';
 import { readMobileAccountVault } from './mobileAccountVault';
 import { getSecureItem } from './secureStorage';
 
@@ -35,4 +35,20 @@ export async function readStartupAuthRealm(): Promise<AuthRegion> {
     }
   }
   return readPersonalLoginRealm();
+}
+
+/** No endpoint request until the stored deployment is known. Null means a proved guest. */
+export async function readStartupAuthScope(): Promise<AuthServiceScope | null> {
+  const vault = await readMobileAccountVault();
+  if (vault.signedOutAt) return null;
+  const active = vault.activeAccountKey ? vault.resources[vault.activeAccountKey] : undefined;
+  if (active) return storedAuthServiceScope(active);
+  const raw = await getSecureItem('cindy.mobile.auth.session.v1');
+  if (raw !== null) {
+    const session = parseAuthSessionRecord(raw);
+    if (!session) throw new Error('AUTH_STORAGE_UNAVAILABLE');
+    return storedAuthServiceScope(session);
+  }
+  const legacy = await getSecureItem('cindy.mobile.auth.refreshToken');
+  return legacy ? readPersonalLoginRealm() : null;
 }

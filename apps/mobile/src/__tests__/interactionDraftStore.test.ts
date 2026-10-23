@@ -1,3 +1,4 @@
+import { setMobileAuthOwner } from '@/auth/authOwnerGeneration';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   clearAllInteractionDrafts,
@@ -11,6 +12,7 @@ import {
 
 describe('interactionDraftStore', () => {
   beforeEach(() => {
+    setMobileAuthOwner('fixture-member', 'global');
     clearAllInteractionDrafts();
   });
 

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
-import { useAppShellCover } from '@/contexts/AppShellCoverContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { LoginPage } from './LoginPage';
 import { LoginServiceSelection } from './LoginServiceSelection';
@@ -14,7 +13,6 @@ interface AddAccountLocationState {
 
 export function AddAccountLoginPage() {
   const { loginState, beginAddAccount, cancelAddAccount } = useAuth();
-  const { reportLocalDbGate } = useAppShellCover();
   const navigate = useNavigate();
   const location = useLocation();
   const initializedRef = useRef(false);
@@ -23,17 +21,6 @@ export function AddAccountLoginPage() {
   const [flowInitialized, setFlowInitialized] = useState(false);
   const [serviceSelected, setServiceSelected] = useState<DesktopLoginServiceInput | null>(null);
   const returnTo = (location.state as AddAccountLocationState | null)?.returnTo ?? '/cc-agent';
-
-  useEffect(() => {
-    // This protected route intentionally sits outside LocalDbGate: adding another account must
-    // remain available even if the current account's database cannot open. After a renderer
-    // reload/HMR, AppShellCoverProvider starts at `pending`; without an explicit bypass no gate is
-    // mounted to release the startup cover, leaving this page behind “Waking Cindy…” forever.
-    // Passive effect ordering matters here: LocalDbGate's unmount cleanup runs before this mount
-    // effect, so `ready` wins when navigating from the main app into this route.
-    reportLocalDbGate('ready');
-    return () => reportLocalDbGate('pending');
-  }, [reportLocalDbGate]);
 
   const startLogin = async (service: DesktopLoginServiceInput) => {
     initializedRef.current = true;

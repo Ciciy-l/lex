@@ -1,4 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getActiveMobileAuthScope, isCindyMobileSession } from '@/auth/authService';
+import type { AuthServiceScope } from '@cindy/auth-client';
 import { Platform } from 'react-native';
 import type { ClientEndpointRegion } from '@cindy/maker-shared/client-endpoints';
 import type { ApiFetchOptions } from '@/api/client';
@@ -298,6 +300,7 @@ async function syncPushRegistrationInternal(
   },
   lifecycleGeneration: number,
 ): Promise<PushSyncResult> {
+  if (!isCindyMobileSession()) return 'skipped';
   if (!isPushSupported()) return 'unsupported';
   if (lifecycleGeneration !== pushLifecycleGeneration) return 'skipped';
   const realm = getActiveMobileSessionRealm();
@@ -420,12 +423,13 @@ async function unregisterPushTokenBestEffortInternal(
 
 export function unregisterPushTokenBestEffort(
   accessToken: string | null,
-  realm: ClientEndpointRegion = getActiveMobileSessionRealm(),
+  scope: AuthServiceScope | null = getActiveMobileAuthScope(),
 ): Promise<void> {
+  if (scope !== 'cn' && scope !== 'global') return Promise.resolve();
   pushLifecycleGeneration += 1;
   // 不进入 pushMutationTail：当前 tail 可能正在 apiFetch → terminal handler →
   // clearLocalSession → 本函数。等待 tail 会形成自等待死锁。
-  return unregisterPushTokenBestEffortInternal(realm, accessToken);
+  return unregisterPushTokenBestEffortInternal(scope, accessToken);
 }
 
 /**
@@ -435,6 +439,7 @@ export function unregisterPushTokenBestEffort(
 async function retryPendingUnregisterInternal(
   apiFetch: AuthedApiFetch,
 ): Promise<void> {
+  if (!isCindyMobileSession()) return;
   if (!isPushSupported()) return;
   const realm = getActiveMobileSessionRealm();
   const stateScope = capturePushStateScope(realm);

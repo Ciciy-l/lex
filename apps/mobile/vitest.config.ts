@@ -29,6 +29,9 @@ export default defineConfig({
       // (checkout 路径含空格时 alias 指向不存在的 %20 路径,255 个测试文件整体
       // TEST_COLLECT_FAILED);无空格路径下两者逐字节一致,CI 行为零变化。
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      // Expo's transport is native-only. Keep HTTP unit fixtures on the same
+      // injected global fetch used by the existing request-boundary tests.
+      'expo/fetch': fileURLToPath(new URL('./src/__tests__/expo-fetch.mock.ts', import.meta.url)),
       'expo-application': fileURLToPath(
         new URL('./src/__tests__/expo-application.mock.ts', import.meta.url),
       ),

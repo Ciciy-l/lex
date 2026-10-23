@@ -91,7 +91,7 @@
   "hostOfflineBody": "這個任務的共享已關閉，原邀請已失效。請聯絡房主重新開啟共享並傳送新邀請。",
   "closedToast": "已關閉 {{count}} 個任務的共享",
   "closeFailedToast": "部分共享未能關閉（{{count}} 項），可稍後重試。",
-  "invitationDifferentServer": "此邀請屬於其他 Cindy 服務，請用對應的用戶端開啟連結",
+  "invitationDifferentServer": "此邀請屬於其他服務，請先切換到對應的服務再加入",
   "managementIntro": "管理你發起和加入的共享。",
   "manageSharing": "共享管理",
   "joinedTab": "我加入的",

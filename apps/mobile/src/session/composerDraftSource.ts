@@ -23,7 +23,11 @@ export function createComposerDraftSource(document: ComposerDocument) {
     setDocument: (next: ComposerDocument) => {
       if (snapshot.document === next) return;
       snapshot = { document: next, draft: composerDocumentProjectedText(next) };
-      for (const listener of listeners) listener();
+      // A synchronous React commit may replace a subscription while notifying.
+      // Set iteration would visit the newly added entry again in the same pass.
+      for (const listener of [...listeners]) {
+        if (listeners.has(listener)) listener();
+      }
     },
   };
 }

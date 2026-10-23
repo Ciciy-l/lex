@@ -156,7 +156,7 @@ describe('live stream interruption wiring', () => {
     expect(source).toMatch(
       /onPeerTransportReset[\s\S]*requestForcedPeerRecovery\(client, deviceId\)[\s\S]*rehydrate\(deviceId\)/,
     );
-    expect(source).toMatch(/const rehydrate = \(deviceId\?: string\) => \{\s*catalogRefresh.wake\(deviceId\);\s*return rehydrateWithClient\(client, deviceId\);/);
+    expect(source).toMatch(/const rehydrate = \(deviceId\?: string\) => \{\s*if \(!connectionCurrent\(\)\) return Promise.resolve\(\);\s*catalogRefresh.wake\(deviceId\);\s*return rehydrateWithClient\(client, deviceId\);/);
     expect(source).toContain('resolvePeerRecoveryPlan(');
     expect(source).toContain('for (const deviceId of forcedPeerRecoveryIntentRef.current.deviceIds())');
     expect(source).toContain('forcedPeerRecoveryIntentRef.current.complete(targetDeviceId, forcedGeneration)');
@@ -167,9 +167,10 @@ describe('live stream interruption wiring', () => {
   it('退后台释放 session 订阅：按被释放的会话失效', () => {
     const release = source.slice(
       source.indexOf('const releaseHeavyTopics = ()'),
-      source.indexOf('return releases;'),
+      source.indexOf('const backgroundConnection = createBackgroundConnection('),
     );
     expect(release).toContain('noteSessionLiveStreamsInterrupted(heavy);');
+    expect(release).toContain('if (!connectionCurrent()) return releases;');
   });
 
   it('离开会话取消订阅：按被释放的会话失效', () => {

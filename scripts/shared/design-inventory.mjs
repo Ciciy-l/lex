@@ -434,9 +434,11 @@ export function catalogSurfaces() {
       id: 'desktop.auth.login',
       platform: 'desktop',
       title: '登录页',
-      productionEntry: 'hash `/login`（GuestRoute → LoginPage）',
-      reachableComponents: ['LoginPage', 'LoginBrandStage', 'LoginControls', 'LoginCaptchaOverlay'],
+      productionEntry: 'hash `/login`（GuestRoute → RootLoginPage，按 Main 登录服务选择）',
+      reachableComponents: ['RootLoginPage', 'LexServerLoginPage', 'LoginPage', 'LoginBrandStage', 'LoginControls', 'LoginCaptchaOverlay'],
       styleRoots: [
+        'apps/desktop/src/renderer/components/login/RootLoginPage.tsx',
+        'apps/desktop/src/renderer/components/login/LexServerLoginPage.tsx',
         'apps/desktop/src/renderer/components/login/LoginPage.tsx',
         'apps/desktop/src/renderer/components/login/LoginBrandStage.tsx',
         'apps/desktop/src/renderer/components/login/LoginControls.tsx',
@@ -444,13 +446,13 @@ export function catalogSurfaces() {
         'apps/desktop/src/renderer/components/login/loginDesignTokens.ts',
       ],
       routerPaths: ['/login'],
-      routeEntryComponents: { '/login': 'LoginPage' },
+      routeEntryComponents: { '/login': 'RootLoginPage' },
     },
     {
       id: 'desktop.auth.add-account',
       platform: 'desktop',
       title: '添加账号',
-      productionEntry: 'hash `/add-account`（ProtectedRoute → AddAccountLoginPage）',
+      productionEntry: 'hash `/add-account`（ProtectedRoute → LocalDbGate 登录旁路 → AddAccountLoginPage）',
       reachableComponents: ['AddAccountLoginPage'],
       // AddAccountLoginPage 是薄壳,渲染即委托 <LoginPage intent="add-account">;
       // 样式事实在 LoginPage 一侧,只扫壳会得到全 0 的假统计,故并入登录皮肤同组 roots。

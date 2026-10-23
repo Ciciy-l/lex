@@ -1,3 +1,4 @@
+import { getMobileAuthOwner } from '@/auth/authOwnerGeneration';
 import { usePaneViewport } from '@/platform/AdaptiveWindowContext';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -766,6 +767,7 @@ function AskUserQuestionCard({
   const { colors } = useTheme();
   const { t, i18n: i18nInstance } = useTranslation();
   const requestId = readRequestId(item) ?? '';
+  const draftOwner = useMemo(getMobileAuthOwner, [requestId]);
   const questions = useMemo(() => normalizeAskQuestions(item.request.questions), [item.request.questions]);
   const draftCompletedRef = useRef(false);
   const skipNextQuestionSyncRef = useRef(false);
@@ -782,7 +784,7 @@ function AskUserQuestionCard({
 
   useEffect(() => {
     draftCompletedRef.current = false;
-    const draft = readAskUserDraft(requestId);
+    const draft = readAskUserDraft(requestId, draftOwner);
     skipNextQuestionSyncRef.current = !!draft;
     setCurrentIndex(Math.min(draft?.currentIndex ?? 0, Math.max(0, questions.length - 1)));
     setAnswers(draft?.answers ?? {});
@@ -811,7 +813,7 @@ function AskUserQuestionCard({
       customInput,
       selectedLabels: [...selectedLabels],
       showCustomInput,
-    });
+    }, draftOwner);
   }, [answers, currentIndex, customInput, requestId, selectedLabels, showCustomInput]);
 
   if (questions.length === 0) {
@@ -871,7 +873,7 @@ function AskUserQuestionCard({
         customInput: finalSelection.customInput,
         selectedLabels: [...finalSelection.selectedLabels],
         showCustomInput: finalSelection.showCustomInput,
-      });
+      }, draftOwner);
       onDecision(buildAskUserQuestionDecision(nextAnswers));
     } else {
       setCurrentIndex((idx) => Math.min(idx + 1, questions.length - 1));
@@ -1119,13 +1121,14 @@ function PlanReviewCard({
   const { colors } = useTheme();
   const { t, i18n: i18nInstance } = useTranslation();
   const requestId = readRequestId(item) ?? '';
+  const draftOwner = useMemo(getMobileAuthOwner, [requestId]);
   const [planText, setPlanText] = useState(() =>
-    readPlanReviewDraft(requestId)?.planText ?? planReviewPlan(item.request)
+    readPlanReviewDraft(requestId, draftOwner)?.planText ?? planReviewPlan(item.request)
   );
   const [localViewerState, setLocalViewerState] = useState<MobilePlanViewerState>('half');
   const [lastExpandedState, setLastExpandedState] = useState<RestorablePlanViewerState>('half');
-  const [feedback, setFeedback] = useState(() => readPlanReviewDraft(requestId)?.feedback ?? '');
-  const [feedbackOpen, setFeedbackOpen] = useState(() => readPlanReviewDraft(requestId)?.feedbackOpen ?? false);
+  const [feedback, setFeedback] = useState(() => readPlanReviewDraft(requestId, draftOwner)?.feedback ?? '');
+  const [feedbackOpen, setFeedbackOpen] = useState(() => readPlanReviewDraft(requestId, draftOwner)?.feedbackOpen ?? false);
   const [activeOutlineId, setActiveOutlineId] = useState<string | null>(null);
   const previewScrollRef = useRef<ScrollView | null>(null);
   const skipNextPlanDraftSaveRef = useRef(false);
@@ -1150,7 +1153,7 @@ function PlanReviewCard({
 
   useEffect(() => {
     skipNextPlanDraftSaveRef.current = true;
-    const draft = readPlanReviewDraft(requestId);
+    const draft = readPlanReviewDraft(requestId, draftOwner);
     setPlanText(draft?.planText ?? planReviewPlan(item.request));
     setFeedback(draft?.feedback ?? '');
     setFeedbackOpen(draft?.feedbackOpen ?? false);
@@ -1165,7 +1168,7 @@ function PlanReviewCard({
       skipNextPlanDraftSaveRef.current = false;
       return;
     }
-    savePlanReviewDraft(requestId, { feedback, feedbackOpen, planText });
+    savePlanReviewDraft(requestId, { feedback, feedbackOpen, planText }, draftOwner);
   }, [feedback, feedbackOpen, planText, requestId]);
 
   const updateViewerState = (next: MobilePlanViewerState) => {

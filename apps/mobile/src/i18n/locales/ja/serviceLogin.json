@@ -1,0 +1,17 @@
+{
+  "chooseService": "ログインサービスを選択",
+  "serverAddress": "サーバーアドレス",
+  "serverHint": "デバイスサービスのオリジンを入力してください。HTTPS が必要です。開発ビルドのみループバックで HTTP を使用できます。",
+  "emailLogin": "メールでログイン",
+  "email": "メールアドレス",
+  "code": "確認コード",
+  "login": "ログイン",
+  "sendCode": "コードを送信",
+  "guestTitle": "デバイス間でタスクを続ける",
+  "guestHint": "ログインしてコンピュータに接続し、タスクを続けられます。端末の設定はログインせずに利用できます。",
+  "nativeUpdateRequired": "Lex Server に接続するには新しい Android アプリをインストールしてください。",
+  "serverError": "サーバーを確認できません。アドレス、HTTPS 証明書、稼働状況を確認してください。",
+  "service": "ログインサービス",
+  "cindyServices": "Cindy サービス",
+  "continue": "続ける"
+}

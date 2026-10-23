@@ -48,7 +48,7 @@ describe('mobile simulator region 参数', () => {
 
   it('把所选 region 直接注入 Metro 子进程，不被 shell 残留值覆盖', () => {
     const source = readFileSync(resolve(process.cwd(), 'scripts/sim-start.mjs'), 'utf8');
-    expect(source).toContain('const buildEnv = withLocalMobileRegionConfig(');
+    expect(source).toContain('const buildEnv = mobileSimulatorBuildEnv(region, { lex });');
     expect(source).toContain('...process.env,\n    ...buildEnv,');
   });
 

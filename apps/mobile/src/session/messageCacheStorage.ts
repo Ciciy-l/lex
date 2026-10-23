@@ -75,7 +75,7 @@ export const messageCacheStorage = {
       },
       async () => {
         const files = await disk();
-        await removeAll((await files.files()).map(name => () => files.remove(name)));
+        await removeAll((await files.files()).filter(name => name.startsWith(`${prefix}.`)).map(name => () => files.remove(name)));
       },
     ]));
   },

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const fixture = vi.hoisted(() => ({
+  cindy: true,
   owner: { accountId: "owner", accountKey: "global:owner", generation: 1 },
   native: {
     beginUnlock: vi.fn(),
@@ -15,6 +16,7 @@ const fixture = vi.hoisted(() => ({
     close: vi.fn(),
   },
 }));
+vi.mock('@/auth/authService', () => ({ isCindyMobileSession: () => fixture.cindy }));
 vi.mock("@/auth/authOwnerGeneration", () => ({
   getMobileAuthOwner: () => fixture.owner,
   isMobileAuthOwnerCurrent: (owner: unknown) => owner === fixture.owner,
@@ -31,6 +33,7 @@ describe("native credential session coordination", () => {
   const invoke = vi.fn();
   beforeEach(() => {
     vi.resetAllMocks();
+    fixture.cindy = true;
     fixture.owner = {
       accountId: "owner",
       accountKey: "global:owner",
@@ -61,6 +64,14 @@ describe("native credential session coordination", () => {
         ? { handle: "host", offer: "host-offer" }
         : { ciphertext: "encrypted-reply" };
     });
+  });
+  it('rejects Lex before native credential exchange or remote invocation', async () => {
+    fixture.cindy = false;
+    const session = new RemoteDesktopCredentialSession();
+    await expect(session.ensure('computer', invoke, 'en', 'dark')).rejects.toThrow('SERVICE_CAPABILITY_UNAVAILABLE');
+    expect(fixture.native.begin).not.toHaveBeenCalled();
+    expect(fixture.native.beginUnlock).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
   });
   it("requires native verification once and reuses it during media recovery", async () => {
     const session = new RemoteDesktopCredentialSession();

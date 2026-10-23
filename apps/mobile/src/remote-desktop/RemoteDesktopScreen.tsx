@@ -338,14 +338,14 @@ export default function RemoteDesktopScreen() {
       new RemoteDesktopViewerMedia({
         request,
         send,
-        loadIce: () =>
-          resolveDesktopIceServers(() =>
+        loadIce: () => authRef.current.canUseCindyServices
+          ? resolveDesktopIceServers(() =>
             authRef.current.apiFetch(REMOTE_DESKTOP_ICE_CONFIG_PATH, {
               baseUrl: DEVICE_LINK_API_BASE_URL,
               timeoutMs: REMOTE_DESKTOP_ICE_CONFIG_TIMEOUT_MS,
               cache: "no-store",
             }),
-          ),
+          ) : Promise.resolve([]),
         current: () => {
           const lease = active.current,
             caps = capsRef.current?.value;

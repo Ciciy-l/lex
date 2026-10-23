@@ -2,6 +2,7 @@ import { messageCacheStorage } from './messageCacheStorage';
 import { getMobileAuthOwner, isMobileAuthOwnerCurrent, type MobileAuthOwnerGeneration } from '@/auth/authOwnerGeneration';
 import { MESSAGE_PAGE_SIZE } from '@/session/messagePaging';
 import type { RemoteMessage } from '@/session/types';
+import { mobileStorageNamespace } from '@/auth/mobileStorageNamespace';
 
 // 「每会话最近消息」本地缓存:冷开会话时先用上次看到的消息乐观渲染,fresh listMessages 回来后
 // 对账替换。两端统一使用独立文件缓存(不设总量或过期淘汰);key 按 (hostDeviceId, sessionId) 多设备隔离。
@@ -155,7 +156,7 @@ export async function cacheSessionMessages(
 }
 
 // 登出清空:遍历所有本前缀的 key 一次性删除(AsyncStorage 支持枚举,无需手动维护 host 索引)。
-export function clearCachedSessionMessages(): Promise<void> {
+export function clearCachedSessionMessages(accountKey = getMobileAuthOwner().accountKey): Promise<void> {
   if (activeGlobalClear) return activeGlobalClear;
   // 先让所有旧条件写失效，再等已经进入 AsyncStorage 的旧操作结束；删除必须排在
   // 它们之后，否则较慢的 setItem 会在登出清理完成后复活缓存。清理完成前保持
@@ -165,7 +166,7 @@ export function clearCachedSessionMessages(): Promise<void> {
   activeGlobalClear = (async () => {
     await Promise.all([...pendingOperations.values()].map((operation) =>
       operation.catch(() => undefined)));
-    await messageCacheStorage.clear(STORAGE_KEY_PREFIX);
+    if (accountKey) await messageCacheStorage.clear(`${STORAGE_KEY_PREFIX}.scope.${mobileStorageNamespace(accountKey)}`);
     keyWriteEpochs.clear();
   })().finally(() => {
     globalClearInProgress = false;
@@ -177,14 +178,18 @@ export function clearCachedSessionMessages(): Promise<void> {
 // 文件缓存之前的版本把消息缓存写在 AsyncStorage,按需迁移只覆盖打开过的会话;未打开会话的
 // 旧副本会一直占着安卓 6 MiB 的库,挤掉发件箱 / 草稿写入(#5403)。旧副本里的 mobile-system-*
 // 卡片没有服务端副本,不能直接删,所以逐条迁成文件(成功后才删旧值;已有文件时文件为准,只删旧值)。
-// 迁移只搬运已有内容,不依赖登录身份;与同 key 写删共用队列,登出全清会让排队中的迁移作废。
+// 旧裸键仅在 Cindy owner 确认后搬到同名文件,不认领为新服务数据;与同 key 写删共用队列。
 export async function migrateLegacySessionMessageCache(): Promise<void> {
+  // Unqualified old messages have no provable deployment owner. Preserve them;
+  // a Lex session must never read or migrate another deployment's records.
+  const owner = getMobileAuthOwner();
+  if (!owner.accountKey || owner.accountKey.startsWith('["lex-server:')) return;
   for (const key of await messageCacheStorage.legacyKeys(STORAGE_KEY_PREFIX)) {
-    if (globalClearInProgress) return;
+    if (globalClearInProgress || !isMobileAuthOwnerCurrent(owner)) return;
     const globalEpoch = globalWriteEpoch;
     const keyEpoch = keyWriteEpochs.get(key) ?? 0;
     await enqueueCacheOperation(key, async () => {
-      if (globalEpoch !== globalWriteEpoch || keyEpoch !== (keyWriteEpochs.get(key) ?? 0)) return;
+      if (!isMobileAuthOwnerCurrent(owner) || globalEpoch !== globalWriteEpoch || keyEpoch !== (keyWriteEpochs.get(key) ?? 0)) return;
       await messageCacheStorage.migrateLegacy(key);
     });
   }
@@ -278,8 +283,9 @@ function tryParseJson(value: string): unknown {
 function safeStorageKey(deviceId: string, sessionId: string): string | null {
   const host = deviceId.trim();
   const session = sessionId.trim();
-  if (!host || !session) return null;
-  return `${STORAGE_KEY_PREFIX}.${sanitizeSegment(host)}.${fnv1a(host)}.${sanitizeSegment(session)}.${fnv1a(session)}`;
+  const owner = getMobileAuthOwner();
+  if (!host || !session || !owner.accountKey) return null;
+  return `${STORAGE_KEY_PREFIX}.scope.${mobileStorageNamespace(owner.accountKey)}.${sanitizeSegment(host)}.${fnv1a(host)}.${sanitizeSegment(session)}.${fnv1a(session)}`;
 }
 
 function sanitizeSegment(value: string): string {

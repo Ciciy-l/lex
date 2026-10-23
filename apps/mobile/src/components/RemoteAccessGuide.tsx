@@ -25,7 +25,7 @@ import {
  * - offline:列出连接过的电脑与状态,引导去电脑上打开 Cindy,可手动重新检查;
  * - remoteDisabled:电脑在线只差开关,给精确路径 + 重新检查;
  * - accessRevoked:指名撤销访问的电脑(Lock 图标,对齐设备列表语义),主 CTA 重试访问。
- * 各场景都保留云端 Cindy 预告卡(未来形态:上线后手机版无需电脑直接使用)。
+ * Cindy 服务保留云端预告卡；自托管服务不宣传未提供的托管能力。
  *
  * hero 标题与导语文案来自 maker-shared 的 mobileHomeEmptyState(单一来源,已按 reason 分文案),
  * eyebrow、步骤、卡片与云端预告属于引导态自身的展示细节,收在本组件内。
@@ -41,6 +41,7 @@ export function RemoteAccessGuide({
   style,
   testID,
   title,
+  showCloudTeaser = true,
 }: {
   context: MobileHomeNoDeviceContext;
   copy: string;
@@ -53,6 +54,7 @@ export function RemoteAccessGuide({
   style?: StyleProp<ViewStyle>;
   testID?: string;
   title: string;
+  showCloudTeaser?: boolean;
 }) {
   const styles = useThemedStyles(makeStyles);
   const { colors } = useTheme();
@@ -146,13 +148,13 @@ export function RemoteAccessGuide({
         ) : null}
       </View>
 
-      <View style={styles.teaserCard}>
+      {showCloudTeaser ? <View style={styles.teaserCard}>
         <Cloud color={colors.textSecondary} size={iconSize.lg} strokeWidth={iconStroke.thin} />
         <View style={styles.teaserBody}>
           <Text style={styles.teaserTitle}>{t('deviceLink.cloudTeaserTitle')}</Text>
           <Text style={styles.teaserCopy}>{t('deviceLink.cloudTeaserCopy')}</Text>
         </View>
-      </View>
+      </View> : null}
     </View>
   );
 }

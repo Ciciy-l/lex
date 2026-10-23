@@ -9,6 +9,7 @@ import {
 } from "@/auth/authOwnerGeneration";
 import { remoteCredentials } from "../../modules/cindy-remote-credentials/src";
 import { credentialStep } from "./credentialDiagnostics";
+import { isCindyMobileSession } from '@/auth/authService';
 
 type Invoke = <T>(
   deviceId: string,
@@ -124,6 +125,7 @@ export class RemoteDesktopCredentialSession {
       beforeAuthentication?: () => Promise<void>;
     },
   ): Promise<void> {
+    if (!isCindyMobileSession()) throw new Error('SERVICE_CAPABILITY_UNAVAILABLE');
     const native = remoteCredentials;
     if (!native) throw new Error("CREDENTIAL_NATIVE_UPGRADE_REQUIRED");
     if (

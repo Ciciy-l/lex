@@ -30,13 +30,13 @@ describe('auth weak-network bootstrap', () => {
     );
     const restoreBody = authSource.slice(restoreStart, restoreEnd);
     const loadRealmAt = restoreBody.indexOf(
-      'await loadMobileEndpointsForRealm(storedSession.realm);',
+      'await loadMobileAuthScope(storedAuthServiceScope(storedSession));',
     );
     const activateRealmAt = restoreBody.indexOf(
-      'activateMobileSessionRealm(storedSession.realm);',
+      'activateMobileAuthScope(storedAuthServiceScope(storedSession));',
     );
     const publishUserAt = restoreBody.indexOf('setUser(cachedUser);');
-    const publishOwnerAt = restoreBody.indexOf('setMobileAuthOwner(cachedUser.id, storedSession.realm);');
+    const publishOwnerAt = restoreBody.indexOf('setMobileAuthOwner(cachedUser.id, storedAuthServiceScope(storedSession));');
     expect(loadRealmAt).toBeGreaterThanOrEqual(0);
     expect(activateRealmAt).toBeGreaterThan(loadRealmAt);
     expect(publishOwnerAt).toBeGreaterThan(activateRealmAt);
@@ -73,7 +73,7 @@ describe('auth weak-network bootstrap', () => {
     );
 
     const initializeFailure = authSource.indexOf(
-      "console.warn('[auth] initialize failed; normalized to signed-out'",
+      "console.warn('[auth] initialize failed; credentials retained'",
     );
     const failureOwner = authSource.indexOf('setMobileAuthOwner(null);', initializeFailure);
     const failureUser = authSource.indexOf('setUser(null);', initializeFailure);
@@ -147,15 +147,15 @@ describe('auth weak-network bootstrap', () => {
       readCandidatesAt,
     );
     const loadRealmAt = refreshBody.indexOf(
-      'await loadMobileEndpointsForRealm(candidate.realm);',
+      'await loadMobileAuthScope(storedAuthServiceScope(candidate));',
       emptyCandidatesAt,
     );
     const requestRefreshAt = refreshBody.indexOf(
-      'pair = await authClientFor(did, candidate.realm).refresh(',
+      'pair = await refreshMobileResourceSingleFlight(',
       loadRealmAt,
     );
     const activateRealmAt = refreshBody.indexOf(
-      'activateMobileSessionRealm(session.realm);',
+      'activateMobileAuthScope(storedAuthServiceScope(session));',
       requestRefreshAt,
     );
     const guards = [
@@ -195,7 +195,7 @@ describe('auth weak-network bootstrap', () => {
       'await clearAccountScopedRuntimeForSwitch();',
     );
     const activateAt = acceptBody.indexOf(
-      'activateMobileSessionRealm(committedRealm);',
+      'activateMobileAuthScope(committedRealm);',
     );
     expect(teardownBody).toContain('unregisterPushTokenBestEffort(');
     expect(teardownBody).toContain('accessTokenRef.current');

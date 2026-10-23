@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { setMobileAuthOwner } from '@/auth/authOwnerGeneration';
 import { i18n } from '@/i18n';
 import * as mobileInteractionModel from '@/session/interactionModel';
 import {
@@ -56,6 +57,8 @@ const NOT_AUTHORITATIVE = { authoritative: false } as const;
 beforeAll(async () => {
   await i18n.changeLanguage('zh-CN');
 });
+beforeEach(() => setMobileAuthOwner('interaction-model-fixture', 'global'));
+afterEach(() => setMobileAuthOwner(null));
 
 describe('interactionModel', () => {
   it('projects resolve button state for mobile pending interaction actions', () => {

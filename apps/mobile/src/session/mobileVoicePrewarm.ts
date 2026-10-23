@@ -1,4 +1,5 @@
 import type { AsrProvider } from '@cindy/voice-input-core';
+import { getActiveMobileAuthService } from '@/auth/authService';
 import type { ApiFetchOptions } from '@/api/client';
 import type { StoredMobileVoiceCredential } from '@/session/mobileVoiceCredentialStore';
 import { createMobileAsrProvider } from '@/session/mobileRealtimeAsrProvider';
@@ -54,6 +55,7 @@ export function prewarmMobileVoiceStart(
     apiFetch: <T>(path: string, options: Omit<ApiFetchOptions, 'token'>) => Promise<T>;
   },
 ): void {
+  if (getActiveMobileAuthService()?.kind === 'lex-server') return;
   prewarmMobileRealtimeAudio();
   if (
     pendingPrewarm

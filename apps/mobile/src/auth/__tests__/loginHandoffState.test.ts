@@ -223,7 +223,7 @@ describe('loginHandoff 接线(Provider/reporter 拓扑 + 清理,读源码断言)
 
   it('移动 initialize 链外层 catch(v6.3):void run().catch 归一未登录', () => {
     expect(authSource).toContain('void run().catch((error) => {');
-    expect(authSource).toContain('normalized to signed-out');
+    expect(authSource).toContain('initialize failed; credentials retained');
     expect(authSource).toContain('userRef.current = null;');
   });
 

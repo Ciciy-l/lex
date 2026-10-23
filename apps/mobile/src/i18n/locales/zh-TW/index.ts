@@ -5,6 +5,7 @@
  * 四个 locales/<locale>/index.ts 一起加,平价测试会拦截漏改。
  */
 
+import serviceLogin from './serviceLogin.json';
 import apiErrors from './apiErrors.json';
 import remoteDesktop from './remoteDesktop.json';
 import chat from './chat.json';
@@ -24,6 +25,7 @@ import startup from './startup.json';
 import update from './update.json';
 
 export default {
+  serviceLogin,
   remoteDesktop,
   apiErrors,
   chat,

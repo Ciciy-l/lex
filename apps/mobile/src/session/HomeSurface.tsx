@@ -411,6 +411,7 @@ export function MobileHome(props: MobileHomeProps) {
 }
 
 function HomeScreenContent({ active = true, width, newSessionInSystemBar = false, newSessionInHeader = false, onSelectSession, runNavigation, newSessionActionRef }: MobileHomeProps) {
+  const [homeOwner] = useState(getMobileAuthOwner);
   const ownedSharedTasks = useSharedTasks();
   const [sharedCollapsed, setSharedCollapsed] = useState(false);
   // The retained page and its visible sidebar must never release each other's subscriptions.
@@ -428,13 +429,12 @@ function HomeScreenContent({ active = true, width, newSessionInSystemBar = false
   const { colors, mode } = useTheme();
   const { t, i18n: i18nInstance } = useTranslation();
   const saveHomeViewPreferences = useCallback((patch: Parameters<typeof persistHomeViewPreferences>[0]) => {
-    const owner = getMobileAuthOwner();
-    return persistHomeViewPreferences(patch).catch(() => {
-      if (isMobileAuthOwnerCurrent(owner)) {
+    return persistHomeViewPreferences(patch, homeOwner).catch(() => {
+      if (isMobileAuthOwnerCurrent(homeOwner)) {
         Alert.alert(t('devices.list.alert.actionFailed'), t('models.unified.saveFailed'));
       }
     });
-  }, [t]);
+  }, [t, homeOwner]);
   // 所有前进导航(进会话 / 新建 / 设置 / 组页面)统一走守卫 push:列表卡顿时的
   // 连点会各自触发一次裸 push,把同一页压进栈 N 层(返回也要 N 次)。
   const push = useGuardedPush();
@@ -450,7 +450,7 @@ function HomeScreenContent({ active = true, width, newSessionInSystemBar = false
   const auth = useAuth();
   const { accountGeneration, deviceId: selfDeviceId, user } = auth;
   // 首页列表持久缓存按账号键控(401 掉线换号不串数据);首页仅登录后可达,user 理应非空。
-  const homeCacheUserId = user?.id ?? '';
+  const homeCacheUserId = getMobileAuthOwner().accountKey;
   const {
     connectionEpoch,
     connectionIssue,
@@ -742,7 +742,7 @@ function HomeScreenContent({ active = true, width, newSessionInSystemBar = false
     const result = reconcileDeviceIdentities(nextRawDevices, deviceIdentityCacheRef.current);
     deviceIdentityCacheRef.current = result.cache;
     if (result.cacheChanged) {
-      if (deviceIdentityCachePersistReadyRef.current) void saveDeviceIdentityCache(result.cache);
+      if (deviceIdentityCachePersistReadyRef.current) void saveDeviceIdentityCache(result.cache, homeOwner);
       else deviceIdentityCachePersistPendingRef.current = true;
     }
     return result;
@@ -1276,7 +1276,7 @@ function HomeScreenContent({ active = true, width, newSessionInSystemBar = false
         }
 
         deviceIdentityCachePersistReadyRef.current = true;
-        if (deviceIdentityCachePersistPendingRef.current) void saveDeviceIdentityCache(deviceIdentityCacheRef.current);
+        if (deviceIdentityCachePersistPendingRef.current) void saveDeviceIdentityCache(deviceIdentityCacheRef.current, homeOwner);
       });
     return () => {
       cancelled = true;
@@ -1288,7 +1288,7 @@ function HomeScreenContent({ active = true, width, newSessionInSystemBar = false
     const expectedAccountGeneration = homeAccountGenerationRef.current;
     let cancelled = false;
     const read = startBoundedStartupRead<HomeViewPreferences | null>(
-      readHomeViewPreferences(),
+      readHomeViewPreferences(homeOwner),
       null,
     );
     const applyPreferences = (preferences: HomeViewPreferences | null) => {
@@ -2246,8 +2246,8 @@ function HomeScreenContent({ active = true, width, newSessionInSystemBar = false
     setLoggingOut(true);
     try {
       await auth.logout();
-      // Same landing as settings and the partner entries, without relying on the outer auth redirect.
-      router.replace('/login');
+      // The root renders the saved-account fallback or the guest home after commit.
+      router.replace('/');
     } catch (error) {
       Alert.alert(t('devices.list.alert.actionFailed'), formatRemoteError(error));
     } finally {
@@ -2834,6 +2834,7 @@ function HomeScreenContent({ active = true, width, newSessionInSystemBar = false
             // 无可控制电脑是「首次使用 / 产品模式说明」级空态:按 reason 渲染远程访问引导
             // (首跑三步 / 离线设备卡 / 精确开关 / 重试访问 + 云端 Cindy 预告),而非一句话空态。
             <RemoteAccessGuide
+              showCloudTeaser={auth.canUseCindyServices}
               context={home.emptyNoDevice}
               copy={emptyStateCopy}
               onRecheck={() => void loadHome({ visible: true })}
