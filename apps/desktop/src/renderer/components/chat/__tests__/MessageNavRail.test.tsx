@@ -10,8 +10,13 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const tooltipRenders = vi.hoisted(() => vi.fn());
+
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({
+    t: (key: string, options?: { preview?: string }) =>
+      options?.preview ? key + ': ' + options.preview : key,
+  }),
 }));
 
 // 预览卡内容不在本文件的覆盖范围(Content 直接丢掉,与原先 Tip stub 只透传
@@ -25,7 +30,10 @@ vi.mock('@/components/ui/tooltip', () => ({
         {children}
       </>
     ),
-    Root: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Root: ({ children }: { children: ReactNode }) => {
+      tooltipRenders();
+      return <>{children}</>;
+    },
     Trigger: ({ children }: { children: ReactNode }) => <>{children}</>,
     Content: () => null,
   },
@@ -91,10 +99,51 @@ const MIXED_ENTRIES: NavRailEntry[] = [
 
 describe('MessageNavRail', () => {
   beforeEach(() => {
+    tooltipRenders.mockClear();
     document.body.innerHTML = '';
     vi.stubGlobal('ResizeObserver', ResizeObserverStub);
     // jsdom 没有 CSS.escape(真实渲染器 Chromium 提供);测试 id 都是安全字符。
     vi.stubGlobal('CSS', { escape: (s: string) => s });
+  });
+
+  it('scrolling updates affected ticks without rebuilding all previews, and keeps current jump callbacks', async () => {
+    const entries = Array.from({ length: 40 }, (_, index) => ({
+      id: 'q-' + index,
+      preview: 'Question ' + index,
+    }));
+    const root = buildScrollContainer(1000, []);
+    for (let i = 0; i < entries.length; i++) {
+      const anchor = document.createElement('div');
+      anchor.dataset.messageClientId = entries[i].id;
+      anchor.getBoundingClientRect = () => ({ top: i * 300 - root.scrollTop }) as DOMRect;
+      root.append(anchor);
+    }
+    const scrollRef = { current: root };
+    const onJump = vi.fn();
+    const props = { entries, scrollRef, contentMaxWidth: 880, bottomOffset: 200, onJump };
+    const view = render(<MessageNavRail {...props} />);
+    await waitFor(() =>
+      expect(screen.getAllByRole('button')[0].getAttribute('aria-current')).toBe('true'),
+    );
+    tooltipRenders.mockClear();
+    root.scrollTop = 300;
+    fireEvent.scroll(root);
+    await waitFor(() =>
+      expect(screen.getAllByRole('button')[1].getAttribute('aria-current')).toBe('true'),
+    );
+    expect(tooltipRenders.mock.calls.length).toBeGreaterThan(0);
+    expect(tooltipRenders.mock.calls.length).toBeLessThan(10);
+
+    const nextJump = vi.fn();
+    const updated = entries.map((entry, i) =>
+      i === 4 ? { ...entry, preview: 'Updated question' } : entry,
+    );
+    view.rerender(<MessageNavRail {...props} entries={updated} onJump={nextJump} />);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'chat.messageNavRail.jumpAria: Updated question' }),
+    );
+    expect(nextJump).toHaveBeenCalledWith('q-4');
+    expect(onJump).not.toHaveBeenCalled();
   });
 
   it('宽容器 + ≥4 条提问:渲染全部刻度,当前项 = 最后一条越过阈值线的提问', async () => {
