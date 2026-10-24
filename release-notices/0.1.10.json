@@ -1,0 +1,71 @@
+{
+  "version": "0.1.10",
+  "date": "2026-10-24",
+  "contentByLocale": {
+    "zh-CN": {
+      "intro": "Lex 0.1.10 改善长对话滚动、GUI/TUI 切换和本机 Codex 协同体验。",
+      "topics": [
+        {"id": "scrolling", "title": "更顺畅的长对话", "text": "改善长对话的滚动响应与历史消息浏览。"},
+        {"id": "footer", "title": "常驻切换底栏", "text": "GUI/TUI 切换、工作目录和用量集中在底部；切换视图时按钮位置不变，保留各自尚未发送的输入。"},
+        {"id": "preparation", "title": "清楚的准备状态", "text": "首次打开原生终端时显示准备状态；等待期间选择 GUI，不会被稍后完成的准备切回 TUI。"},
+        {"id": "collaboration", "title": "本机 Codex 协同", "text": "Lead 和 Worker 可切换 GUI/TUI，支持 Worker 焦点切换与窗口间输入接管；TUI 中也能看到待处理事项入口。"},
+        {"id": "worktree", "title": "直接进入隔离任务", "text": "新建 worktree 任务时可直接打开 TUI，沿用所选工作目录、模型和权限。"},
+        {"id": "terminal", "title": "更方便的终端", "text": "新增终端搜索与字号调节，并修复独立窗口中 Worker 输入区域可能无法显示的问题。"},
+        {"id": "availability", "title": "视图可用性", "text": "不同引擎的可用操作以当前任务提示为准；SSH 任务暂不提供 TUI 切换。"},
+        {"id": "upgrade", "title": "升级须知", "text": "Android 请使用完整 APK 直接覆盖安装，请勿先卸载。桌面安装包的实际签名状态以发行页为准；暂不提供 iOS 安装包。"}
+      ]
+    },
+    "zh-TW": {
+      "intro": "Lex 0.1.10 改善長對話捲動、GUI/TUI 切換與本機 Codex 協同體驗。",
+      "topics": [
+        {"id": "scrolling", "title": "更順暢的長對話", "text": "改善長對話的捲動回應與歷史訊息瀏覽。"},
+        {"id": "footer", "title": "常駐切換底列", "text": "GUI/TUI 切換、工作目錄與用量集中於底部；切換檢視時按鈕位置不變，保留各自尚未傳送的輸入。"},
+        {"id": "preparation", "title": "清楚的準備狀態", "text": "首次開啟原生終端機時顯示準備狀態；等待期間選擇 GUI，不會被稍後完成的準備切回 TUI。"},
+        {"id": "collaboration", "title": "本機 Codex 協同", "text": "Lead 與 Worker 可切換 GUI/TUI，支援 Worker 焦點切換與視窗間輸入接管；TUI 中也能看到待處理事項入口。"},
+        {"id": "worktree", "title": "直接進入隔離任務", "text": "新增 worktree 任務時可直接開啟 TUI，沿用所選工作目錄、模型與權限。"},
+        {"id": "terminal", "title": "更方便的終端機", "text": "新增終端機搜尋與字級調整，並修正獨立視窗中 Worker 輸入區域可能無法顯示的問題。"},
+        {"id": "availability", "title": "檢視可用性", "text": "各引擎可用的操作以目前任務提示為準；SSH 任務暫不提供 TUI 切換。"},
+        {"id": "upgrade", "title": "升級須知", "text": "Android 請使用完整 APK 直接覆蓋安裝，請勿先解除安裝。桌面安裝套件的實際簽章狀態以發行頁為準；暫不提供 iOS 安裝套件。"}
+      ]
+    },
+    "en": {
+      "intro": "Lex 0.1.10 improves long-conversation scrolling, GUI/TUI switching, and local Codex collaboration.",
+      "topics": [
+        {"id": "scrolling", "title": "Smoother long conversations", "text": "Improved scrolling response and browsing of earlier messages in long conversations."},
+        {"id": "footer", "title": "Persistent view controls", "text": "GUI/TUI controls, the working directory, and usage stay at the bottom. Switching views keeps the buttons in place and preserves each view's unsent input."},
+        {"id": "preparation", "title": "Clear preparation status", "text": "The native terminal shows its preparation status on first opening. Choosing GUI while waiting is respected when preparation finishes."},
+        {"id": "collaboration", "title": "Local Codex collaboration", "text": "Lead and Worker tasks can switch between GUI and TUI, with Worker focus switching and input control across windows. Pending host actions are also accessible from TUI."},
+        {"id": "worktree", "title": "Open isolated tasks directly", "text": "New worktree tasks can open directly in TUI with the selected working directory, model, and permissions."},
+        {"id": "terminal", "title": "More convenient terminal controls", "text": "Added terminal search and font size controls, and fixed Worker input areas sometimes failing to appear in separate windows."},
+        {"id": "availability", "title": "View availability", "text": "Available actions depend on the engine and are shown for the current task. SSH tasks do not currently offer TUI switching."},
+        {"id": "upgrade", "title": "Upgrading", "text": "On Android, install the full APK over the existing app without uninstalling first. See the release page for the actual desktop signing status. An iOS installer is not currently provided."}
+      ]
+    },
+    "ja": {
+      "intro": "Lex 0.1.10 では、長い会話のスクロール、GUI/TUI の切り替え、ローカル Codex の協同作業を改善しました。",
+      "topics": [
+        {"id": "scrolling", "title": "長い会話をより快適に", "text": "長い会話のスクロール応答と過去のメッセージの閲覧を改善しました。"},
+        {"id": "footer", "title": "切り替え操作を下部に固定", "text": "GUI/TUI、作業ディレクトリ、使用量を下部にまとめました。表示を切り替えてもボタンの位置は変わらず、それぞれの未送信入力を保持します。"},
+        {"id": "preparation", "title": "準備状況を明確に表示", "text": "ネイティブターミナルを初めて開く際に準備状況を表示します。待機中に GUI を選択した場合、準備完了後も GUI のままになります。"},
+        {"id": "collaboration", "title": "ローカル Codex の協同作業", "text": "Lead と Worker で GUI/TUI を切り替え、Worker のフォーカスやウィンドウ間の入力操作権を切り替えられます。TUI からも対応待ちの項目を開けます。"},
+        {"id": "worktree", "title": "分離したタスクを直接開く", "text": "新しい worktree タスクを、選択した作業ディレクトリ、モデル、権限のまま TUI で直接開けます。"},
+        {"id": "terminal", "title": "便利なターミナル操作", "text": "ターミナル検索と文字サイズ調整を追加し、別ウィンドウで Worker の入力欄が表示されない場合がある問題を修正しました。"},
+        {"id": "availability", "title": "表示の利用可否", "text": "利用できる操作はエンジンによって異なり、現在のタスクに表示されます。SSH タスクの TUI 切り替えには現在対応していません。"},
+        {"id": "upgrade", "title": "アップグレードについて", "text": "Android はアンインストールせず、完全版 APK を上書きインストールしてください。デスクトップ版の実際の署名状況はリリースページをご確認ください。iOS インストーラーは現在提供していません。"}
+      ]
+    },
+    "ko": {
+      "intro": "Lex 0.1.10은 긴 대화 스크롤, GUI/TUI 전환, 로컬 Codex 협업 환경을 개선합니다.",
+      "topics": [
+        {"id": "scrolling", "title": "더 부드러운 긴 대화 탐색", "text": "긴 대화의 스크롤 반응과 이전 메시지 탐색을 개선했습니다."},
+        {"id": "footer", "title": "하단에 고정된 보기 전환", "text": "GUI/TUI 전환, 작업 디렉터리, 사용량을 하단에 모았습니다. 보기를 전환해도 버튼 위치가 유지되며 각 보기의 미전송 입력을 보존합니다."},
+        {"id": "preparation", "title": "명확한 준비 상태", "text": "네이티브 터미널을 처음 열 때 준비 상태를 표시합니다. 기다리는 동안 GUI를 선택하면 준비가 끝나도 GUI가 유지됩니다."},
+        {"id": "collaboration", "title": "로컬 Codex 협업", "text": "Lead와 Worker에서 GUI/TUI를 전환하고 Worker 포커스 및 창 간 입력 제어권을 전환할 수 있습니다. TUI에서도 처리 대기 항목을 열 수 있습니다."},
+        {"id": "worktree", "title": "격리된 작업 바로 열기", "text": "새 worktree 작업을 선택한 작업 디렉터리, 모델, 권한 그대로 TUI에서 바로 열 수 있습니다."},
+        {"id": "terminal", "title": "편리한 터미널 조작", "text": "터미널 검색과 글꼴 크기 조절을 추가하고, 별도 창에서 Worker 입력 영역이 표시되지 않을 수 있는 문제를 수정했습니다."},
+        {"id": "availability", "title": "보기 사용 가능 여부", "text": "사용 가능한 동작은 엔진에 따라 다르며 현재 작업에 표시됩니다. SSH 작업은 현재 TUI 전환을 제공하지 않습니다."},
+        {"id": "upgrade", "title": "업그레이드 안내", "text": "Android는 기존 앱을 삭제하지 말고 전체 APK를 덮어 설치하세요. 데스크톱 설치 파일의 실제 서명 상태는 릴리스 페이지를 확인하세요. iOS 설치 파일은 현재 제공하지 않습니다."}
+      ]
+    }
+  }
+}

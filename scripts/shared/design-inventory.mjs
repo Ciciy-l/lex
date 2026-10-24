@@ -469,6 +469,8 @@ export function catalogSurfaces() {
         'hash `/cc-agent/:sessionId`；副窗经 `/cc-agent/boot` 解析后落到同一会话视图',
       reachableComponents: [
         'CCAgentSessionView',
+        'AgentNativeTerminal',
+        'AgentPresentationSwitch',
         'CCAgentFeatureLayout',
         'AssistantMessage',
         'ChatInput',
@@ -477,6 +479,8 @@ export function catalogSurfaces() {
       styleRoots: [
         'apps/desktop/src/renderer/features/cc-agent/CCAgentSessionView.tsx',
         'apps/desktop/src/renderer/features/cc-agent/AgentPresentationLayout.tsx',
+        'apps/desktop/src/renderer/features/cc-agent/AgentNativeTerminal.tsx',
+        'apps/desktop/src/renderer/features/cc-agent/AgentPresentationSwitch.tsx',
         'apps/desktop/src/renderer/features/cc-agent/CCAgentFeatureLayout.tsx',
         'apps/desktop/src/renderer/components/chat',
         'apps/desktop/src/renderer/components/new-chat',
