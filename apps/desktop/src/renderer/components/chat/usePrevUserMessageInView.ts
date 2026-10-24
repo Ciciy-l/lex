@@ -22,14 +22,14 @@
  * Chip 隐藏时(任意原因)父组件以 visible=false 渲染,chip 自身已经把
  * pointer-events 收掉,不挡下方真实气泡的点击 — 用户无感。
  *
- * 为什么不用 IntersectionObserver:见前一版注释,简言之 IO 拿不到稳定的
- * "相对 viewport top 距离",getBoundingClientRect 直接算更简单,且 user
- * 消息数量(渲染窗口内)≤100,每 rAF O(n) 完全够用。
+ * 量测只读取有序消息的外层盒，并二分定位视口边界。历史窗口会随上翻继续
+ * 扩大，不能假设 user 消息永远 ≤100，更不能每帧反向测量全部屏幕外子树。
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useNavigationKeyListener } from './useNavigationKeyListener';
+import { findPreviousUserMessage } from './messageScrollGeometry';
 
 // 触发阈值 — 消息底边必须高出 viewport 顶端至少 TOP_FUDGE_PX 才算"已滚过"。
 // 用 bottom 而不是 top:点击 chip 跳转后,scrollIntoView 把目标 top 贴到
@@ -70,8 +70,10 @@ export function usePrevUserMessageInView({
   const rafRef = useRef<number | null>(null);
   const idleTimerRef = useRef<number | null>(null);
   const lastScrollTopRef = useRef<number>(0);
-  const idsRef = useRef<string[]>(userMessageIds);
-  idsRef.current = userMessageIds;
+  const idsRef = useRef<{ source: string[]; allowed: ReadonlySet<string> } | null>(null);
+  if (idsRef.current?.source !== userMessageIds) {
+    idsRef.current = { source: userMessageIds, allowed: new Set(userMessageIds) };
+  }
 
   // 切 session 全部 reset,防止旧目标 / 旧抑制 / 旧 idle / 旧方向残留
   useEffect(() => {
@@ -86,8 +88,8 @@ export function usePrevUserMessageInView({
     rafRef.current = null;
     const root = scrollRef.current;
     if (!root) return;
-    const ids = idsRef.current;
-    if (ids.length === 0) {
+    const ids = idsRef.current?.allowed;
+    if (!ids?.size) {
       // [mr-16 review #2.1] 之前是过度防御的 `setComputedId(cur => cur===null ? cur : null)`,
       // React setState 设相同值本就短路,直接 setComputedId(null) 等价且更可读。
       setComputedId(null);
@@ -96,19 +98,7 @@ export function usePrevUserMessageInView({
     const containerRect = root.getBoundingClientRect();
     const threshold = containerRect.top + TOP_FUDGE_PX;
 
-    let target: string | null = null;
-    for (let i = ids.length - 1; i >= 0; i--) {
-      const id = ids[i];
-      const el = root.querySelector(
-        `[data-user-msg-id="${CSS.escape(id)}"]`,
-      ) as HTMLElement | null;
-      if (!el) continue;
-      const rect = el.getBoundingClientRect();
-      if (rect.bottom < threshold) {
-        target = id;
-        break;
-      }
-    }
+    const target = findPreviousUserMessage(root, ids, threshold);
     setComputedId((cur) => (cur === target ? cur : target));
   }, [scrollRef]);
 
@@ -200,7 +190,6 @@ export function usePrevUserMessageInView({
     setSuppressed(true);
   }, []);
 
-  const displayId =
-    suppressed || idleHidden || scrollingDown ? null : computedId;
+  const displayId = suppressed || idleHidden || scrollingDown ? null : computedId;
   return { displayId, suppressAfterClick };
 }

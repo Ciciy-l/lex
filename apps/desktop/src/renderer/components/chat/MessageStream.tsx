@@ -79,6 +79,7 @@ import type {
 import { Spinner } from '@/components/ui/spinner';
 import { BrandLoadingMark } from '@/components/branding/BrandLoadingMark';
 import { useMessageNavRailPreference } from '@/hooks/useMessageNavRailPreference';
+import { findViewportItem } from './messageScrollGeometry';
 import { HISTORY_GAP_SPLIT_MS } from '@/lib/historyGap';
 import { resolveToolFilePath, type KnownLocalFileRef } from '@/lib/localPathResolver';
 import { collectGeneratedFiles, type GeneratedFileRef } from '@/lib/generatedFiles';
@@ -3025,39 +3026,34 @@ export function MessageStream({
     if (!container || !items) return null;
     const vis = visibleRenderItemsRef.current;
     const cTop = container.getBoundingClientRect().top;
-    const children = items.children;
-    for (let i = 0; i < children.length; i++) {
-      const rect = (children[i] as HTMLElement).getBoundingClientRect();
-      // 第一条「底边还在容器顶边下方」的 item = 正好跨过视口顶边的那条。
-      if (rect.bottom - cTop > 0) {
-        const key = vis[i]?.key;
-        if (!key) return null;
-        const snapshot: ViewportTopSnapshot = {
-          viewportTopKey: key,
-          offset: Math.max(0, cTop - rect.top),
-        };
-        const itemElement = children[i] as HTMLElement;
-        const childAnchor = pickIntersectingChildAnchor(
-          Array.from(
-            itemElement.querySelectorAll<HTMLElement>('[data-message-client-id]'),
-            (element) => {
-              const clientId = readViewportChildAnchorClientId(element);
-              if (!clientId) return null;
-              const rect = element.getBoundingClientRect();
-              if (rect.bottom <= rect.top) return null;
-              return { clientId, top: rect.top, bottom: rect.bottom };
-            },
-          ).filter((candidate): candidate is ChildAnchorRect => candidate !== null),
-          cTop,
-        );
-        if (childAnchor) {
-          snapshot.messageClientId = childAnchor.clientId;
-          snapshot.messageOffset = childAnchor.offset;
-        }
-        return snapshot;
-      }
+    // History expansion can mount hundreds of items. Locate the first outer
+    // box crossing the viewport without walking every earlier item per frame.
+    const hit = findViewportItem(items.children, cTop);
+    const key = hit ? vis[hit.index]?.key : undefined;
+    if (!hit || !key) return null;
+    const snapshot: ViewportTopSnapshot = {
+      viewportTopKey: key,
+      offset: Math.max(0, cTop - hit.rect.top),
+    };
+    const itemElement = hit.element;
+    const childAnchor = pickIntersectingChildAnchor(
+      Array.from(
+        itemElement.querySelectorAll<HTMLElement>('[data-message-client-id]'),
+        (element) => {
+          const clientId = readViewportChildAnchorClientId(element);
+          if (!clientId) return null;
+          const rect = element.getBoundingClientRect();
+          if (rect.bottom <= rect.top) return null;
+          return { clientId, top: rect.top, bottom: rect.bottom };
+        },
+      ).filter((candidate): candidate is ChildAnchorRect => candidate !== null),
+      cTop,
+    );
+    if (childAnchor) {
+      snapshot.messageClientId = childAnchor.clientId;
+      snapshot.messageOffset = childAnchor.offset;
     }
-    return null;
+    return snapshot;
   }, []);
   // 量测并写入「删除前快照」，返回结果供同帧复用。用户滚动、非贴底程序化跳转与
   // focus 落定经它刷新；贴底态由 auto-follow 接管，无需快照。
@@ -5342,7 +5338,7 @@ export function MessageStream({
   // 派生 —— 导航条要给整段历史画刻度)。目标可能在渲染窗口外,跳转走下面的
   // layout effect:复用 focus-jump 的"先扩窗到目标、下一轮再滚动"两段式,
   // 以及 chip-jump 的 expandWindow/onLoadMore 抑制协议。
-  // 导航条是个性化可选功能(Settings → 个性化 → 小技巧),默认关闭;关闭时
+  // 导航条是个性化可选功能(Settings → 个性化 → 小技巧),默认开启;关闭时
   // 不挂载组件(卸载时组件自会把 navRailCoversNav 报回 false,chip 兜底回归),
   // 也不做下面的空闲补页。
   const { enabled: navRailEnabled } = useMessageNavRailPreference();
@@ -5361,7 +5357,7 @@ export function MessageStream({
   // prepend 的滚动补偿照走 F-SYNC-2 协议:调用前快照 scrollHeight/scrollTop。
   // 即使当下窗口太窄导航条没出场,补到的历史对搜索/上滚阅读同样有用,
   // 且有轮数预算封顶,不做 eligible 门控。但**用户显式关闭导航条**(个性化
-  // 开关,默认关)时跳过:为一个不存在的 UI 自动翻页不符合默认克制,开关
+  // 开关)时跳过:为一个不存在的 UI 自动翻页不符合默认克制,开关
   // 打开后本 effect 依赖变化会重新评估补页。
   // 调度 effect 的依赖含 sessionId(与 MessageNavRail 的 resetKey 同款惯例):
   // 两个会话的条目数 / hasMore 恰好相同且 onLoadMore 身份未变时,切会话也要
@@ -5616,6 +5612,300 @@ export function MessageStream({
   }
   const ghostCallsByUserTurn = ghostCallsCacheRef.current;
 
+  // Scroll-only state (direction, jump chips, reading position) must not rebuild
+  // every mounted row or recreate work-group child arrays. Content, card-store,
+  // continuation, highlight and share-selection inputs still invalidate together.
+  const renderedMessageItems = useMemo(
+    () =>
+      visibleRenderItems.map((item) => {
+        if (item.type === 'fork_origin') {
+          return <ForkOriginMarker key={item.key} onClick={onOpenForkOrigin} />;
+        }
+
+        if (item.type === 'agent_plan') {
+          return (
+            <div key={item.key} data-inline-plan-key={item.key}>
+              <InlinePlanCard
+                todos={item.todos}
+                animated={
+                  isSessionStreaming &&
+                  latestInlinePlanBelongsToActiveTurn &&
+                  item.key === latestInlinePlanKey
+                }
+              />
+            </div>
+          );
+        }
+
+        if (item.type === 'turn_changes') {
+          if (!sessionId) return null;
+          return <TurnChangesCard key={item.key} sessionId={sessionId} changeSet={item.changeSet} />;
+        }
+
+        if (item.type === 'generated_files') {
+          return (
+            <GeneratedFilesCard
+              key={item.key}
+              files={item.files}
+              turnStartMs={item.turnStartMs}
+              turnEndMs={item.turnEndMs}
+              turnSealed={item.turnSealed === true}
+            />
+          );
+        }
+
+        if (item.type === 'tool_segment') {
+          return (
+            <AgentActionsBlock
+              key={item.key}
+              toolCalls={item.toolCalls}
+              resultMap={item.resultMap}
+              settledIds={item.settledIds}
+              isSessionStreaming={isSessionStreaming}
+            />
+          );
+        }
+
+        if (item.type === 'agent_task') {
+          return (
+            <AgentTaskCard
+              key={item.key}
+              toolCall={item.toolCall}
+              update={item.update}
+              result={item.result}
+              persistedStatus={item.persistedStatus}
+              sessionAgentKind={agentKind}
+              {...(sessionId ? { sessionId } : {})}
+              subagentModel={
+                item.toolCall?.toolUseId
+                  ? subagentModelByToolUseId.get(item.toolCall.toolUseId)
+                  : undefined
+              }
+            />
+          );
+        }
+
+        if (item.type === 'work_group') {
+          // 完成态外层时间线可包含内层 work_group。递归只负责形状映射,
+          // 具体折叠 / 直接详情逻辑全部复用 WorkGroupBlock。
+          const toWorkGroupChild = (child: WorkGroupChildItem): WorkGroupChild => {
+            if (child.type === 'work_group') {
+              return {
+                kind: 'group',
+                key: child.key,
+                blockId: `work:${child.key.slice('work-'.length)}`,
+                durationMs: child.durationMs,
+                isStreaming: child.isStreaming,
+                startedAtMs: child.startedAtMs,
+                deferred: child.deferred,
+                childItems: child.children.map(toWorkGroupChild),
+              };
+            }
+            if (child.type === 'tool_segment') {
+              return {
+                kind: 'tools',
+                key: child.key,
+                toolCalls: child.toolCalls,
+                resultMap: child.resultMap,
+                settledIds: child.settledIds,
+              };
+            }
+            if (child.type === 'message' && child.message.role === 'thinking') {
+              return { kind: 'thinking', key: child.key, message: child.message };
+            }
+            return {
+              kind: 'rendered',
+              key: child.key,
+              renderNode: () =>
+                renderWorkGroupChild(child, {
+                  workingDir,
+                  sessionId,
+                  sessionTitle,
+                  agentKind,
+                  remoteHostId,
+                  isSessionStreaming,
+                  firstUserMessageClientId,
+                  lastUserMessageClientId,
+                  lastUserInputClientId,
+                  continuationTurnClientId,
+                  continuationInFlightProjectionCapability,
+                  localFileRefs,
+                  singleResultMap,
+                  assistantsWithFollowingUserBoundary,
+                  turnFinalAssistantClientIds,
+                  subagentModelByToolUseId,
+                  userTurnUsageDetailsByAssistantId,
+                }),
+            };
+          };
+          const childItems = item.children.map(toWorkGroupChild);
+          return (
+            // data-message-client-ids:组折叠时子卡片/聚合块整体 unmount,
+            // 精确锚点消失 —— 后台任务面板「点行跳聊天」经 ~= 回退查询
+            // 落到组容器(与 AgentActionsBlock 的容器锚点同一约定)。
+            // 视口子锚点不读这个聚合列表，只认已渲染的 data-message-client-id。
+            <div
+              key={item.key}
+              className="scroll-mt-20"
+              data-message-client-ids={collectWorkGroupClientIds(item.children).join(' ')}
+            >
+              <WorkGroupBlock
+                // 单层前缀约定 `work:<clientId>` — item.key 形如 `work-<cid>`,
+                // 去掉 `work-` 后拼 `<role>:<id>`,与 agent: / thinking: 同构。
+                blockId={`work:${item.key.slice('work-'.length)}`}
+                durationMs={item.durationMs}
+                isStreaming={item.isStreaming}
+                startedAtMs={item.startedAtMs}
+                childItems={childItems}
+                deferred={item.deferred}
+              />
+            </div>
+          );
+        }
+
+        if (item.type === 'ghost_card') {
+          // 卡槽③:卡体 html/height 渲染时从 store 现取(换海报 = 推送
+          // bump version → 本组件重渲,GhostToolCard 原地更新 srcDoc)。
+          // entry 不 ready(极端竞态:build 后被 reset)静默不渲染,
+          // 下一次 store 变更自愈。
+          const entry = ghostCardSnapshot.byCallId.get(item.callId);
+          if (!entry || entry.status !== 'ready') return null;
+          // 常态包一层 div(结构稳定,回锚媒体到达时卡片 iframe 不重挂);
+          // 回锚媒体(如 mivo 视频)挂卡正下方,与 tool_media 同款间距。
+          return (
+            <div key={item.key} className="flex flex-col gap-2">
+              <GhostToolCard
+                callId={item.callId}
+                ghostId={item.ghostId}
+                toolName={item.tool}
+                toolInput={item.toolCall.toolInput ?? null}
+                html={entry.html}
+                animatedHtml={entry.animatedHtml}
+                height={entry.height}
+                running={!item.settled && isSessionStreaming}
+                sessionId={sessionId}
+              />
+              {item.media && item.media.length > 0 ? (
+                <ToolMediaList items={item.media} sessionId={sessionId} />
+              ) : null}
+            </div>
+          );
+        }
+
+        if (item.type === 'tool_media') {
+          // tool-result-media: 跳出 tool_segment 折叠卡片,渲染体在
+          // ToolMediaList(与 ghost_card 回锚媒体共用单一来源)。
+          return (
+            <div key={item.key} className="flex flex-col gap-2">
+              <ToolMediaList items={item.items} sessionId={sessionId} />
+            </div>
+          );
+        }
+
+        const msg = item.message;
+
+        // v2: ThinkingCard manages its own expand state via
+        // useExpandedBlockMemory; no need to thread isTurnActive.
+        // Inline-rendered (not through MessageItem) so the live
+        // isStreaming flag from the message reaches it directly.
+        if (msg.role === 'thinking') {
+          return (
+            <ThinkingCard
+              key={item.key}
+              blockKey={msg.clientId}
+              content={msg.content}
+              isStreaming={msg.isStreaming}
+              startedAt={msg.thinkingStartedAt}
+              durationMs={msg.thinkingDurationMs}
+              isRedacted={msg.thinkingRedacted}
+            />
+          );
+        }
+
+        // 分享选择:复选框与光栅化定位属性都挂在这个**既有** wrapper 上,
+        // 不新增 DOM 层级 —— 多包一层会让 AssistantMessage 子树在进出
+        // 选择模式时 remount(mermaid 重渲、GhostToolCard iframe 重载)。
+        const shareable = Boolean(sessionId) && Boolean(msg.clientId) && isShareableMessage(msg);
+        const messageNode = (
+          <MessageItem
+            message={msg}
+            toolResult={singleResultMap.get(msg.clientId)}
+            workingDir={workingDir}
+            sessionId={sessionId}
+            sessionTitle={sessionTitle}
+            agentKind={agentKind}
+            remoteHostId={remoteHostId}
+            sessionRunning={isSessionStreaming}
+            assistantForkBlocked={shouldBlockAssistantFork(
+              isSessionStreaming,
+              msg,
+              assistantsWithFollowingUserBoundary,
+            )}
+            assistantIsTurnFinal={turnFinalAssistantClientIds.has(msg.clientId)}
+            userTurnUsageDetails={userTurnUsageDetailsByAssistantId.get(msg.clientId)}
+            isFirstUserMessage={msg.clientId === firstUserMessageClientId}
+            isLastUserMessage={msg.clientId === lastUserMessageClientId}
+            isLastUserInput={msg.clientId === lastUserInputClientId}
+            isContinuationTurnOwner={msg.clientId === continuationTurnClientId}
+            continuationInFlightProjectionCapability={continuationInFlightProjectionCapability}
+            isLastMessage={msg.clientId === lastMessageClientId}
+            localFileRefs={localFileRefs}
+          />
+        );
+        const highlightClass =
+          highlightMessageClientId === msg.clientId
+            ? 'rounded-xl bg-[hsl(var(--search-match-bg))] ring-1 ring-[var(--border-default)]'
+            : undefined;
+        const shareAttributes = shareable
+          ? {
+              [SHARE_SESSION_ATTR]: sessionId,
+              [SHARE_MESSAGE_ATTR]: msg.clientId,
+            }
+          : {};
+
+        return (
+          <div
+            key={item.key}
+            data-message-client-id={msg.clientId}
+            {...shareAttributes}
+            className={cn('scroll-mt-20 transition-colors', shareable && 'relative', highlightClass)}
+          >
+            {shareable && shareSelectionActive ? (
+              <ShareMessageCheckbox clientId={msg.clientId} />
+            ) : null}
+            {messageNode}
+          </div>
+        );
+      }),
+    [
+      visibleRenderItems,
+      onOpenForkOrigin,
+      isSessionStreaming,
+      latestInlinePlanBelongsToActiveTurn,
+      latestInlinePlanKey,
+      sessionId,
+      agentKind,
+      subagentModelByToolUseId,
+      workingDir,
+      sessionTitle,
+      remoteHostId,
+      firstUserMessageClientId,
+      lastUserMessageClientId,
+      lastUserInputClientId,
+      continuationTurnClientId,
+      continuationInFlightProjectionCapability,
+      localFileRefs,
+      singleResultMap,
+      assistantsWithFollowingUserBoundary,
+      turnFinalAssistantClientIds,
+      userTurnUsageDetailsByAssistantId,
+      ghostCardSnapshot,
+      lastMessageClientId,
+      highlightMessageClientId,
+      shareSelectionActive,
+    ],
+  );
+
   return (
     <ChatSessionFileProvider value={sessionFileValue}>
       <GhostFulfillmentContext.Provider value={ghostCallsByUserTurn}>
@@ -5694,282 +5984,7 @@ export function MessageStream({
                     'transition-[padding] duration-[var(--motion-base)] ease-[var(--motion-ease-move)] motion-reduce:transition-none',
                   )}
                 >
-                  {visibleRenderItems.map((item) => {
-                    if (item.type === 'fork_origin') {
-                      return <ForkOriginMarker key={item.key} onClick={onOpenForkOrigin} />;
-                    }
-
-                    if (item.type === 'agent_plan') {
-                      return (
-                        <div key={item.key} data-inline-plan-key={item.key}>
-                          <InlinePlanCard
-                            todos={item.todos}
-                            animated={
-                              isSessionStreaming &&
-                              latestInlinePlanBelongsToActiveTurn &&
-                              item.key === latestInlinePlanKey
-                            }
-                          />
-                        </div>
-                      );
-                    }
-
-                    if (item.type === 'turn_changes') {
-                      if (!sessionId) return null;
-                      return (
-                        <TurnChangesCard
-                          key={item.key}
-                          sessionId={sessionId}
-                          changeSet={item.changeSet}
-                        />
-                      );
-                    }
-
-                    if (item.type === 'generated_files') {
-                      return (
-                        <GeneratedFilesCard
-                          key={item.key}
-                          files={item.files}
-                          turnStartMs={item.turnStartMs}
-                          turnEndMs={item.turnEndMs}
-                          turnSealed={item.turnSealed === true}
-                        />
-                      );
-                    }
-
-                    if (item.type === 'tool_segment') {
-                      return (
-                        <AgentActionsBlock
-                          key={item.key}
-                          toolCalls={item.toolCalls}
-                          resultMap={item.resultMap}
-                          settledIds={item.settledIds}
-                          isSessionStreaming={isSessionStreaming}
-                        />
-                      );
-                    }
-
-                    if (item.type === 'agent_task') {
-                      return (
-                        <AgentTaskCard
-                          key={item.key}
-                          toolCall={item.toolCall}
-                          update={item.update}
-                          result={item.result}
-                          persistedStatus={item.persistedStatus}
-                          sessionAgentKind={agentKind}
-                          {...(sessionId ? { sessionId } : {})}
-                          subagentModel={
-                            item.toolCall?.toolUseId
-                              ? subagentModelByToolUseId.get(item.toolCall.toolUseId)
-                              : undefined
-                          }
-                        />
-                      );
-                    }
-
-                    if (item.type === 'work_group') {
-                      // 完成态外层时间线可包含内层 work_group。递归只负责形状映射,
-                      // 具体折叠 / 直接详情逻辑全部复用 WorkGroupBlock。
-                      const toWorkGroupChild = (child: WorkGroupChildItem): WorkGroupChild => {
-                        if (child.type === 'work_group') {
-                          return {
-                            kind: 'group',
-                            key: child.key,
-                            blockId: `work:${child.key.slice('work-'.length)}`,
-                            durationMs: child.durationMs,
-                            isStreaming: child.isStreaming,
-                            startedAtMs: child.startedAtMs,
-                            deferred: child.deferred,
-                            childItems: child.children.map(toWorkGroupChild),
-                          };
-                        }
-                        if (child.type === 'tool_segment') {
-                          return {
-                            kind: 'tools',
-                            key: child.key,
-                            toolCalls: child.toolCalls,
-                            resultMap: child.resultMap,
-                            settledIds: child.settledIds,
-                          };
-                        }
-                        if (child.type === 'message' && child.message.role === 'thinking') {
-                          return { kind: 'thinking', key: child.key, message: child.message };
-                        }
-                        return {
-                          kind: 'rendered',
-                          key: child.key,
-                          renderNode: () =>
-                            renderWorkGroupChild(child, {
-                              workingDir,
-                              sessionId,
-                              sessionTitle,
-                              agentKind,
-                              remoteHostId,
-                              isSessionStreaming,
-                              firstUserMessageClientId,
-                              lastUserMessageClientId,
-                              lastUserInputClientId,
-                              continuationTurnClientId,
-                              continuationInFlightProjectionCapability,
-                              localFileRefs,
-                              singleResultMap,
-                              assistantsWithFollowingUserBoundary,
-                              turnFinalAssistantClientIds,
-                              subagentModelByToolUseId,
-                              userTurnUsageDetailsByAssistantId,
-                            }),
-                        };
-                      };
-                      const childItems = item.children.map(toWorkGroupChild);
-                      return (
-                        // data-message-client-ids:组折叠时子卡片/聚合块整体 unmount,
-                        // 精确锚点消失 —— 后台任务面板「点行跳聊天」经 ~= 回退查询
-                        // 落到组容器(与 AgentActionsBlock 的容器锚点同一约定)。
-                        // 视口子锚点不读这个聚合列表，只认已渲染的 data-message-client-id。
-                        <div
-                          key={item.key}
-                          className="scroll-mt-20"
-                          data-message-client-ids={collectWorkGroupClientIds(item.children).join(
-                            ' ',
-                          )}
-                        >
-                          <WorkGroupBlock
-                            // 单层前缀约定 `work:<clientId>` — item.key 形如 `work-<cid>`,
-                            // 去掉 `work-` 后拼 `<role>:<id>`,与 agent: / thinking: 同构。
-                            blockId={`work:${item.key.slice('work-'.length)}`}
-                            durationMs={item.durationMs}
-                            isStreaming={item.isStreaming}
-                            startedAtMs={item.startedAtMs}
-                            childItems={childItems}
-                            deferred={item.deferred}
-                          />
-                        </div>
-                      );
-                    }
-
-                    if (item.type === 'ghost_card') {
-                      // 卡槽③:卡体 html/height 渲染时从 store 现取(换海报 = 推送
-                      // bump version → 本组件重渲,GhostToolCard 原地更新 srcDoc)。
-                      // entry 不 ready(极端竞态:build 后被 reset)静默不渲染,
-                      // 下一次 store 变更自愈。
-                      const entry = ghostCardSnapshot.byCallId.get(item.callId);
-                      if (!entry || entry.status !== 'ready') return null;
-                      // 常态包一层 div(结构稳定,回锚媒体到达时卡片 iframe 不重挂);
-                      // 回锚媒体(如 mivo 视频)挂卡正下方,与 tool_media 同款间距。
-                      return (
-                        <div key={item.key} className="flex flex-col gap-2">
-                          <GhostToolCard
-                            callId={item.callId}
-                            ghostId={item.ghostId}
-                            toolName={item.tool}
-                            toolInput={item.toolCall.toolInput ?? null}
-                            html={entry.html}
-                            animatedHtml={entry.animatedHtml}
-                            height={entry.height}
-                            running={!item.settled && isSessionStreaming}
-                            sessionId={sessionId}
-                          />
-                          {item.media && item.media.length > 0 ? (
-                            <ToolMediaList items={item.media} sessionId={sessionId} />
-                          ) : null}
-                        </div>
-                      );
-                    }
-
-                    if (item.type === 'tool_media') {
-                      // tool-result-media: 跳出 tool_segment 折叠卡片,渲染体在
-                      // ToolMediaList(与 ghost_card 回锚媒体共用单一来源)。
-                      return (
-                        <div key={item.key} className="flex flex-col gap-2">
-                          <ToolMediaList items={item.items} sessionId={sessionId} />
-                        </div>
-                      );
-                    }
-
-                    const msg = item.message;
-
-                    // v2: ThinkingCard manages its own expand state via
-                    // useExpandedBlockMemory; no need to thread isTurnActive.
-                    // Inline-rendered (not through MessageItem) so the live
-                    // isStreaming flag from the message reaches it directly.
-                    if (msg.role === 'thinking') {
-                      return (
-                        <ThinkingCard
-                          key={item.key}
-                          blockKey={msg.clientId}
-                          content={msg.content}
-                          isStreaming={msg.isStreaming}
-                          startedAt={msg.thinkingStartedAt}
-                          durationMs={msg.thinkingDurationMs}
-                          isRedacted={msg.thinkingRedacted}
-                        />
-                      );
-                    }
-
-                    // 分享选择:复选框与光栅化定位属性都挂在这个**既有** wrapper 上,
-                    // 不新增 DOM 层级 —— 多包一层会让 AssistantMessage 子树在进出
-                    // 选择模式时 remount(mermaid 重渲、GhostToolCard iframe 重载)。
-                    const shareable =
-                      Boolean(sessionId) && Boolean(msg.clientId) && isShareableMessage(msg);
-                    const messageNode = (
-                        <MessageItem
-                          message={msg}
-                          toolResult={singleResultMap.get(msg.clientId)}
-                          workingDir={workingDir}
-                          sessionId={sessionId}
-                          sessionTitle={sessionTitle}
-                          agentKind={agentKind}
-                          remoteHostId={remoteHostId}
-                          sessionRunning={isSessionStreaming}
-                          assistantForkBlocked={shouldBlockAssistantFork(
-                            isSessionStreaming,
-                            msg,
-                            assistantsWithFollowingUserBoundary,
-                          )}
-                          assistantIsTurnFinal={turnFinalAssistantClientIds.has(msg.clientId)}
-                          userTurnUsageDetails={userTurnUsageDetailsByAssistantId.get(msg.clientId)}
-                          isFirstUserMessage={msg.clientId === firstUserMessageClientId}
-                          isLastUserMessage={msg.clientId === lastUserMessageClientId}
-                          isLastUserInput={msg.clientId === lastUserInputClientId}
-                          isContinuationTurnOwner={msg.clientId === continuationTurnClientId}
-                          continuationInFlightProjectionCapability={
-                            continuationInFlightProjectionCapability
-                          }
-                          isLastMessage={msg.clientId === lastMessageClientId}
-                          localFileRefs={localFileRefs}
-                        />
-                    );
-                    const highlightClass =
-                      highlightMessageClientId === msg.clientId
-                        ? 'rounded-xl bg-[hsl(var(--search-match-bg))] ring-1 ring-[var(--border-default)]'
-                        : undefined;
-                    const shareAttributes = shareable
-                      ? {
-                          [SHARE_SESSION_ATTR]: sessionId,
-                          [SHARE_MESSAGE_ATTR]: msg.clientId,
-                        }
-                      : {};
-
-
-                    return (
-                      <div
-                        key={item.key}
-                        data-message-client-id={msg.clientId}
-                        {...shareAttributes}
-                        className={cn(
-                          'scroll-mt-20 transition-colors',
-                          shareable && 'relative',
-                          highlightClass,
-                        )}
-                      >
-                        {shareable && shareSelectionActive ? (
-                          <ShareMessageCheckbox clientId={msg.clientId} />
-                        ) : null}
-                        {messageNode}
-                      </div>
-                    );
-                  })}
+                  {renderedMessageItems}
                 </div>
               </div>
             </div>
