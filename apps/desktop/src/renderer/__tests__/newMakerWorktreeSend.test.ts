@@ -112,7 +112,8 @@ describe('NewMakerDraftRoute worktree send flow', () => {
   });
 
   it('uses the current checkout as the safe source when branch discovery is not ready', () => {
-    expect(source.match(/sourceBranch: wt\.sourceBranch\.trim\(\) \|\| 'HEAD'/g)).toHaveLength(2);
+    // Native-first, device-link Send and local Send use the current checkout.
+    expect(source.match(/sourceBranch: wt\.sourceBranch\.trim\(\) \|\| 'HEAD'/g)).toHaveLength(3);
     expect(source).not.toContain("sourceBranch: wt.sourceBranch.trim() || 'main'");
   });
 

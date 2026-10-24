@@ -6,6 +6,20 @@ import { AgentPresentationLayout } from '../AgentPresentationLayout';
 
 afterEach(cleanup);
 
+it('exposes the same pending host action while TUI hides its original GUI prompt', () => {
+  const respond = vi.fn();
+  const ui = render(<AgentPresentationLayout mode="tui" inputWidth="100%" inputPad={10}
+    pending={<button onClick={respond}>Open pending action</button>} footer={<span>Footer</span>} terminal={<div>Native</div>}>
+    <div data-testid="prompt">Original pending request</div>
+  </AgentPresentationLayout>);
+  expect(screen.getByTestId('prompt').closest('[inert]')).not.toBeNull();
+  const entry = screen.getByRole('button');
+  expect(entry.closest('[inert]')).toBeNull();
+  fireEvent.click(entry);
+  expect(respond).toHaveBeenCalledOnce();
+  ui.unmount();
+});
+
 it('keeps footer controls, GUI drafts and the terminal mounted across presentation changes', () => {
   const mount = vi.fn();
   const unmount = vi.fn();

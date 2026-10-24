@@ -96,6 +96,30 @@ describe('useComposerSendFocusRestore', () => {
     expect(document.activeElement).toBe(editor.view.dom);
   };
 
+  it('waits for a late editor mount and tracks its replacement DOM without crashing a Worker pane', () => {
+    const editor = new Editor({ element: null, extensions: [Document, Paragraph, Text], content: '<p>draft</p>' });
+    createdEditors.push(editor);
+    const hook = renderHook(({ locked }) => useComposerSendFocusRestore(editor, locked), { initialProps: { locked: false } });
+    const mount = document.createElement('div'); document.body.append(mount);
+    act(() => editor.mount(mount));
+    focusComposerSelection(editor);
+    act(() => hook.result.current());
+    hook.rerender({ locked: true });
+    act(() => { editor.view.dom.blur(); editor.unmount(); });
+    hook.rerender({ locked: false });
+    expect(flushAnimationFrames).not.toThrow();
+    act(() => editor.mount(mount));
+    focusComposerSelection(editor);
+    act(() => hook.result.current());
+    hook.rerender({ locked: true });
+    act(() => editor.view.dom.blur());
+    const outside = document.createElement('div'); document.body.append(outside);
+    fireEvent.pointerDown(outside);
+    hook.rerender({ locked: false }); flushAnimationFrames();
+    expect(document.activeElement).toBe(document.body);
+    hook.unmount();
+  });
+
   it('restores the focused composer after the temporary send lock', () => {
     const editor = createEditor();
     const hook = renderRestoreHook(editor);

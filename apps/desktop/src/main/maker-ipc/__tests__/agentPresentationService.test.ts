@@ -20,6 +20,17 @@ function fixture(initialization?: (id: string) => PresentationInitialization | u
 }
 
 describe('task presentation host boundary', () => {
+  it('projects runtime GUI capabilities on status only after current-owner authorization', async () => {
+    let current = true;
+    const snapshot = vi.fn(() => ({ agentKind: 'pi', capabilities: { sameTurnSteer: { supported: false } } } as never));
+    const service = new AgentPresentationService(() => undefined, Date.now, undefined, snapshot);
+    const peer = { id: 'owner', assertCurrent: () => { if (!current) throw new Error('owner changed'); } };
+    expect(await service.invoke(peer, { action: 'status', sessionId: 'task' })).toMatchObject({ supported: false,
+      runtime: { agentKind: 'pi', capabilities: { sameTurnSteer: { supported: false } } } });
+    current = false;
+    await expect(service.invoke(peer, { action: 'status', sessionId: 'task' })).rejects.toThrow('owner changed');
+    expect(snapshot).toHaveBeenCalledOnce(); service.close();
+  });
   it('observes host activation before attaching without starting any task or writing input', async () => {
     let complete!: (value: AgentPresentationInitialization) => void;
     const settled = new Promise<AgentPresentationInitialization>(resolve => { complete = resolve; });

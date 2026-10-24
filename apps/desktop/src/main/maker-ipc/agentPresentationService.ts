@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentPresentationAttachment, AgentSessionPresentation, AgentPresentationInitialization } from '@cindy/maker-core';
-import type { AgentPresentationRequest, AgentTerminalControl } from '../../shared/agentPresentation.js';
+import type { AgentPresentationRequest, AgentTerminalControl, AgentRuntimeSnapshot } from '../../shared/agentPresentation.js';
 
 export interface PresentationPeer {
   /** Derived from the trusted window/device context, never a wire argument. */
@@ -26,7 +26,8 @@ export class AgentPresentationService {
   private readonly entries = new Map<string, Entry>();
   constructor(private readonly resolve: (sessionId: string) => AgentSessionPresentation | undefined,
     private readonly now = Date.now,
-    private readonly initialization?: (sessionId: string) => PresentationInitialization | undefined) {}
+    private readonly initialization?: (sessionId: string) => PresentationInitialization | undefined,
+    private readonly runtimeSnapshot?: (sessionId: string) => AgentRuntimeSnapshot | undefined) {}
 
   async invoke(peer: PresentationPeer, raw: unknown): Promise<unknown> {
     const request = validate(raw);
@@ -50,8 +51,12 @@ export class AgentPresentationService {
       }
     }
     const runtime = this.resolve(request.sessionId);
-    if (request.action === 'status') return runtime ? { supported: true, state: runtime.state() }
-      : { supported: false, ...(initialized ? { reason: initialized.status === 'unavailable' ? initialized.reason : 'startup-failed' } : {}) };
+    if (request.action === 'status') {
+      const snapshot = this.runtimeSnapshot?.(request.sessionId);
+      return runtime ? { supported: true, state: runtime.state(), ...(snapshot ? { runtime: snapshot } : {}) }
+        : { supported: false, ...(snapshot ? { runtime: snapshot } : {}),
+          ...(initialized ? { reason: initialized.status === 'unavailable' ? initialized.reason : 'startup-failed' } : {}) };
+    }
     if (request.action === 'attach') {
       if (!runtime) throw new Error('Native presentation unavailable');
       if (this.entries.size >= 256 || [...this.entries.values()].filter((e) => e.peer.id === peer.id).length >= 16) {

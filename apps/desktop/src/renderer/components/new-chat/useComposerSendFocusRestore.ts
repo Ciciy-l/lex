@@ -8,6 +8,8 @@ export interface ComposerFocusEditor {
   readonly isFocused: boolean;
   readonly view: { readonly dom: HTMLElement };
   readonly commands: { focus: () => unknown };
+  on?(event: 'mount' | 'unmount', listener: () => void): unknown;
+  off?(event: 'mount' | 'unmount', listener: () => void): unknown;
 }
 
 interface PendingComposerFocusRestore {
@@ -48,19 +50,35 @@ export function useComposerSendFocusRestore(
 
   useEffect(() => {
     if (!editor) return;
-    const editorDom = editor.view.dom;
-    const ownerDocument = editorDom.ownerDocument;
-    const cancelRestoreForOutsidePointer = (event: PointerEvent) => {
-      const pendingRestore = pendingRestoreRef.current;
-      if (!pendingRestore || pendingRestore.editor !== editor) return;
-      const target = event.target;
-      if (target instanceof Node && editorDom.contains(target)) return;
+    let detach: (() => void) | undefined;
+    const unmount = () => {
+      detach?.(); detach = undefined;
       pendingRestoreRef.current = null;
     };
-
-    ownerDocument.addEventListener('pointerdown', cancelRestoreForOutsidePointer, true);
+    const mount = () => {
+      unmount();
+      // Tiptap can publish the editor before EditorContent mounts its view,
+      // including Suspense reconnects in a detached Worker panel.
+      if (editor.isDestroyed) return;
+      const editorDom = editor.view.dom;
+      const ownerDocument = editorDom.ownerDocument;
+      const cancelRestoreForOutsidePointer = (event: PointerEvent) => {
+        const pendingRestore = pendingRestoreRef.current;
+        if (!pendingRestore || pendingRestore.editor !== editor) return;
+        const target = event.target;
+        if (target instanceof Node && editorDom.contains(target)) return;
+        pendingRestoreRef.current = null;
+      };
+      ownerDocument.addEventListener('pointerdown', cancelRestoreForOutsidePointer, true);
+      detach = () => ownerDocument.removeEventListener('pointerdown', cancelRestoreForOutsidePointer, true);
+    };
+    mount();
+    editor.on?.('mount', mount);
+    editor.on?.('unmount', unmount);
     return () => {
-      ownerDocument.removeEventListener('pointerdown', cancelRestoreForOutsidePointer, true);
+      editor.off?.('mount', mount);
+      editor.off?.('unmount', unmount);
+      unmount();
     };
   }, [editor]);
 
@@ -87,9 +105,11 @@ export function useComposerSendFocusRestore(
         pendingRestoreRef.current = null;
         return;
       }
+      const editorDom = editor.view.dom;
       if (
-        hasFocusMovedToInteractiveElement(pendingRestore.focusAnchor, editor.view.dom) ||
-        hasNonCollapsedSelectionOutsideComposer(editor.view.dom)
+        !editorDom.isConnected ||
+        hasFocusMovedToInteractiveElement(pendingRestore.focusAnchor, editorDom) ||
+        hasNonCollapsedSelectionOutsideComposer(editorDom)
       ) {
         pendingRestoreRef.current = null;
         return;

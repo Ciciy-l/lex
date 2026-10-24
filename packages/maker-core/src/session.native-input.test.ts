@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Session, type SessionNativeInput, type SessionOptions } from './session.js';
 import { AUTO_REVIEW_SOURCE_CONTENT, TurnDispatchRejectedError, TurnDispatchUnconfirmedError, type AgentSessionHandle } from './agents/base-agent.js';
 import type { AgentEvent } from './types/events.js';
+import type { Capabilities } from './types/capabilities.js';
 import type { AgentNativeInputRequest, AgentNativeInputResolver, AgentNativeMediaResolver } from './agents/native-input.js';
 import { AgentPresentationRuntime } from './agents/presentation.js';
 import { CodexNativeTaskPresentation } from './agents/codex/native-task-presentation.js';
@@ -37,6 +38,19 @@ function fixture(options: Partial<SessionOptions> = {}, handleOptions: Partial<A
 }
 
 describe('native presentation activation through the product Session', () => {
+  it('projects the current handle GUI capabilities without mutating the catalogue or another task', async () => {
+    const base = { sameTurnSteer: { supported: true }, planMode: { supported: true } } as const;
+    let overrides: Partial<Capabilities> = { sameTurnSteer: { supported: false, reason: 'not-implemented', recovery: 'native-ui' } };
+    const f = fixture({ capabilities: base as never });
+    Object.defineProperty(f.handle, 'capabilityOverrides', { get: () => overrides });
+    const other = fixture({ capabilities: base as never });
+    expect(f.session.capabilities.sameTurnSteer).toEqual(overrides.sameTurnSteer);
+    expect(f.session.capabilities.planMode).toBe(base.planMode);
+    expect(other.session.capabilities.sameTurnSteer.supported).toBe(true);
+    expect(base.sameTurnSteer.supported).toBe(true);
+    overrides = { sameTurnSteer: { supported: true } };
+    expect(f.session.capabilities.sameTurnSteer.supported).toBe(true);
+  });
   it('returns a receipt without launching, then activates once only after input and interaction ownership exist', async () => {
     const activate = vi.fn<NonNullable<AgentSessionHandle['activatePresentation']>>(async owner => {
       expect(owner.isCurrent()).toBe(true); expect(owner.signal.aborted).toBe(false); return { status: 'ready' };

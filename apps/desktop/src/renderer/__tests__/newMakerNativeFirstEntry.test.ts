@@ -29,7 +29,11 @@ describe('new-task native entry', () => {
       expect(handler).toContain(setting);
     }
     const eligibility = route.slice(route.indexOf('const canShowDraftNative ='), route.indexOf('const handleDraftPresentation ='));
-    for (const guard of ['!isDeviceLinkDraft', '!isRemoteProjectDraft', '!effectiveRemoteHostId', '!effectiveCollab.enabled', '!wtEnabled', '!!draftInitialModel', '!showProviderOnboardingCard']) expect(eligibility).toContain(guard);
+    for (const guard of ['!isDeviceLinkDraft', '!isRemoteProjectDraft', '!effectiveRemoteHostId', '!effectiveCollab.enabled', '!!draftInitialModel', '!showProviderOnboardingCard']) expect(eligibility).toContain(guard);
+    expect(eligibility).not.toContain('!wtEnabled');
+    expect(handler).toContain('const useWorktree = wt.enabled && wt.confirmedIneligible !== true && !!effectiveWorkingDir');
+    expect(handler).toContain('!wt.baseRepo || !wt.branchPreferenceReady || wtBranchPreferenceSavingRef.current');
+    expect(handler.indexOf('await prepareLocalGoalWorktree(')).toBeLessThan(handler.indexOf("navigate('/cc-agent/"));
     expect(eligibility).toContain('const canOpenDraftNative = canShowDraftNative && hasLocalNativePresentation(persistedAgentKind)');
     expect(handler).toContain("if (mode !== 'tui' || !canOpenDraftNative || sendInFlightRef.current) return");
     expect(route).toContain('{canShowDraftNative && (');

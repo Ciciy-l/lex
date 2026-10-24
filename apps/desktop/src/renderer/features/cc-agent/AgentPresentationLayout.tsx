@@ -5,19 +5,21 @@ interface AgentPresentationLayoutProps {
   children: ReactNode;
   terminal: ReactNode;
   footer: ReactNode;
+  pending?: ReactNode;
   inputWidth: CSSProperties['width'];
   inputPad: CSSProperties['paddingLeft'];
 }
 
 /** Keep task controls mounted at one position while either presentation is hidden. */
 export function AgentPresentationLayout({
-  mode, children, terminal, footer, inputWidth, inputPad,
+  mode, children, terminal, footer, pending, inputWidth, inputPad,
 }: AgentPresentationLayoutProps) {
   return (
     <>
       {/* GUI overlays are relative to this body, which ends above the footer.
           Their existing height measurement must not include the footer again. */}
       <div className="relative flex min-h-0 flex-1 flex-col" data-agent-presentation-body>
+        {mode === 'tui' && pending && <div role="status" className="shrink-0 px-3 py-2">{pending}</div>}
         <div className={mode === 'tui' ? 'hidden' : 'contents'} inert={mode === 'tui' ? true : undefined}>
           {children}
         </div>

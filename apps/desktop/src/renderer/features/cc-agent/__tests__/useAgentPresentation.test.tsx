@@ -84,6 +84,70 @@ it('creates an unnamed task only on explicit TUI selection and reuses it on late
   expect(prepare).toHaveBeenCalledOnce(); expect(ui.result.current.generation).toBe('same-task');
 });
 
+it('keeps the latest GUI choice when first preparation finishes late', async () => {
+  invoke.mockResolvedValue({ supported: false });
+  let release!: () => void;
+  const prepare = vi.fn(() => new Promise<void>(resolve => { release = resolve; }));
+  const ui = renderHook(useAgentPresentation, { initialProps: { ...args, prepare } });
+  act(() => ui.result.current.change('tui'));
+  await waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+  expect(ui.result.current.preparing).toBe(true);
+  act(() => ui.result.current.change('gui'));
+  invoke.mockResolvedValue(available('prepared'));
+  await act(async () => { release(); });
+  await waitFor(() => expect(ui.result.current.generation).toBe('prepared'));
+  expect(ui.result.current.mode).toBe('gui');
+  expect(ui.result.current.preparing).toBe(false);
+  act(() => ui.result.current.change('tui'));
+  expect(ui.result.current.mode).toBe('tui');
+  expect(prepare).toHaveBeenCalledOnce();
+});
+
+it('does not let an old view block preparation or overwrite a re-entered owner', async () => {
+  invoke.mockResolvedValue({ supported: false });
+  const releases: (() => void)[] = [];
+  const prepare = vi.fn(() => new Promise<void>(resolve => { releases.push(resolve); }));
+  const ui = renderHook(useAgentPresentation, { initialProps: { ...args, prepare } });
+  act(() => ui.result.current.change('tui'));
+  await waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
+  ui.rerender({ ...args, prepare, enabled: false });
+  ui.rerender({ ...args, prepare, ownerId: 'other', enabled: true });
+  act(() => ui.result.current.change('tui'));
+  await waitFor(() => expect(prepare).toHaveBeenCalledTimes(2));
+  invoke.mockResolvedValue(available('other-owner'));
+  await act(async () => { releases[1](); });
+  await waitFor(() => expect(ui.result.current.generation).toBe('other-owner'));
+  ui.rerender({ ...args, prepare });
+  await waitFor(() => expect(ui.result.current.generation).toBe('other-owner'));
+  await act(async () => { releases[0](); });
+  expect(ui.result.current.mode).toBe('gui');
+});
+
+it('ignores preparation after disable/re-enable and ignores an older status query', async () => {
+  let initialStatus!: (value: unknown) => void;
+  invoke.mockReturnValueOnce(new Promise(resolve => { initialStatus = resolve; })).mockResolvedValue(available('ready'));
+  let release!: () => void;
+  const prepare = vi.fn(() => new Promise<void>(resolve => { release = resolve; }));
+  const ui = renderHook(useAgentPresentation, { initialProps: { ...args, prepare } });
+  act(() => ui.result.current.change('tui'));
+  await waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+  await act(async () => { release(); });
+  await waitFor(() => expect(ui.result.current.mode).toBe('tui'));
+  await act(async () => { initialStatus({ supported: false, reason: 'startup-failed' }); });
+  expect(ui.result.current.generation).toBe('ready');
+  ui.unmount();
+
+  invoke.mockResolvedValue({ supported: false });
+  const next = renderHook(useAgentPresentation, { initialProps: { ...args, sessionId: 'second', prepare } });
+  act(() => next.result.current.change('tui'));
+  await waitFor(() => expect(prepare).toHaveBeenCalledTimes(2));
+  next.rerender({ ...args, sessionId: 'second', prepare, enabled: false });
+  next.rerender({ ...args, sessionId: 'second', prepare, enabled: true });
+  invoke.mockResolvedValue(available('late'));
+  await act(async () => { release(); });
+  expect(next.result.current.mode).toBe('gui');
+});
+
 it('keeps GUI available when explicit task startup fails', async () => {
   invoke.mockResolvedValue({ supported: false });
   const prepare = vi.fn(async () => { throw new Error('original startup error'); });

@@ -1,7 +1,7 @@
 import { AgentNativeTerminal } from './AgentNativeTerminal';
 import { AgentPresentationLayout } from './AgentPresentationLayout';
 import { AgentPresentationSwitch, AgentPresentationUnavailable } from './AgentPresentationSwitch';
-import { hasLocalNativePresentation } from '../../../shared/agentPresentation';
+import { canPrepareLocalNativePresentation } from '../../../shared/agentPresentation';
 import { useAgentPresentation } from './useAgentPresentation';
 import { useAgentPresentationFocus } from './useAgentPresentationFocus';
 import { enableCollabFromForm } from './enableCollabFromForm';
@@ -159,6 +159,7 @@ import {
   canExposeWritableDirsChange,
   resolveManualCompactChannel,
   useAgentCapabilities,
+  AgentRuntimeCapabilitiesContext,
 } from '@/hooks/useAgentCapabilities';
 import { useLiveErrorSourceProvider } from '@/hooks/useLiveErrorSourceProvider';
 import { resolveFastSupported } from '@/lib/providerModels';
@@ -1856,6 +1857,27 @@ export function CCAgentSessionView({
     t,
     togglePin,
   ]);
+  const { mode: authMode, user: authUser, service: authService, dataOwnerId } = useAuth();
+  const prepareNativePresentation = useCallback(async () => {
+    if (!sessionId || !session?.workingDir || !canPrepareLocalNativePresentation(session)) {
+      throw new Error('Native task startup is unavailable');
+    }
+    const createOpts = { id: sessionId, ...buildCreateOptsForCurrentSession(sessionId, session.model,
+      session.effort ?? undefined, session.permissionMode ?? 'ask', session.workingDir),
+      agentKind: dbToMakerAgentKind(session.agentKind), requireNativePresentation: true,
+      extraDirs: session.extraDirs ?? [], writableDirs: session.writableDirs ?? [] };
+    if (remoteDeviceId) await window.electronAPI.deviceLink.invoke(remoteDeviceId, 'maker:create-session', [createOpts]);
+    else await window.electronAPI.maker.createSession(createOpts);
+  }, [sessionId, session, remoteDeviceId]);
+  const presentation = useAgentPresentation({ sessionId, deviceId: remoteDeviceId, ownerId: dataOwnerId,
+    enabled: !readOnly && !!session, runtimeKey: String(session?.sdkSessionId ?? '') + ':' + String(agentStatus.isRunning),
+    initialMode: nativePresentationIntent && !!sessionId &&
+      nativePresentationIntent.sessionId === sessionId && nativePresentationIntent.ownerId !== undefined &&
+      nativePresentationIntent.ownerId === dataOwnerId ? 'tui' : undefined,
+    prepare: canPrepareLocalNativePresentation(session ?? {}) && !!session?.workingDir
+      ? prepareNativePresentation : undefined });
+  const runtimeProjection = useMemo(() => ({ deviceId: remoteDeviceId, runtime: presentation.runtime }),
+    [remoteDeviceId, presentation.runtime]);
   // 展示引擎可乐观跟随 intent；真实 event reducer 仍只读 store.agentKind。
   const displayAgentKind = agentSwitchIntent?.target ?? dbToMakerAgentKind(session?.agentKind);
   // 真实会话 agentKind(pending switch intent 不影响)——压缩分流必须用它,
@@ -1865,7 +1887,7 @@ export function CCAgentSessionView({
   // 其余 agent 声明 manualCompact.supported(当前仅 pi)→ maker:compact-session;其余无入口。
   // 能力取**真实 agent**(displayAgentKind 在 pending switch 期间可能乐观指向目标 agent,
   // 用它判定会与 realAgentKind 分流不一致);remoteDeviceId 让远程 pi 取被控端能力。
-  const { capabilities: realSessionCaps } = useAgentCapabilities(realAgentKind, remoteDeviceId);
+  const { capabilities: realSessionCaps } = useAgentCapabilities(realAgentKind, remoteDeviceId, presentation.runtime);
   const compactChannel = useMemo(
     () => resolveManualCompactChannel(realAgentKind, realSessionCaps),
     [realAgentKind, realSessionCaps],
@@ -1892,7 +1914,6 @@ export function CCAgentSessionView({
   // 与模型选择器同源(见下方 M35 vendor fallback effect)。本地 IPC 极快返回,有模块级缓存。
   // device-link 远程会话用被控端经隧道带来的 providers(per-provider,fast 判定与本地同口径)。
   const { providers: localProviders } = useProviders();
-  const { mode: authMode, user: authUser, service: authService, dataOwnerId } = useAuth();
   const { providers: deviceProviders } = useDeviceProviders(remoteDeviceId);
   const providers = remoteDeviceId ? deviceProviders : localProviders;
   const canSwitchToClaudeSubscription = useMemo(() => {
@@ -1925,7 +1946,7 @@ export function CCAgentSessionView({
     session?.providerId ?? null,
   );
   // 该会话 agent 的能力(agent 级 hasFastMode + 旧被控端拍平回退用 availableModels);按 remoteDeviceId 作用域。
-  const { capabilities: sessionCaps } = useAgentCapabilities(displayAgentKind, remoteDeviceId);
+  const { capabilities: sessionCaps } = useAgentCapabilities(displayAgentKind, remoteDeviceId, presentation.runtime);
   // callback 同时承载已有授权的展示/撤销，不能因远端没有安全 picker 就整块隐藏。
   // device-link 与 SSH 都只在实际执行端明确声明 setter 能力后开放；ChatInput 另行按
   // 文件系统来源关闭远端“新增”，因此这里开放的远端 callback 只会用于撤销。
@@ -4399,27 +4420,9 @@ export function CCAgentSessionView({
     shareSelectionStore.exitIfNotSession(sessionId);
   }, [sessionId]);
 
-  const prepareNativePresentation = useCallback(async () => {
-    if (!sessionId || !session?.workingDir || !hasLocalNativePresentation(session.agentKind) || session.remoteHostId || session.orcaRole) {
-      throw new Error('Native task startup is unavailable');
-    }
-    const createOpts = { id: sessionId, ...buildCreateOptsForCurrentSession(sessionId, session.model,
-      session.effort ?? undefined, session.permissionMode ?? 'ask', session.workingDir),
-      agentKind: dbToMakerAgentKind(session.agentKind), requireNativePresentation: true,
-      extraDirs: session.extraDirs ?? [], writableDirs: session.writableDirs ?? [] };
-    if (remoteDeviceId) await window.electronAPI.deviceLink.invoke(remoteDeviceId, 'maker:create-session', [createOpts]);
-    else await window.electronAPI.maker.createSession(createOpts);
-  }, [sessionId, session, remoteDeviceId]);
-  const presentation = useAgentPresentation({ sessionId, deviceId: remoteDeviceId, ownerId: dataOwnerId,
-    enabled: !readOnly && !!session, runtimeKey: String(session?.sdkSessionId ?? '') + ':' + String(agentStatus.isRunning),
-    initialMode: nativePresentationIntent && !!sessionId &&
-      nativePresentationIntent.sessionId === sessionId && nativePresentationIntent.ownerId !== undefined &&
-      nativePresentationIntent.ownerId === dataOwnerId ? 'tui' : undefined,
-    prepare: hasLocalNativePresentation(session?.agentKind) && !session?.remoteHostId && !session?.orcaRole && !!session?.workingDir
-      ? prepareNativePresentation : undefined });
   useAgentPresentationFocus(containerRef, presentation.mode,
     JSON.stringify([dataOwnerId, remoteDeviceId, sessionId]),
-    ownsRoute && viewVisible && !readOnly && !isCompactRail && !disableAutofocus);
+    ownsRoute && viewVisible && !readOnly && !disableAutofocus);
 
   // MessageStream 提成变量:perf/session-switch 的 <Profiler> 是纯诊断,只在 DEV
   // 包裹(见下方渲染处),生产直接渲染此 el,不引入多余 Profiler fiber。
@@ -4471,15 +4474,17 @@ export function CCAgentSessionView({
   const conversationFooter = (
                 <div
                   className={cn(
-                    'flex w-full items-center justify-between gap-3 px-1',
+                    'flex w-full flex-wrap items-center justify-between gap-x-3 gap-y-1 px-1',
                     !session?.workingDir && !worktreeCreation && 'invisible',
                   )}
                 >
                   {/* Left: workingDir — 点击在系统文件管理器中打开;
                   click 区域宽度与文本一致(不拉伸到整行) */}
-                  <div className="flex min-w-0 items-center gap-3">
-                    {!readOnly && session && <AgentPresentationSwitch mode={presentation.mode} onChange={presentation.change}
-                      tuiUnavailable={!presentation.selectable ? t('ccAgent.presentation.startupUnavailable.unsupported') : undefined} />}
+                  <div className="flex min-w-0 flex-1 basis-36 items-center gap-3">
+                    {!readOnly && session && <AgentPresentationSwitch mode={presentation.mode} onChange={presentation.change} preparing={presentation.preparing}
+                      tuiUnavailable={!presentation.selectable ? t(session?.remoteHostId ? 'ccAgent.presentation.sshUnavailable'
+                        : session?.orcaRole ? 'ccAgent.presentation.collaborationUnavailable'
+                        : 'ccAgent.presentation.startupUnavailable.unsupported') : undefined} />}
                     {!presentation.supported && presentation.unavailableReason && <AgentPresentationUnavailable reason={presentation.unavailableReason} />}
                   {worktreeCreation?.status === 'creating' ? (
                     <div className="flex min-w-0 items-center gap-1.5">
@@ -4556,7 +4561,7 @@ export function CCAgentSessionView({
                   </div>
 
                   {/* Right: Context capacity indicator */}
-                  <div className="flex shrink-0 items-center gap-3">
+                  <div className="ml-auto flex shrink-0 items-center gap-3">
                     {session?.usedProjectContext && (
                       <Tip text={t('ccAgent.layout.projectContextLoaded')} side="top">
                         <Brain
@@ -4764,13 +4769,21 @@ export function CCAgentSessionView({
           }
         }}
       >
+        <AgentRuntimeCapabilitiesContext.Provider value={runtimeProjection}>
         <AgentPresentationLayout
           mode={presentation.mode}
           inputWidth={inputWidth}
           inputPad={inputPad}
           footer={conversationFooter}
+          pending={Boolean(pendingPlanReview || pendingPermission || pendingAskUser || pendingPluginSetup ||
+            pendingIssueConfirm || pendingRenameSessionsConfirm || pendingGhostGrantConfirm || pendingRemoteDesktopConfirmation) && (
+            <button type="button" onClick={() => presentation.change('gui')}
+              className="min-h-8 max-w-full rounded-full bg-[var(--surface-chip)] px-3 text-12 text-[var(--text-primary)] focus-visible:ring-2 focus-visible:ring-ring">
+              {t('ccAgent.presentation.pendingHostInput')}
+            </button>
+          )}
           terminal={presentation.supported && sessionId ? (
-            <AgentNativeTerminal key={presentation.generation} sessionId={sessionId} active={presentation.mode === 'tui' && viewVisible} invoke={presentation.invoke} onReconnect={presentation.reconnect} />
+            <AgentNativeTerminal key={presentation.generation} sessionId={sessionId} active={presentation.mode === 'tui' && viewVisible} invoke={presentation.invoke} onReconnect={presentation.reconnect} runtimeCapabilities={presentation.runtime?.capabilities} />
           ) : null}
         >
         {showOrcaLeadIdentityBar && (
@@ -5423,6 +5436,7 @@ export function CCAgentSessionView({
             rightSidebarSide === 'right' && <div aria-hidden className="h-7 w-7 shrink-0" />}
         </TopRightChipStack>
         </AgentPresentationLayout>
+        </AgentRuntimeCapabilitiesContext.Provider>
       </section>
     </>
   );

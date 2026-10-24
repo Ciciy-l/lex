@@ -9622,6 +9622,20 @@
   },
   "ccAgent": {
     "presentation": {
+      "guiSteerInTui": "运行中补充输入请在 TUI 中操作。",
+      "guiSteerQueued": "GUI 输入会排到下一轮。",
+      "settingsNeedReopen": "模型或权限设置需在任务空闲后重新打开。",
+      "guiTreeUnavailable": "此运行时尚未接入 GUI 分支树。",
+      "sshUnavailable": "SSH 任务尚无远程终端视图。",
+      "collaborationUnavailable": "此引擎的协同任务请继续使用 GUI。",
+      "preparing": "准备中…",
+      "pendingHostInput": "有待处理事项 · 在 GUI 中查看",
+      "search": "搜索终端",
+      "smallerFont": "缩小字号",
+      "largerFont": "放大字号",
+      "previousMatch": "上一个匹配",
+      "nextMatch": "下一个匹配",
+      "closeSearch": "关闭搜索",
       "startupUnavailable": {
         "label": "TUI 暂不可用",
         "startup": "TUI 未能连接到此任务，可继续使用 GUI",

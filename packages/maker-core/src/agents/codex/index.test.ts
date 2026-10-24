@@ -4984,8 +4984,29 @@ describe('CodexAgent.refreshLocalModels', () => {
     const agent = new CodexAgent(createDeps({}, { createLocalCodexNativeService: () => service,
       createLocalCodexNativePresentation: resume, prepareLocalCodexNativePresentation: fresh, disableCodexPluginRuntime: true, ...deps }));
     return { agent, native, fresh, resume, close, delivered, pending: () => pending,
-      start: () => agent.startSession({ sessionId: 'native-presentation', model: 'gpt-5.4', workingDir: '/repo' }) };
+      start: (vendorOptions?: Record<string, unknown>) => agent.startSession({ sessionId: 'native-presentation', model: 'gpt-5.4', workingDir: '/repo', vendorOptions }) };
   }
+
+  it.each(['lead', 'worker'])('keeps native Orca %s identity and updates/clears the existing MCP context in place', async role => {
+    const contexts = vi.fn();
+    const f = freshPresentationFixture({}, { registerCodexMcpThreadContext: contexts });
+    try {
+      const handle = await f.start({ orcaRole: role, orcaWorkflowId: 'native-team', orcaLeadSessionId: 'native-lead' });
+      await handle.activatePresentation!(presentationOwner());
+      const runtime = handle.presentation, nativeId = handle.id;
+      const initial = contexts.mock.calls.at(-1)![0];
+      expect(initial.vendorOptions).toMatchObject({ orcaRole: role, orcaWorkflowId: 'native-team' });
+      await handle.setVendorOptions!({ orcaRole: 'lead', orcaWorkflowId: 'next-team' });
+      expect(contexts.mock.calls.at(-1)![0].vendorOptions).toBe(initial.vendorOptions);
+      expect(contexts.mock.calls.at(-1)![0].vendorOptions.orcaWorkflowId).toBe('next-team');
+      await handle.setVendorOptions!({ orcaRole: null, orcaWorkflowId: null, orcaLeadSessionId: null });
+      expect(contexts.mock.calls.at(-1)![0].vendorOptions.orcaRole).toBeNull();
+      expect(handle.id).toBe(nativeId); expect(handle.presentation).toBe(runtime);
+      expect(f.fresh).toHaveBeenCalledOnce(); expect(f.resume).not.toHaveBeenCalled();
+      expect(f.native.lines.map(line => JSON.parse(line)).filter(frame => frame.method === 'turn/start')).toEqual([]);
+      await handle.close();
+    } finally { await f.agent.dispose(); }
+  });
 
   it('returns the fresh handle at the owning-host ACK before Main releases the original TUI ACK', async () => {
     const f = freshPresentationFixture();

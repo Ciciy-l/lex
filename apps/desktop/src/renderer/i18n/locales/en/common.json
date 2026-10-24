@@ -9637,6 +9637,20 @@
   },
   "ccAgent": {
     "presentation": {
+      "guiSteerInTui": "Use TUI to add input during a response.",
+      "guiSteerQueued": "GUI input is queued for the next turn.",
+      "settingsNeedReopen": "Reopen the task while idle to change model or permission settings.",
+      "guiTreeUnavailable": "The GUI branch tree is not connected to this runtime yet.",
+      "sshUnavailable": "SSH tasks do not yet have a remote terminal view.",
+      "collaborationUnavailable": "Continue using GUI for collaboration tasks on this engine.",
+      "preparing": "Preparing…",
+      "pendingHostInput": "Action needed · Open in GUI",
+      "search": "Search terminal",
+      "smallerFont": "Decrease font size",
+      "largerFont": "Increase font size",
+      "previousMatch": "Previous match",
+      "nextMatch": "Next match",
+      "closeSearch": "Close search",
       "startupUnavailable": {
         "label": "TUI Unavailable",
         "startup": "TUI could not connect to this task. Continue in GUI.",

@@ -14,6 +14,8 @@ export type CapabilityStatus =
       reason: 'sdk-missing' | 'not-implemented' | 'platform-limited';
       /** 上游引用，便于跟踪修复（如 '@openai/codex-sdk Thread.setModel'） */
       upstreamRef?: string;
+      /** An available route for this GUI operation, rather than a native CLI restriction. */
+      recovery?: 'native-ui' | 'idle-restart';
       /** UI tooltip 文案 */
       message?: string;
     };

@@ -4,12 +4,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentNativeTerminal } from '../AgentNativeTerminal';
 import type { AgentTerminalReplay } from '../../../../shared/agentPresentation';
 
-const mock = vi.hoisted(() => ({ terminals: [] as any[], themes: new Set<() => void>() }));
+const mock = vi.hoisted(() => ({ terminals: [] as any[], themes: new Set<() => void>(), searches: [] as any[] }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock('@/themes/theme-service', () => ({ themeService: { onDidChangeTheme: (fn: () => void) => { mock.themes.add(fn); return () => mock.themes.delete(fn); } } }));
 vi.mock('../../right-sidebar/plugins/terminal/lib/xtermPool', () => ({ getTerminalTheme: () => ({}), openTerminalExternalLink: vi.fn() }));
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));
 vi.mock('@xterm/addon-web-links', () => ({ WebLinksAddon: class {} }));
+vi.mock('@xterm/addon-search', () => ({ SearchAddon: class {
+  constructor() { mock.searches.push(this); }
+  findPrevious = vi.fn(); findNext = vi.fn(); clearDecorations = vi.fn();
+} }));
 vi.mock('@xterm/xterm', () => ({ Terminal: class {
   options: any; cols = 80; rows = 24; input?: (data: string) => void;
   parser = { registerCsiHandler: () => ({ dispose() {} }), registerOscHandler: () => ({ dispose() {} }), registerDcsHandler: () => ({ dispose() {} }) };
@@ -18,7 +22,8 @@ vi.mock('@xterm/xterm', () => ({ Terminal: class {
   resize = vi.fn((cols: number, rows: number) => { this.cols = cols; this.rows = rows; });
   write = vi.fn((_text: string, callback: () => void) => callback());
   onData(fn: (data: string) => void) { this.input = fn; return { dispose() {} }; }
-  attachCustomKeyEventHandler() {} hasSelection() { return false; }
+  key?: (event: KeyboardEvent) => boolean;
+  attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) { this.key = handler; } hasSelection() { return false; }
 } }));
 
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((r) => { resolve = r; }); return { promise, resolve }; }
@@ -35,10 +40,75 @@ function fixture() {
   });
   return { invoke, read };
 }
-beforeEach(() => { mock.terminals.length = 0; vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} }); });
+beforeEach(() => { mock.terminals.length = 0; mock.searches.length = 0; vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} }); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('native task view', () => {
+  it('batches adjacent output without losing text, resize order or the authoritative cursor', async () => {
+    const f = fixture(), original = f.invoke.getMockImplementation()!;
+    const frames = Array.from({ length: 1000 }, (_, index) => ({ sequence: index + 1, data: 'row-' + index + '\r\n' }));
+    f.invoke.mockImplementation(request => request.action === 'attach'
+      ? Promise.resolve({ attachmentId: 'view', replay: replay({ frames }) }) : original(request));
+    render(<AgentNativeTerminal sessionId="task" active invoke={f.invoke} />);
+    await waitFor(() => expect(f.invoke).toHaveBeenCalledWith(expect.objectContaining({ action: 'read', afterSequence: 1000 })));
+    expect(mock.terminals[0].write.mock.calls.map((args: any[]) => args[0]).join('')).toBe(frames.map(frame => frame.data).join(''));
+    expect(mock.terminals[0].write).toHaveBeenCalledTimes(1);
+    expect(f.invoke.mock.calls.filter(([request]) => request.action === 'write')).toEqual([]);
+  });
+
+  it('keeps search and font changes local and does not consume IME composition keys', async () => {
+    const f = fixture(), parentKeyDown = vi.fn();
+    render(<div onKeyDown={parentKeyDown}><AgentNativeTerminal sessionId="task" active invoke={f.invoke} /></div>);
+    await waitFor(() => expect(mock.terminals[0].options.disableStdin).toBe(false));
+    const terminal = mock.terminals[0];
+    const composition = new KeyboardEvent('keydown', { key: 'Enter', isComposing: true });
+    expect(terminal.key(composition)).toBe(true);
+    fireEvent.click(screen.getByLabelText('ccAgent.presentation.search'));
+    const search = screen.getByRole('textbox');
+    fireEvent.change(search, { target: { value: '中文' } });
+    expect(mock.searches[0].findNext).toHaveBeenLastCalledWith('中文');
+    fireEvent.keyDown(search, { key: 'Enter', isComposing: true });
+    expect(mock.searches[0].findNext).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByLabelText('ccAgent.presentation.largerFont'));
+    expect(terminal.options.fontSize).toBe(14);
+    fireEvent.click(screen.getByLabelText('ccAgent.presentation.smallerFont'));
+    expect(terminal.options.fontSize).toBe(13);
+    parentKeyDown.mockClear();
+    fireEvent.keyDown(search, { key: 'Escape' });
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(parentKeyDown).not.toHaveBeenCalled();
+    expect(f.invoke.mock.calls.filter(([request]) => request.action === 'write')).toEqual([]);
+  });
+
+  it('stops remaining replay frames when disposed during an asynchronous batch before resize', async () => {
+    const f = fixture(), attached = deferred<unknown>();
+    const original = f.invoke.getMockImplementation()!;
+    f.invoke.mockImplementation(request => request.action === 'attach' ? attached.promise : original(request));
+    const ui = render(<AgentNativeTerminal sessionId="task" active={false} invoke={f.invoke} />);
+    const terminal = mock.terminals[0];
+    terminal.write.mockImplementation(() => {}); // xterm parsing callback is still pending at unmount.
+    await act(async () => { attached.resolve({ attachmentId: 'view', replay: replay({ frames: [
+      { sequence: 1, data: 'before-resize' },
+      { sequence: 2, data: 'after-resize', size: { cols: 100, rows: 30 } },
+    ] }) }); });
+    expect(terminal.write).toHaveBeenCalledOnce();
+    await act(async () => { ui.unmount(); });
+    expect(terminal.dispose).toHaveBeenCalledOnce();
+    expect(terminal.resize).not.toHaveBeenCalled();
+    expect(terminal.write).toHaveBeenCalledOnce();
+    expect(f.invoke).toHaveBeenCalledWith(expect.objectContaining({ action: 'detach' }));
+  });
+
+  it('throttles only hidden presentation reads and wakes immediately on reveal', async () => {
+    const f = fixture();
+    const ui = render(<AgentNativeTerminal sessionId="task" active={false} invoke={f.invoke} />);
+    await waitFor(() => expect(f.invoke).toHaveBeenCalledWith(expect.objectContaining({ action: 'attach' })));
+    expect(f.invoke.mock.calls.filter(([request]) => request.action === 'control')).toEqual([]);
+    expect(f.invoke.mock.calls.filter(([request]) => request.action === 'read')).toEqual([]);
+    ui.rerender(<AgentNativeTerminal sessionId="task" active invoke={f.invoke} />);
+    await waitFor(() => expect(f.invoke).toHaveBeenCalledWith(expect.objectContaining({ action: 'read' })));
+    expect(mock.terminals).toHaveLength(1);
+  });
   it('keeps the same terminal mounted while changing presentation, without launching a task', async () => {
     const f = fixture(); const ui = render(<AgentNativeTerminal sessionId="task" active invoke={f.invoke} />);
     await waitFor(() => expect(mock.terminals[0].options.disableStdin).toBe(false));
