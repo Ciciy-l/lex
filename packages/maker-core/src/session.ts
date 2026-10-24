@@ -441,7 +441,11 @@ export class Session {
   readonly instanceId: string;
   readonly agentKind: AgentKind;
   readonly workDir: string;
-  readonly capabilities: Capabilities;
+  private readonly baseCapabilities: Capabilities;
+  get capabilities(): Capabilities {
+    return this.handle.capabilityOverrides
+      ? { ...this.baseCapabilities, ...this.handle.capabilityOverrides } : this.baseCapabilities;
+  }
   /** 见 SessionOptions.remoteHostId。 */
   readonly remoteHostId: string | null;
 
@@ -633,7 +637,7 @@ export class Session {
     this.agentKind = opts.agentKind;
     this.workDir = opts.workDir;
     this.handle = opts.handle;
-    this.capabilities = opts.capabilities;
+    this.baseCapabilities = opts.capabilities;
     this.remoteHostId = opts.remoteHostId ?? null;
     this.logger = opts.logger.child(`s:${this.id}`);
     this.permissionModeStateValue = {

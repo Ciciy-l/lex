@@ -3,6 +3,7 @@ import { useRef } from 'react';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { useAgentPresentationFocus } from '../useAgentPresentationFocus';
+import { AgentPresentationLayout } from '../AgentPresentationLayout';
 
 function View({ mode, scope = 'owner/task', enabled = true }: {
   mode: 'gui' | 'tui'; scope?: string; enabled?: boolean;
@@ -10,10 +11,12 @@ function View({ mode, scope = 'owner/task', enabled = true }: {
   const container = useRef<HTMLDivElement>(null);
   useAgentPresentationFocus(container, mode, scope, enabled);
   return <div ref={container}>
-    <div data-chat-composer-stack>
-      <div contentEditable suppressContentEditableWarning data-testid="composer">unsent draft</div>
-    </div>
-    <button>Other control</button>
+    <AgentPresentationLayout mode={mode} inputWidth={934} inputPad={40}
+      terminal={<div>Terminal</div>} footer={<button>Other control</button>}>
+      <div data-chat-composer-stack>
+        <div contentEditable suppressContentEditableWarning data-testid="composer">unsent draft</div>
+      </div>
+    </AgentPresentationLayout>
   </div>;
 }
 
@@ -68,6 +71,16 @@ it('does not steal focus after the user selects another control', () => {
   const other = screen.getByRole('button'); other.focus();
   flushFrame();
   expect(document.activeElement).toBe(other);
+});
+
+it('restores the composer when the persistent footer was focused before switching to GUI', () => {
+  const ui = render(<View mode="tui" />);
+  const button = screen.getByRole('button');
+  button.focus();
+  ui.rerender(<View mode="gui" />);
+  expect(screen.getByRole('button')).toBe(button);
+  flushFrame();
+  expect(document.activeElement).toBe(screen.getByTestId('composer'));
 });
 
 it('does not focus a hidden, embedded or read-only view', () => {

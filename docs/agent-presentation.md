@@ -1,8 +1,39 @@
 # Lex GUI / native TUI implementation contract
 
-Status: implementation in progress for `0.1.7-rc.1`. This document records the
-accepted behavior and the evidence required before enabling it. It is not a claim
-that any engine has passed native or remote acceptance.
+Status: implementation contract with dated historical evidence. The current
+`0.1.10` scope is recorded below; older acceptance and pending notes describe
+their dated candidates, not the current support matrix. No local result implies
+all engines, real providers, packaged builds or remote transports passed.
+
+## Current source scope for 0.1.10
+
+- The shared footer stays mounted across GUI/TUI switches and wraps its directory
+  and usage groups in narrow panels. First preparation exposes a busy state; a
+  later GUI selection wins. Scope, owner and view changes fence late completion.
+  See `useAgentPresentation.ts` and its behavioral regressions.
+- Local Codex Lead/Worker tasks use the existing native host and dynamic Orca MCP
+  context. Entering and ending collaboration retain task/history identity; terminal
+  input still requires the single controller lease. Other engines' collaboration
+  preparation and SSH TUI are not enabled by this change. A shared-task guest
+  still cannot use the native terminal channel.
+- Runtime capability projection comes from the current handle, without changing
+  the engine catalogue or another task. Native Pi/OMP GUI steer and branch-tree
+  gaps, and Claude native runtime setting gaps, remain bridge limitations rather
+  than claims about upstream CLI capabilities. Pi packages and extensions retain
+  their existing native installation and loading paths.
+- A pending host-action entry in TUI opens the original GUI request; it does not
+  duplicate approval state. Search and font controls operate on the existing
+  terminal. Hidden display reads are throttled and adjacent frames batched;
+  authoritative task events, approvals and queues continue. Recovery uses the
+  existing bounded replay/snapshot, and uncertain input is never replayed.
+- A local worktree draft can enter TUI through the existing compensated worktree
+  preparation transaction. Device Link, SSH and collaboration drafts retain
+  their separate entry guards.
+
+The additional native collaboration window evidence is Windows with an isolated
+profile and loopback fake provider. Other OSes, real models, remote multi-device
+control and OS-level IME are not established by that evidence. Display-operation
+counts are not a native rendering, CPU or FPS benchmark.
 
 ## One running task, two presentations
 

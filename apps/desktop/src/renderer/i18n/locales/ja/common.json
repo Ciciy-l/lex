@@ -9622,6 +9622,20 @@
   },
   "ccAgent": {
     "presentation": {
+      "guiSteerInTui": "応答中の追加入力は TUI で操作してください。",
+      "guiSteerQueued": "GUI の入力は次のターンに送られます。",
+      "settingsNeedReopen": "モデルや権限を変更するには、タスクが待機中に開き直してください。",
+      "guiTreeUnavailable": "このランタイムは GUI の分岐ツリーに未接続です。",
+      "sshUnavailable": "SSH タスクのリモートターミナル表示は未対応です。",
+      "collaborationUnavailable": "このエンジンの協同タスクでは GUI をお使いください。",
+      "preparing": "準備中…",
+      "pendingHostInput": "確認が必要です · GUI で開く",
+      "search": "ターミナルを検索",
+      "smallerFont": "文字を小さくする",
+      "largerFont": "文字を大きくする",
+      "previousMatch": "前の一致",
+      "nextMatch": "次の一致",
+      "closeSearch": "検索を閉じる",
       "startupUnavailable": {
         "label": "TUI は利用できません",
         "startup": "TUI をこのタスクに接続できませんでした。GUI を引き続き利用できます。",

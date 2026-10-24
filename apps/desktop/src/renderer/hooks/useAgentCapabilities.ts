@@ -10,12 +10,15 @@
  *   const { capabilities } = useAgentCapabilities('claude-code');
  *   capabilities?.availableModels.map(...);
  */
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
+import type { AgentRuntimeSnapshot } from '../../shared/agentPresentation';
 
 import { createLogger } from '@/lib/logger';
 import type { Effort, PermissionMode } from '@/lib/userPreferences.types';
 
 const log = createLogger('useAgentCapabilities');
+/** Exact task projection only; never written into the agent/device catalogue cache. */
+export const AgentRuntimeCapabilitiesContext = createContext<{ deviceId?: string; runtime?: AgentRuntimeSnapshot }>({});
 
 export type AgentKind = 'claude-code' | 'codex' | 'pi' | 'omp';
 
@@ -82,9 +85,15 @@ export type CapabilityStatus =
       reason?: 'sdk-missing' | 'not-implemented' | 'platform-limited';
       upstreamRef?: string;
       message?: string;
+      recovery?: 'native-ui' | 'idle-restart';
     };
 
 export interface AgentCapabilities {
+  switchModel?: CapabilityStatus;
+  effort?: CapabilityStatus;
+  setPermissionModeMidSession?: CapabilityStatus;
+  sameTurnSteer?: CapabilityStatus;
+  sessionTree?: CapabilityStatus;
   availableModels: ModelDescriptor[];
   /** Agent 是否实现 Fast Mode 运行时能力。 */
   hasFastMode: boolean;
@@ -461,7 +470,10 @@ export interface UseAgentCapabilitiesResult {
 export function useAgentCapabilities(
   agentKind: AgentKind | null | undefined,
   deviceId?: string,
+  runtime?: AgentRuntimeSnapshot,
 ): UseAgentCapabilitiesResult {
+  const inherited = useContext(AgentRuntimeCapabilitiesContext);
+  const effective = runtime ?? (inherited.deviceId === deviceId ? inherited.runtime : undefined);
   const selectedKey = agentKind ? cacheKey(agentKind, deviceId) : null;
   const initialCapabilities = selectedKey ? cache.get(selectedKey) : undefined;
   const [ownerKey, setOwnerKey] = useState<CacheKey | null>(
@@ -566,7 +578,8 @@ export function useAgentCapabilities(
 
   const ownsSelection = ownerKey === selectedKey;
   return {
-    capabilities: ownsSelection ? capabilities : null,
+    capabilities: ownsSelection && capabilities
+      ? effective && effective.agentKind === agentKind ? { ...capabilities, ...effective.capabilities } : capabilities : null,
     loading: selectedKey !== null && (!ownsSelection || loading),
     error: ownsSelection ? error : null,
   };

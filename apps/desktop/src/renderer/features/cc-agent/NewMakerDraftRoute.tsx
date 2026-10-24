@@ -3029,18 +3029,32 @@ export function NewMakerDraftRoute() {
   // Never silently discard a selected worktree, remote target or collaboration.
   const canShowDraftNative = !isDeviceLinkDraft &&
     !isRemoteProjectDraft && !effectiveRemoteHostId && !effectiveCollab.enabled &&
-    !wtEnabled && !!draftInitialModel && !showProviderOnboardingCard;
+    !!draftInitialModel && !showProviderOnboardingCard;
   const canOpenDraftNative = canShowDraftNative && hasLocalNativePresentation(persistedAgentKind);
   const handleDraftPresentation = async (mode: 'gui' | 'tui') => {
     if (mode !== 'tui' || !canOpenDraftNative || sendInFlightRef.current) return;
     const owner = getDataOwnerGeneration();
     const isCurrent = () => nativeDraftMounted.current &&
       owner.dataOwnerId === dataOwnerId && isDataOwnerGenerationCurrent(owner);
+    const assertCurrent = () => { if (!isCurrent()) throw new Error('Draft task owner changed'); };
+    const wt = { ...wtRef.current };
+    const useWorktree = wt.enabled && wt.confirmedIneligible !== true && !!effectiveWorkingDir;
+    if (wtPreferenceSavingRef.current || wtPreferenceAuthorityUnknownRef.current ||
+      (useWorktree && (!wt.baseRepo || !wt.branchPreferenceReady || wtBranchPreferenceSavingRef.current))) {
+      toast.warning(t('ccAgent.draft.deviceStillLoading'));
+      return;
+    }
     markSendInFlight(true);
     setNativeDraftOpening(true);
     try {
       const { proceed } = await vendorAuthGate.checkAndConfirm(authVendor);
       if (!proceed || !isCurrent()) return;
+      let worktreeName = wt.name.trim();
+      if (useWorktree && !worktreeName) {
+        const suggestion = await window.electronAPI.worktreeSuggestName({ baseRepo: wt.baseRepo! });
+        assertCurrent();
+        worktreeName = suggestion.name?.trim() || `auto-${Date.now().toString(36).slice(-6)}`;
+      }
       // Persist the ordinary unnamed task, without sending, titling, or creating
       // an upstream thread here. SessionView uses the existing startup receipt.
       const newSession = await createSession({
@@ -3051,7 +3065,7 @@ export function NewMakerDraftRoute() {
         permissionMode: chatInitialPermissionMode,
         fastMode: effectiveFastMode,
         planModeEnabled: effectivePlanMode,
-        workingDir: effectiveWorkingDir ?? undefined,
+        workingDir: useWorktree ? wt.baseRepo! : effectiveWorkingDir ?? undefined,
         workspaceKind: effectiveWorkingDir ? 'project' : 'dialogue',
         extraDirs: effectiveExtraDirs,
         writableDirs: effectiveWritableDirs,
@@ -3059,6 +3073,22 @@ export function NewMakerDraftRoute() {
       });
       if (!isCurrent()) return;
       if (!newSession) { toastCreateSessionFailed(); return; }
+      if (useWorktree) {
+        await prepareLocalGoalWorktree({
+          sessionId: newSession.id, baseRepo: wt.baseRepo!, name: worktreeName,
+          initialBranchName: getBranchName(worktreeName), sourceBranch: wt.sourceBranch.trim() || 'HEAD',
+          createWorktree: request => { assertCurrent(); return window.electronAPI.worktreeCreate(request); },
+          updateWorkingDir: async managedDir => { assertCurrent(); await sessionService.update(newSession.id, { workingDir: managedDir }); assertCurrent(); },
+          patchWorkingDir: managedDir => { assertCurrent(); sessionsStore.patchLocal(newSession.id, { workingDir: managedDir }); },
+          rollbackSession: async () => { assertCurrent(); await sessionService.setStatus(newSession.id, 'deleted'); assertCurrent(); },
+          patchDeleted: () => { assertCurrent(); sessionsStore.patchLocal(newSession.id, { status: 'deleted' }); },
+          setProgress: progress => { if (isCurrent()) worktreeCreationStore.set(newSession.id, progress); },
+          clearProgress: () => { if (isCurrent()) worktreeCreationStore.clear(newSession.id); },
+        });
+        assertCurrent();
+        await refreshWorktreeForSession(newSession.id);
+        assertCurrent();
+      }
       carryDraftFavoriteAnchorToSession(newSession.id, persistedAgentKind,
         draftInitialModel, chatInitialProviderId ?? null);
       const composer = getComposerDraft(NEW_MAKER_DRAFT_KEY);

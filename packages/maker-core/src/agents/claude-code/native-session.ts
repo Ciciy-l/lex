@@ -211,6 +211,13 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
     get id() { return initialized ? options.runtime.nativeSessionId : '<pending>'; },
     requestSessionId: options.runtime.nativeSessionId, agentKind: 'claude-code', model: options.model,
     presentation: native.presentation,
+    capabilityOverrides: {
+      sameTurnSteer: { supported: false, reason: 'not-implemented' },
+      switchModel: { supported: false, reason: 'not-implemented', recovery: 'idle-restart' },
+      effort: { supported: false, reason: 'not-implemented', recovery: 'idle-restart' },
+      setPermissionModeMidSession: { supported: false, reason: 'not-implemented', recovery: 'idle-restart' },
+      planMode: { supported: false, reason: 'not-implemented' },
+    },
     setNativeInputResolver(next, media) { requireLive(); resolver = next; importMedia = media; },
     setInteractionResolver(next) { requireLive(); options.policy.setInteractionResolver(next); },
     async setExtraDirs(dirs) {

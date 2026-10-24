@@ -131,6 +131,10 @@ export class PiNativeSessionControl implements PiSessionControl {
     this.requireLive(); this.prepareInput = prepare;
     const send = handle.send.bind(handle);
     return { ...handle, get id() { return handle.id; }, get model() { return handle.model; }, presentation: this.presentation,
+    capabilityOverrides: { ...handle.capabilityOverrides,
+      sameTurnSteer: { supported: false, reason: 'not-implemented', recovery: 'native-ui' },
+      rewind: { supported: false, reason: 'not-implemented' },
+      sessionTree: { supported: false, reason: 'not-implemented' } },
     setNativeInputResolver: (resolver, importMedia) => { this.requireLive(); this.resolver = resolver; this.importMedia = importMedia; },
     send: async (message, options = {}) => {
       this.requireLive();

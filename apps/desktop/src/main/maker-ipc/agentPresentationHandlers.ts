@@ -1,6 +1,6 @@
 import type { IpcMainInvokeEvent } from 'electron';
 import type { AgentSessionPresentation } from '@cindy/maker-core';
-import { AGENT_PRESENTATION_CHANNEL } from '../../shared/agentPresentation.js';
+import { AGENT_PRESENTATION_CHANNEL, type AgentRuntimeSnapshot } from '../../shared/agentPresentation.js';
 import { getDeviceLinkInvokeContext } from '../device-link/invoke-context.js';
 import { getCurrentDbClientSnapshot } from '../localDb/client/current.js';
 import { isAppSessionBoundaryPending } from '../appSessionState.js';
@@ -11,8 +11,9 @@ import { throwIpcError } from '../utils/ipcValidate.js';
 export { AGENT_PRESENTATION_CHANNEL };
 
 export function createAgentPresentationHandler(resolve: (sessionId: string) => AgentSessionPresentation | undefined,
-  initialization?: (sessionId: string) => PresentationInitialization | undefined) {
-  const service = new AgentPresentationService(resolve, Date.now, initialization);
+  initialization?: (sessionId: string) => PresentationInitialization | undefined,
+  runtimeSnapshot?: (sessionId: string) => AgentRuntimeSnapshot | undefined) {
+  const service = new AgentPresentationService(resolve, Date.now, initialization, runtimeSnapshot);
   const windows = new Set<number>();
   return {
     close: () => service.close(),

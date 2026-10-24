@@ -2290,6 +2290,8 @@ export interface AgentMcpServerToolsReport {
 }
 
 export interface AgentSessionHandle {
+  /** GUI bridge capabilities of this incarnation; never changes native CLI features. */
+  readonly capabilityOverrides?: Partial<Capabilities>;
   /** Native composer admission. A missing resolver must refuse provider execution. */
   setNativeInputResolver?(resolver: AgentNativeInputResolver, importMedia?: AgentNativeMediaResolver): void;
   /** Native menus share the product runtime-selection transaction. */

@@ -5,7 +5,7 @@ import { bindNativeSessionRuntime, type NativeRuntimeBindingDeps } from './nativ
 import { bindNativeSessionStop, type NativeStopBindingDeps } from './nativeStopBinding.js';
 import { assertNotRetiredCompanionSession } from '../localDb/retiredCompanions.js';
 import { createAgentPresentationHandler, AGENT_PRESENTATION_CHANNEL } from './agentPresentationHandlers.js';
-import { hasLocalNativePresentation } from '../../shared/agentPresentation.js';
+import { canPrepareLocalNativePresentation } from '../../shared/agentPresentation.js';
 import { resolveSafe as resolveCindyMediaUrl } from '../cindy-media/blobStore.js';
 import { getSessionFsSnapshot } from '../localDb/ipc/sessions.js';
 import { isModelSelectableForNewRoute } from '@cindy/model-providers';
@@ -4934,6 +4934,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     if (!session || !settled) return undefined;
     const nativeId = session.sdkSessionId;
     return { settled, isCurrent: () => maker.getSession(sessionId) === session && session.sdkSessionId === nativeId };
+  }, sessionId => {
+    const session = maker.getSession(sessionId);
+    if (!session) return undefined;
+    const { switchModel, effort, setPermissionModeMidSession, planMode, sameTurnSteer, sessionTree, fork, rewind, manualCompact } = session.capabilities;
+    return { agentKind: session.agentKind, capabilities: { switchModel, effort, setPermissionModeMidSession, planMode, sameTurnSteer, sessionTree, fork, rewind, manualCompact } };
   });
   ipcMain.removeHandler(AGENT_PRESENTATION_CHANNEL);
   ipcMain.handle(AGENT_PRESENTATION_CHANNEL, presentationHandler.handle);
@@ -6978,7 +6983,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     const sessionBeforeCreate = o.id ? maker.getSession(o.id) : undefined;
     // Codex GUI/TUI shares its host from creation. Other interactive adapters
     // enter only on explicit selection; their ordinary GUI/utility SDK stays intact.
-    const localNative = hasLocalNativePresentation(o.agentKind) && !o.remoteHostId && !o.reviewMode && !o.orcaRole;
+    const localNative = canPrepareLocalNativePresentation(o);
     if (o.requireNativePresentation === true && !localNative) {
       throwIpcError('UNSUPPORTED_CAPABILITY', 'This task has no native presentation transport');
     }

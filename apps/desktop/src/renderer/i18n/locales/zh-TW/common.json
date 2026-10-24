@@ -9622,6 +9622,20 @@
   },
   "ccAgent": {
     "presentation": {
+      "guiSteerInTui": "執行中補充輸入請在 TUI 中操作。",
+      "guiSteerQueued": "GUI 輸入會排到下一輪。",
+      "settingsNeedReopen": "模型或權限設定需在任務閒置後重新開啟。",
+      "guiTreeUnavailable": "此執行階段尚未接入 GUI 分支樹。",
+      "sshUnavailable": "SSH 任務尚無遠端終端視圖。",
+      "collaborationUnavailable": "此引擎的協同任務請繼續使用 GUI。",
+      "preparing": "準備中…",
+      "pendingHostInput": "有待處理事項 · 在 GUI 中檢視",
+      "search": "搜尋終端",
+      "smallerFont": "縮小字級",
+      "largerFont": "放大字級",
+      "previousMatch": "上一個符合項目",
+      "nextMatch": "下一個符合項目",
+      "closeSearch": "關閉搜尋",
       "startupUnavailable": {
         "label": "TUI 暫時無法使用",
         "startup": "TUI 未能連線至此任務，可繼續使用 GUI",

@@ -265,6 +265,11 @@ export async function createOmpNativeSession(options: OmpNativeTerminalOptions):
     // Admission is held before Session reserves the turn. Reporting it as a
     // running turn would make Session reject this very native input.
     isTurnRunning: () => Boolean(gui || activeInput),
+    capabilityOverrides: {
+      sameTurnSteer: { supported: false, reason: 'not-implemented', recovery: 'native-ui' },
+      setPermissionModeMidSession: { supported: false, reason: 'not-implemented', recovery: 'idle-restart' },
+      sessionTree: { supported: false, reason: 'not-implemented' },
+    },
     requiresModelSwitchRebuild: (model, selection) => model !== options.model ||
       (selection?.providerId != null && selection.providerId !== options.providerId),
     async setModel(model, selection) {
