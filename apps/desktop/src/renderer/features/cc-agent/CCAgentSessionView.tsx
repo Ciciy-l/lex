@@ -1,4 +1,5 @@
 import { AgentNativeTerminal } from './AgentNativeTerminal';
+import { AgentPresentationLayout } from './AgentPresentationLayout';
 import { AgentPresentationSwitch, AgentPresentationUnavailable } from './AgentPresentationSwitch';
 import { hasLocalNativePresentation } from '../../../shared/agentPresentation';
 import { useAgentPresentation } from './useAgentPresentation';
@@ -4465,10 +4466,12 @@ export function CCAgentSessionView({
     !pendingPlanReview &&
     (agentStatus.isRunning || backgroundTasksActive || runningWorkflow !== null);
 
+  // F-FP-5: reserve the working-directory row even before session metadata arrives.
+  // Worktree creation/failure replaces its contents without moving the mode switch.
   const conversationFooter = (
                 <div
                   className={cn(
-                    'mt-1.5 flex w-full items-center justify-between gap-3 px-1',
+                    'flex w-full items-center justify-between gap-3 px-1',
                     !session?.workingDir && !worktreeCreation && 'invisible',
                   )}
                 >
@@ -4622,7 +4625,7 @@ export function CCAgentSessionView({
   );
 
   const content = (
-    // Layout: single scroll container (full height) + sticky input overlay at bottom.
+    // Layout: presentation body with a GUI input overlay + one persistent task footer.
     // FP-7: when the Plan Viewer is expanded/edit, the viewer needs to occupy
     // the full bottom region — we disable pointer-events-none on the overlay
     // in that case so the card catches scroll/click events without a wrapper
@@ -4761,7 +4764,15 @@ export function CCAgentSessionView({
           }
         }}
       >
-        <div className={presentation.mode === 'tui' ? 'hidden' : 'contents'} inert={presentation.mode === 'tui' ? true : undefined}>
+        <AgentPresentationLayout
+          mode={presentation.mode}
+          inputWidth={inputWidth}
+          inputPad={inputPad}
+          footer={conversationFooter}
+          terminal={presentation.supported && sessionId ? (
+            <AgentNativeTerminal key={presentation.generation} sessionId={sessionId} active={presentation.mode === 'tui' && viewVisible} invoke={presentation.invoke} onReconnect={presentation.reconnect} />
+          ) : null}
+        >
         {showOrcaLeadIdentityBar && (
           <div className="flex h-8 shrink-0 select-none items-center border-b border-border/40 px-3 text-11 font-medium leading-none text-muted-foreground">
             <span className="min-w-0 flex flex-1 items-center gap-1.5 truncate">
@@ -4834,7 +4845,8 @@ export function CCAgentSessionView({
           </div>
         )}
 
-        {/* Scroll container — full height, bottom padding reserves space for input overlay.
+        {/* Scroll container — body height, bottom padding reserves only the input overlay.
+           The persistent footer has its own layout space below this body.
            key={sessionId}: force a full remount on session switch so scroll state,
            refs, and ResizeObservers are fresh — guarantees per-session isolation. */}
         <div
@@ -4854,7 +4866,7 @@ export function CCAgentSessionView({
 
         {/* Input overlay — sticky at bottom with gradient fade.
            左右 padding 由 useProportionalWidth.inputPad 计算:默认 40,compact
-           rail 为 0。inputWidth = messageWidth + 20,每侧多 10px,正好填满 overlay。 */}
+           rail 为 10。inputWidth = messageWidth + 20,每侧多 10px,正好填满 overlay。 */}
         <div
           ref={overlayRef}
           style={{ left: inputPad, right: inputPad }}
@@ -4866,7 +4878,7 @@ export function CCAgentSessionView({
           </div>
 
           {/* Solid background zone */}
-          <div className="wallpaper-composer-zone pointer-events-auto flex w-full flex-col items-center bg-[hsl(var(--content-area))] pb-5">
+          <div className="wallpaper-composer-zone pointer-events-auto flex w-full flex-col items-center bg-[hsl(var(--content-area))]">
             {/* 单行 composer 状态层：RunningStatusBar 与中央胶囊组合叠在同一个 grid row。
               展开态由「计划 + 完整被控提示」组成真实 flex 组合共同居中,被控提示会把计划
               向左挤且不会互相覆盖；折叠态计划恢复单独居中,呼吸灯移到 token 统计左侧。 */}
@@ -5395,13 +5407,6 @@ export function CCAgentSessionView({
                   }
                 />
               )}
-
-              {/* F-FP-5: workingDir — always rendered to prevent layout shift
-                worktree-parallel-sessions:worktree 创建过程的反馈(creating/failed)
-                也复用这一行 inline 显示,替换原 Monitor+basename chip。完成后 store
-                自动 clear,UI 回到正常显示。设计参考用户反馈"把这部分的体验逻辑放到
-                chatinput 底部 显示 work dir 的地方"——不再在 chat stream 插 SystemCard。 */}
-              {presentation.mode === 'gui' && conversationFooter}
             </div>
           </div>
         </div>
@@ -5417,13 +5422,7 @@ export function CCAgentSessionView({
             rightSidebarCollapsed &&
             rightSidebarSide === 'right' && <div aria-hidden className="h-7 w-7 shrink-0" />}
         </TopRightChipStack>
-        </div>
-        {presentation.supported && sessionId && (
-          <div className={presentation.mode === 'tui' ? 'min-h-0 flex-1' : 'hidden'}>
-            <AgentNativeTerminal key={presentation.generation} sessionId={sessionId} active={presentation.mode === 'tui' && viewVisible} invoke={presentation.invoke} onReconnect={presentation.reconnect} />
-          </div>
-        )}
-        {presentation.mode === 'tui' && <div className="shrink-0 px-3 pb-3">{conversationFooter}</div>}
+        </AgentPresentationLayout>
       </section>
     </>
   );

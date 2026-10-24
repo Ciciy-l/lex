@@ -476,6 +476,7 @@ export function catalogSurfaces() {
       ],
       styleRoots: [
         'apps/desktop/src/renderer/features/cc-agent/CCAgentSessionView.tsx',
+        'apps/desktop/src/renderer/features/cc-agent/AgentPresentationLayout.tsx',
         'apps/desktop/src/renderer/features/cc-agent/CCAgentFeatureLayout.tsx',
         'apps/desktop/src/renderer/components/chat',
         'apps/desktop/src/renderer/components/new-chat',
