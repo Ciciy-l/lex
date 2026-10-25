@@ -5,9 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { OrcaWorkerPanel } from '../OrcaWorkerPanel';
 import { requestNewWorkerFromShortcut } from '../lib/newWorkerShortcut';
+import { setDataOwnerGeneration } from '@/contexts/dataOwnerGeneration';
 
 const mocks = vi.hoisted(() => ({
   hardLimit: 2,
+  createOpen: false,
   refreshCreationState: vi.fn(),
   setCreateOpen: vi.fn(),
   toastError: vi.fn(),
@@ -39,7 +41,7 @@ vi.mock('../hooks/useOrcaWorkerSelection', () => ({
     selectedWorkerRecord: null,
     selectedWorkerId: null,
     workerSessionId: null,
-    createOpen: false,
+    createOpen: mocks.createOpen,
     setCreateOpen: mocks.setCreateOpen,
     handleCreateWorker: vi.fn(),
     handleSwitchFocus: vi.fn(),
@@ -59,6 +61,7 @@ function deferred<T>() {
 describe('OrcaWorkerPanel New Maker shortcut', () => {
   beforeEach(() => {
     mocks.hardLimit = 2;
+    mocks.createOpen = false;
     mocks.refreshCreationState.mockReset();
     mocks.setCreateOpen.mockReset();
     mocks.toastError.mockReset();
@@ -67,6 +70,38 @@ describe('OrcaWorkerPanel New Maker shortcut', () => {
 
   afterEach(() => {
     cleanup();
+  });
+
+  it.each(['hide and return', 'lead', 'device', 'remote host', 'owner', 'unmount'])('discards a pending mouse open after %s', async change => {
+    const pending = deferred<unknown>();
+    mocks.refreshCreationState.mockReturnValue(pending.promise);
+    const panel = render(<OrcaWorkerPanel leadSessionId="lead-1" deviceId={null} viewVisible />);
+    act(() => (mocks.toolbarProps.onOpenCreate as () => void)());
+    expect(mocks.refreshCreationState).toHaveBeenCalledOnce();
+    if (change === 'unmount') panel.unmount();
+    else if (change === 'owner') { setDataOwnerGeneration('another-owner'); setDataOwnerGeneration(null); }
+    else if (change === 'hide and return') {
+      panel.rerender(<OrcaWorkerPanel leadSessionId="lead-1" deviceId={null} viewVisible={false} />);
+      panel.rerender(<OrcaWorkerPanel leadSessionId="lead-1" deviceId={null} viewVisible />);
+    } else panel.rerender(<OrcaWorkerPanel leadSessionId={change === 'lead' ? 'lead-2' : 'lead-1'}
+      deviceId={change === 'device' ? 'device-2' : null} remoteHostId={change === 'remote host' ? 'host-2' : undefined} viewVisible />);
+    await act(async () => pending.resolve({ status: 'applied', workers: [], hardLimit: 2 }));
+    expect(mocks.setCreateOpen).not.toHaveBeenCalledWith(true);
+    expect(mocks.toastError).not.toHaveBeenCalled();
+  });
+
+  it('coalesces mouse and shortcut opens while refreshing, then permits a fresh open', async () => {
+    const pending = deferred<unknown>();
+    mocks.refreshCreationState.mockReturnValue(pending.promise);
+    render(<OrcaWorkerPanel leadSessionId="lead-1" deviceId={null} viewVisible />);
+    act(() => { (mocks.toolbarProps.onOpenCreate as () => void)(); (mocks.toolbarProps.onOpenCreate as () => void)(); });
+    const shortcut = requestNewWorkerFromShortcut();
+    expect(mocks.refreshCreationState).toHaveBeenCalledOnce();
+    await act(async () => pending.resolve({ status: 'applied', workers: [], hardLimit: 2 }));
+    await shortcut;
+    expect(mocks.setCreateOpen).toHaveBeenCalledTimes(1);
+    act(() => (mocks.toolbarProps.onOpenCreate as () => void)());
+    await waitFor(() => expect(mocks.setCreateOpen).toHaveBeenCalledTimes(2));
   });
 
   it('opens the existing create dialog only from the visible collaboration panel', async () => {
@@ -80,6 +115,36 @@ describe('OrcaWorkerPanel New Maker shortcut', () => {
     await expect(requestNewWorkerFromShortcut()).resolves.toBe(true);
     expect(mocks.refreshCreationState).toHaveBeenCalledOnce();
     expect(mocks.setCreateOpen).toHaveBeenCalledWith(true);
+  });
+
+  it('does not start another open transaction while the dialog is already open', async () => {
+    mocks.createOpen = true;
+    render(<OrcaWorkerPanel leadSessionId="lead-1" deviceId={null} viewVisible />);
+    await expect(requestNewWorkerFromShortcut()).resolves.toBe(true);
+    expect(mocks.refreshCreationState).not.toHaveBeenCalled();
+    expect(mocks.setCreateOpen).not.toHaveBeenCalled();
+  });
+
+  it.each(['failed', 'rejected'])('reports a current mouse refresh %s without opening', async failure => {
+    if (failure === 'rejected') mocks.refreshCreationState.mockRejectedValue(new Error('unavailable'));
+    else mocks.refreshCreationState.mockResolvedValue({ status: 'failed', workers: [], hardLimit: null });
+    render(<OrcaWorkerPanel leadSessionId="lead-1" deviceId={null} viewVisible />);
+    act(() => (mocks.toolbarProps.onOpenCreate as () => void)());
+    await waitFor(() => expect(mocks.toastError).toHaveBeenCalledOnce());
+    expect(mocks.setCreateOpen).not.toHaveBeenCalled();
+  });
+
+  it('allows a new owner to open while an old owner refresh is still pending', async () => {
+    const old = deferred<unknown>();
+    mocks.refreshCreationState.mockReturnValueOnce(old.promise).mockResolvedValue({ status: 'applied', workers: [], hardLimit: 2 });
+    render(<OrcaWorkerPanel leadSessionId="lead-1" deviceId={null} viewVisible />);
+    act(() => (mocks.toolbarProps.onOpenCreate as () => void)());
+    setDataOwnerGeneration('next-owner');
+    act(() => (mocks.toolbarProps.onOpenCreate as () => void)());
+    await waitFor(() => expect(mocks.setCreateOpen).toHaveBeenCalledOnce());
+    await act(async () => old.resolve({ status: 'failed', workers: [], hardLimit: null }));
+    expect(mocks.setCreateOpen).toHaveBeenCalledOnce();
+    expect(mocks.toastError).not.toHaveBeenCalled();
   });
 
   it('consumes the shortcut without opening when the refreshed team is at the hard limit', async () => {

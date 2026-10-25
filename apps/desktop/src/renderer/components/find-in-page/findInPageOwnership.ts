@@ -10,23 +10,23 @@
  * 一 target 同 phase 的监听按注册顺序触发,App 根的 bar 先注册,先跑,
  * 后挂的接管者来不及拦。
  *
- * 这里用引用计数:接管者 mount 时 acquire,unmount 时 release。FindInPageBar
- * 自己的 handler 内部检查计数,>0 就直接 bail,让位给接管者。这样谁先注册
- * 都不影响。计数而非布尔是为了保证嵌套/并发的 mount 也能正确 release。
+ * 每个接管者持有独立令牌,卸载时 release。FindInPageBar 的 handler 检查
+ * 当前有效令牌,让位给接管者,与监听注册顺序无关。焦点作用域可提供即时
+ * 校验:被聚焦节点移除时浏览器不一定发 blur/focusout,旧令牌不能阻挡全局
+ * 查找。只在查询时检查少量持有者,不观察 DOM 变更或扫描终端输出。
  */
 
-let claimCount = 0;
+const claims = new Set<{ isCurrent?: () => boolean }>();
 
-export function acquireFindInPage(): () => void {
-  claimCount += 1;
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    claimCount = Math.max(0, claimCount - 1);
-  };
+export function acquireFindInPage(isCurrent?: () => boolean): () => void {
+  const claim = { isCurrent };
+  claims.add(claim);
+  return () => { claims.delete(claim); };
 }
 
 export function isFindInPageClaimed(): boolean {
-  return claimCount > 0;
+  for (const claim of claims) {
+    if (!claim.isCurrent || claim.isCurrent()) return true;
+  }
+  return false;
 }

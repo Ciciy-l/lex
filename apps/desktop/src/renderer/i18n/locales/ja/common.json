@@ -9622,6 +9622,7 @@
   },
   "ccAgent": {
     "presentation": {
+      "inputRejected": "今回の入力は送信されていません。内容が長すぎるか、送信待ちの入力があります。しばらく待ってから分けて貼り付けてください（1 回につき最大 1 MiB）。",
       "guiSteerInTui": "応答中の追加入力は TUI で操作してください。",
       "guiSteerQueued": "GUI の入力は次のターンに送られます。",
       "settingsNeedReopen": "モデルや権限を変更するには、タスクが待機中に開き直してください。",

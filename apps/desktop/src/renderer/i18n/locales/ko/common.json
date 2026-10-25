@@ -9622,6 +9622,7 @@
   },
   "ccAgent": {
     "presentation": {
+      "inputRejected": "이번 입력은 전송되지 않았습니다. 내용이 너무 크거나 다른 입력이 전송 대기 중입니다. 잠시 후 나누어 붙여넣으세요(한 번에 최대 1 MiB).",
       "guiSteerInTui": "응답 중 추가 입력은 TUI에서 하세요.",
       "guiSteerQueued": "GUI 입력은 다음 턴의 대기열에 추가됩니다.",
       "settingsNeedReopen": "모델이나 권한 설정을 바꾸려면 작업이 대기 중일 때 다시 여세요.",

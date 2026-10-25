@@ -5,6 +5,37 @@ Status: implementation contract with dated historical evidence. The current
 their dated candidates, not the current support matrix. No local result implies
 all engines, real providers, packaged builds or remote transports passed.
 
+## Terminal view refinements after 0.1.10
+
+The terminal view waits for a superseded control request's lease release before
+honoring a rapid GUI→TUI return. It requests ordinary control once; another
+window's lease keeps it an observer until explicit takeover. No pending input is
+replayed. Late control replies preserve focus moved to search or another input.
+Search retains its query and restores the highlight when reopened; its toolbar
+and search controls support Tab without consuming the native terminal's keys.
+The app's configured find shortcut belongs to the focused, visible terminal,
+using the existing find-ownership contract; other panels retain global search.
+Escape from search controls closes search and returns focus only to the active
+controller. IME composition keys keep their native handling.
+
+Accepted input is sent serially in UTF-8-safe packets of at most 64 KiB. The
+renderer bounds its pending input to 1 MiB and 256 events; a new over-budget
+event is rejected before dispatch with a dismissible localized explanation,
+without releasing a healthy lease or dropping earlier accepted events. It does
+not retain that rejected input: the user must explicitly paste a smaller part.
+Uncertain writes, revoked leases and disposed owners stop the remaining queue
+without replay. Switching to GUI still drains accepted text/Enter on its valid
+lease before release. This is transport acceptance, not proof of native prompt
+consumption, and never adds an Enter.
+
+Worker creation via the mouse or shortcut shares one refresh transaction.
+Hiding/unmounting the panel, changing Lead/device/remote host, or advancing the
+data-owner generation invalidates the pending open; returning does not reopen
+it. Repeated requests during the same refresh coalesce, and the authoritative
+hard limit still applies. Existing Worker views and their drafts stay mounted.
+See `AgentNativeTerminal.tsx` and its behavioral regressions. This changes local
+presentation only, not engine support, task/history identity or host permissions.
+
 ## Current source scope for 0.1.10
 
 - The shared footer stays mounted across GUI/TUI switches and wraps its directory
