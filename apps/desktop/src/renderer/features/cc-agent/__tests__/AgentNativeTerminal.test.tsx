@@ -1,12 +1,16 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentNativeTerminal } from '../AgentNativeTerminal';
 import { useDisableTab } from '@/hooks/useDisableTab';
 import { FindInPageBar } from '@/components/find-in-page/FindInPageBar';
+import { getAppShortcutCombos } from '@/lib/appShortcutStore';
+import type { AppShortcutOverrides } from '../../../../shared/appShortcuts';
 import type { AgentTerminalReplay } from '../../../../shared/agentPresentation';
 
-const mock = vi.hoisted(() => ({ terminals: [] as any[], themes: new Set<() => void>(), searches: [] as any[] }));
+const mock = vi.hoisted(() => ({ terminals: [] as any[], themes: new Set<() => void>(), searches: [] as any[],
+  shortcutsChanged: undefined as undefined | ((payload: { overrides: AppShortcutOverrides }) => void),
+}));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock('@/themes/theme-service', () => ({ themeService: { onDidChangeTheme: (fn: () => void) => { mock.themes.add(fn); return () => mock.themes.delete(fn); } } }));
 vi.mock('../../right-sidebar/plugins/terminal/lib/xtermPool', () => ({ getTerminalTheme: () => ({}), openTerminalExternalLink: vi.fn() }));
@@ -44,8 +48,91 @@ function fixture() {
   });
   return { invoke, read };
 }
-beforeEach(() => { mock.terminals.length = 0; mock.searches.length = 0; vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} }); });
+beforeEach(() => {
+  mock.terminals.length = 0; mock.searches.length = 0;
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  // Only the preload transport is fake; the shortcut store/matcher stays real.
+  vi.stubGlobal('electronAPI', { appShortcuts: {
+    getState: () => ({ platform: 'win32', overrides: {} }),
+    onChanged: (listener: typeof mock.shortcutsChanged) => { mock.shortcutsChanged = listener; return () => {}; },
+  } });
+  getAppShortcutCombos('find-in-page');
+  mock.shortcutsChanged?.({ overrides: {} });
+});
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+
+function AppFindGate() { useDisableTab(); return <FindInPageBar />; }
+
+describe.each(['ctrlKey', 'metaKey'] as const)('find ownership with %s+F', modifier => {
+  beforeEach(() => mock.shortcutsChanged?.({ overrides: { 'find-in-page': {
+    code: 'KeyF', ctrl: modifier === 'ctrlKey', meta: modifier === 'metaKey', alt: false, shift: false,
+  } } }));
+  const find = (target: Element) => fireEvent.keyDown(target, { key: 'f', code: 'KeyF', [modifier]: true });
+  it.each(['blur', 'settled blur', 'removed dismiss', 'outside input', 'hidden', 'unmount'])('returns find to the App after %s', async reason => {
+    const f = fixture();
+    const app = (active: boolean, mounted = true) => <><AppFindGate /><input aria-label="Other panel" />
+      {mounted && <AgentNativeTerminal sessionId="task" active={active} invoke={f.invoke} />}</>;
+    const ui = render(app(true));
+    await waitFor(() => expect(mock.terminals[0].options.disableStdin).toBe(false));
+    const terminal = mock.terminals[0], native = screen.getByLabelText('Native input');
+    native.focus();
+    if (reason.includes('blur')) {
+      native.blur();
+      if (reason === 'settled blur') await act(async () => {});
+    } else if (reason === 'removed dismiss') {
+      act(() => terminal.input('x'.repeat(1_048_577)));
+      const dismiss = screen.getByRole('button', { name: 'common.dismiss' });
+      dismiss.focus(); fireEvent.click(dismiss);
+      expect(dismiss.isConnected).toBe(false);
+    } else if (reason === 'outside input') screen.getByLabelText('Other panel').focus();
+    else if (reason === 'hidden') ui.rerender(app(false));
+    else ui.rerender(app(true, false));
+    if (reason !== 'outside input' && reason !== 'hidden') expect(document.activeElement).toBe(document.body);
+    terminal.focus.mockClear();
+    expect(find(document.activeElement!)).toBe(false);
+    const globalSearch = screen.getByRole('searchbox');
+    await waitFor(() => expect(document.activeElement).toBe(globalSearch));
+    expect(screen.queryByRole('textbox', { name: 'ccAgent.presentation.search' })).toBeNull();
+    fireEvent.keyDown(globalSearch, { key: 'Escape' });
+    expect(screen.queryByRole('searchbox')).toBeNull();
+    expect(terminal.focus).not.toHaveBeenCalled();
+    expect(f.invoke.mock.calls.filter(([r]) => r.action === 'write')).toEqual([]);
+  });
+
+  it('lets only the focused terminal search and returns focus locally on Escape', async () => {
+    const first = fixture(), second = fixture();
+    render(<><AppFindGate /><input aria-label="Other panel" />
+      <section aria-label="First terminal"><AgentNativeTerminal sessionId="first" active invoke={first.invoke} /></section>
+      <section aria-label="Second terminal"><AgentNativeTerminal sessionId="second" active invoke={second.invoke} /></section></>);
+    await waitFor(() => expect(mock.terminals.every(t => !t.options.disableStdin)).toBe(true));
+    for (const [index, label] of ['First terminal', 'Second terminal', 'First terminal'].entries()) {
+      const pane = within(screen.getByRole('region', { name: label }));
+      const terminal = mock.terminals[index % 2], other = mock.terminals[(index + 1) % 2];
+      const native = pane.getByLabelText('Native input'); native.focus();
+      terminal.focus.mockClear(); other.focus.mockClear();
+      expect(find(native)).toBe(false);
+      expect(screen.queryByRole('searchbox')).toBeNull();
+      expect(screen.getAllByRole('textbox', { name: 'ccAgent.presentation.search' })).toHaveLength(1);
+      const search = pane.getByRole('textbox', { name: 'ccAgent.presentation.search' });
+      expect(document.activeElement).toBe(search);
+      expect(fireEvent.keyDown(search, { key: 'Tab' })).toBe(true);
+      expect(fireEvent.keyDown(search, { key: 'Tab', shiftKey: true })).toBe(true);
+      fireEvent.keyDown(search, { key: 'Escape', isComposing: true });
+      expect(document.activeElement).toBe(search);
+      fireEvent.keyDown(search, { key: 'Escape' });
+      expect(screen.queryByRole('textbox', { name: 'ccAgent.presentation.search' })).toBeNull();
+      expect(document.activeElement).toBe(native);
+      expect(terminal.focus).toHaveBeenCalledOnce();
+      expect(other.focus).not.toHaveBeenCalled();
+    }
+    for (const f of [first, second]) {
+      expect(f.invoke.mock.calls.filter(([r]) => r.action === 'write' || r.action === 'detach' || r.action === 'release')).toEqual([]);
+      expect(f.invoke.mock.calls.filter(([r]) => r.action === 'control')).toHaveLength(1);
+    }
+    screen.getByLabelText('Other panel').focus();
+    expect(fireEvent.keyDown(document.activeElement!, { key: 'Tab' })).toBe(false);
+  });
+});
 
 describe('native task view', () => {
   it('claims the real App find shortcut only while focus is in the active terminal', async () => {

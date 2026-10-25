@@ -43,14 +43,30 @@ export function AgentNativeTerminal({ sessionId, active, invoke, onReconnect, ru
   // find bar listens in window capture, before xterm can handle a local key.
   useEffect(() => {
     if (!active) return;
+    let disposed = false, syncQueued = false;
     let release: (() => void) | undefined;
+    const hasFocus = () => activeRef.current && !!root.current?.contains(document.activeElement);
     const sync = () => {
-      const focused = root.current?.contains(document.activeElement);
-      if (focused && !release) release = acquireFindInPage();
+      if (disposed) return;
+      const focused = hasFocus();
+      if (focused && !release) release = acquireFindInPage(hasFocus);
       if (!focused && release) { release(); release = undefined; }
     };
+    // focusout runs before the new activeElement settles. The live claim check
+    // also covers node removal, which need not emit any focus event at all.
+    const afterBlur = () => {
+      if (syncQueued) return;
+      syncQueued = true;
+      queueMicrotask(() => { syncQueued = false; sync(); });
+    };
     sync(); document.addEventListener('focusin', sync);
-    return () => { document.removeEventListener('focusin', sync); release?.(); };
+    document.addEventListener('focusout', afterBlur);
+    return () => {
+      disposed = true;
+      document.removeEventListener('focusin', sync);
+      document.removeEventListener('focusout', afterBlur);
+      release?.();
+    };
   }, [active]);
   useAppShortcut('find-in-page', () => {
     if (!root.current?.contains(document.activeElement)) return false;
@@ -321,7 +337,7 @@ export function AgentNativeTerminal({ sessionId, active, invoke, onReconnect, ru
         </div>
       {inputRejected && <div role="alert" className="flex shrink-0 items-center gap-2 px-3 pb-1 text-11 text-[var(--text-secondary)]">
         <span className="min-w-0 flex-1">{t('ccAgent.presentation.inputRejected')}</span>
-        <button type="button" aria-label={t('common.close')} onClick={() => setInputRejected(false)}
+        <button type="button" aria-label={t('common.dismiss')} onClick={() => setInputRejected(false)}
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full hover:bg-[var(--surface-hover)] focus-visible:ring-2 focus-visible:ring-ring"><X size={14} /></button>
       </div>}
       {searching && <div className="flex shrink-0 items-center gap-1 px-3 pb-1" onKeyDown={event => {
