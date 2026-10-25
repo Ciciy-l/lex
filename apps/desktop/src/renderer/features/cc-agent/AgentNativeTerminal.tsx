@@ -7,6 +7,9 @@ import { SearchAddon } from '@xterm/addon-search';
 import { Search, X, ChevronUp, ChevronDown, Minus, Plus, Info } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Tip } from '@/components/ui/tooltip';
+import { acquireFindInPage } from '@/components/find-in-page/findInPageOwnership';
+import { useAppShortcut } from '@/hooks/useAppShortcut';
+import { hasFocusMovedToInteractiveElement, hasNonCollapsedSelectionOutsideComposer } from '@/components/new-chat/useComposerSendFocusRestore';
 import { themeService } from '@/themes/theme-service';
 import { getTerminalTheme, openTerminalExternalLink } from '../right-sidebar/plugins/terminal/lib/xtermPool';
 import type { AgentPresentationAttached, AgentPresentationRequest, AgentTerminalControl, AgentTerminalReplay, AgentRuntimeCapabilities } from '../../../shared/agentPresentation';
@@ -24,6 +27,7 @@ export function AgentNativeTerminal({ sessionId, active, invoke, onReconnect, ru
   runtimeCapabilities?: AgentRuntimeCapabilities;
 }) {
   const { t } = useTranslation();
+  const root = useRef<HTMLDivElement>(null);
   const host = useRef<HTMLDivElement>(null);
   const activeRef = useRef(active); activeRef.current = active;
   const controls = useRef<Controls | null>(null);
@@ -31,8 +35,27 @@ export function AgentNativeTerminal({ sessionId, active, invoke, onReconnect, ru
   const connectionEpoch = useRef(0);
   const retrying = useRef(false);
   const [searching, setSearching] = useState(false);
+  const searchingRef = useRef(searching); searchingRef.current = searching;
   const [query, setQuery] = useState('');
+  const [inputRejected, setInputRejected] = useState(false);
   const searchInput = useRef<HTMLInputElement>(null);
+  // Use the same focus-scoped claim as the ordinary terminal pane. The global
+  // find bar listens in window capture, before xterm can handle a local key.
+  useEffect(() => {
+    if (!active) return;
+    let release: (() => void) | undefined;
+    const sync = () => {
+      const focused = root.current?.contains(document.activeElement);
+      if (focused && !release) release = acquireFindInPage();
+      if (!focused && release) { release(); release = undefined; }
+    };
+    sync(); document.addEventListener('focusin', sync);
+    return () => { document.removeEventListener('focusin', sync); release?.(); };
+  }, [active]);
+  useAppShortcut('find-in-page', () => {
+    if (!root.current?.contains(document.activeElement)) return false;
+    setSearching(true); searchInput.current?.focus(); return true;
+  }, { enabled: active, stopImmediate: true });
   const runtimeNotes = [
     runtimeCapabilities?.sameTurnSteer?.supported === false && t(runtimeCapabilities.sameTurnSteer.recovery === 'native-ui'
       ? 'ccAgent.presentation.guiSteerInTui' : 'ccAgent.presentation.guiSteerQueued'),
@@ -64,9 +87,12 @@ export function AgentNativeTerminal({ sessionId, active, invoke, onReconnect, ru
     connectionEpoch.current++;
     let disposed = false, attachmentId: string | undefined, control: AgentTerminalControl | null = null;
     let sequence = 0, inputSequence = 0, writeChain = Promise.resolve();
-    let controlRevision = 0, pendingInputBytes = 0;
+    let controlRevision = 0, pendingInputBytes = 0, pendingInputEvents = 0;
+    const initialFocus = document.activeElement;
+    setInputRejected(false);
     const renderWaiters = new Set<() => void>();
     let acquireInFlight: Promise<void> | undefined;
+    let acquisitionRevision = 0;
     const terminal = new Terminal({ theme: getTerminalTheme(), fontFamily: '"SF Mono", Menlo, "Cascadia Code", monospace',
       fontSize: Math.min(24, Math.max(10, parseFloat(getComputedStyle(host.current).getPropertyValue('--app-code-font-size')) || 13)),
       lineHeight: 1.2, scrollback: 5000, cursorBlink: true, disableStdin: true });
@@ -110,25 +136,38 @@ export function AgentNativeTerminal({ sessionId, active, invoke, onReconnect, ru
         if (!disposed && !activeRef.current && control === lease && revision === controlRevision) release();
       });
     };
-    const acquire = (takeOver = false): Promise<void> => {
-      if (acquireInFlight) return acquireInFlight;
+    const focusTerminal = (anchor: Element | null) => {
+      const element = host.current;
+      if (!disposed && activeRef.current && !searchingRef.current && element &&
+          !hasFocusMovedToInteractiveElement(anchor, element) &&
+          !hasNonCollapsedSelectionOutsideComposer(element)) terminal.focus();
+    };
+    const acquire = (takeOver = false, focusAnchor = document.activeElement): Promise<void> => {
       if (!attachmentId || disposed || !activeRef.current) return Promise.resolve();
+      if (acquireInFlight) {
+        // A GUI→TUI return can invalidate the still-pending request. Wait for its
+        // stale lease to be released, then honor the new visible intent once.
+        return acquisitionRevision === controlRevision ? acquireInFlight
+          : acquireInFlight.then(() => acquire(takeOver, focusAnchor));
+      }
       if (control && !takeOver) {
         controlRevision++; terminal.options.disableStdin = false; setStatus('controlling');
-        resize(); terminal.focus(); return Promise.resolve();
+        resize(); focusTerminal(focusAnchor); return Promise.resolve();
       }
       const id = attachmentId;
       const revision = ++controlRevision;
-      acquireInFlight = send({ action: 'control', attachmentId: id, takeOver }).then((result) => {
+      acquisitionRevision = revision;
+      acquireInFlight = send({ action: 'control', attachmentId: id, takeOver }).then(async (result) => {
         const lease = result as AgentTerminalControl | null;
         if (disposed || !activeRef.current || revision !== controlRevision) {
-          if (lease) void send({ action: 'release', attachmentId: id, control: lease }).catch(() => {});
+          if (lease) await send({ action: 'release', attachmentId: id, control: lease }).catch(() => {});
           return;
         }
         if (lease?.lease !== control?.lease) inputSequence = 0;
         control = lease; terminal.options.disableStdin = !lease; setStatus(lease ? 'controlling' : 'viewing');
-        resize(); if (lease) terminal.focus();
-      }).catch(fail).finally(() => { acquireInFlight = undefined; });
+        resize(); if (lease) focusTerminal(focusAnchor);
+      }).catch(() => { if (!disposed && revision === controlRevision) fail(); })
+        .finally(() => { acquireInFlight = undefined; });
       return acquireInFlight;
     };
     let wakeHidden: (() => void) | undefined;
@@ -142,21 +181,33 @@ export function AgentNativeTerminal({ sessionId, active, invoke, onReconnect, ru
     const input = terminal.onData((data) => {
       const lease = control, id = attachmentId;
       if (!activeRef.current || !lease || !id || disposed) return;
-      const bytes = new TextEncoder().encode(data).byteLength;
-      if (bytes > 65_536 || pendingInputBytes + bytes > 65_536) { fail(); return; }
+      // Bound both payload and promise overhead. Reject this entire, undispatched
+      // event without invalidating the healthy lease or any accepted input.
+      const budget = 1_048_576;
+      if (data.length > budget - pendingInputBytes || pendingInputEvents >= 256) { setInputRejected(true); return; }
+      const encoded = new TextEncoder().encode(data), bytes = encoded.byteLength;
+      if (pendingInputBytes + bytes > budget) { setInputRejected(true); return; }
+      if (!bytes) return;
       pendingInputBytes += bytes;
-      const nextSequence = ++inputSequence;
+      pendingInputEvents++;
       writeChain = writeChain.then(async () => {
-        if (disposed || control !== lease) return;
-        await send({ action: 'write', attachmentId: id, control: lease, sequence: nextSequence, data });
-      }).catch(() => { if (control === lease) fail(); }).finally(() => { pendingInputBytes -= bytes; }); // Never replay an uncertain input.
+        for (let start = 0; start < bytes;) {
+          if (disposed || control !== lease) return;
+          let end = Math.min(start + 65_536, bytes);
+          // Never cut a UTF-8 code point (including a surrogate-pair emoji).
+          while (end < bytes && (encoded[end] & 0xc0) === 0x80) end--;
+          // A BOM is literal input here, including at a later packet boundary.
+          const chunk = new TextDecoder('utf-8', { ignoreBOM: true }).decode(encoded.subarray(start, end));
+          await send({ action: 'write', attachmentId: id, control: lease, sequence: ++inputSequence, data: chunk });
+          start = end;
+        }
+      }).catch(() => { if (control === lease) fail(); }).finally(() => {
+        pendingInputBytes -= bytes; pendingInputEvents--;
+      }); // Never replay an uncertain input, including the remainder of a paste.
     });
     terminal.attachCustomKeyEventHandler((event) => {
       // Let xterm own the native IME sequence, including composition Enter.
       if (event.isComposing || event.keyCode === 229) return true;
-      if (event.type === 'keydown' && (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'f') {
-        event.preventDefault(); setSearching(true); return false;
-      }
       if (event.type === 'keydown' && (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'c' && terminal.hasSelection()) {
         event.preventDefault(); void navigator.clipboard.writeText(terminal.getSelection()).catch(() => {}); return false;
       }
@@ -199,7 +250,7 @@ export function AgentNativeTerminal({ sessionId, active, invoke, onReconnect, ru
       attachmentId = attached.attachmentId;
       if (disposed) { await send({ action: 'detach', attachmentId }); return; }
       if (!await render(attached.replay, controlRevision)) return;
-      setStatus('viewing'); await acquire();
+      setStatus('viewing'); await acquire(false, initialFocus);
       while (!disposed) {
         if (!activeRef.current) {
           // Only presentation reads are throttled. Host events, admissions and
@@ -228,10 +279,26 @@ export function AgentNativeTerminal({ sessionId, active, invoke, onReconnect, ru
     if (active) { controls.current?.wake(); controls.current?.resize(); void controls.current?.acquire(); }
     else controls.current?.suspend();
   }, [active]);
-  useEffect(() => { if (searching && active) searchInput.current?.focus(); }, [searching, active]);
+  useEffect(() => {
+    if (searching && active) {
+      searchInput.current?.focus();
+      controls.current?.search(query);
+    }
+    // Reopen/reconnect restores the displayed query without advancing on each render.
+    // Query edits and next/previous navigation are handled by their input actions.
+  }, [searching, active, connection]);
+  const closeSearch = () => {
+    searchingRef.current = false; setSearching(false);
+    controls.current?.search(''); void controls.current?.acquire();
+  };
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[var(--panel-bg)]" aria-label={t('ccAgent.presentation.tuiDescription')}>
+    <div ref={root} className="flex h-full min-h-0 flex-col bg-[var(--panel-bg)]" aria-label={t('ccAgent.presentation.tuiDescription')}
+      onKeyDown={event => {
+        // Keep toolbar/search controls reachable through the app's mouse-first
+        // Tab gate. Native xterm keys retain their original handling.
+        if (event.key === 'Tab' && !host.current?.contains(event.target as Node)) event.stopPropagation();
+      }}>
         <div role="status" className="flex shrink-0 flex-wrap items-center justify-between gap-2 px-3 py-1 text-11 text-[var(--text-secondary)]">
           <span className="min-w-0 flex-1">{statusText[status]}</span>
           <div className="flex shrink-0 items-center">
@@ -252,18 +319,27 @@ export function AgentNativeTerminal({ sessionId, active, invoke, onReconnect, ru
             {t('ccAgent.presentation.retry')}
           </button>}
         </div>
-      {searching && <div className="flex shrink-0 items-center gap-1 px-3 pb-1">
+      {inputRejected && <div role="alert" className="flex shrink-0 items-center gap-2 px-3 pb-1 text-11 text-[var(--text-secondary)]">
+        <span className="min-w-0 flex-1">{t('ccAgent.presentation.inputRejected')}</span>
+        <button type="button" aria-label={t('common.close')} onClick={() => setInputRejected(false)}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full hover:bg-[var(--surface-hover)] focus-visible:ring-2 focus-visible:ring-ring"><X size={14} /></button>
+      </div>}
+      {searching && <div className="flex shrink-0 items-center gap-1 px-3 pb-1" onKeyDown={event => {
+        if (event.key === 'Escape' && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+          event.preventDefault(); event.stopPropagation(); closeSearch();
+        }
+      }}>
         <input ref={searchInput} aria-label={t('ccAgent.presentation.search')} value={query}
           className="h-7 min-w-0 flex-1 rounded-full bg-[var(--surface-chip)] px-3 text-12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onChange={event => { setQuery(event.target.value); controls.current?.search(event.target.value); }}
           onKeyDown={event => {
             if (event.nativeEvent.isComposing || event.keyCode === 229) return;
             if (event.key === 'Enter') { event.preventDefault(); controls.current?.search(query, event.shiftKey); }
-            if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setSearching(false); controls.current?.search(''); void controls.current?.acquire(); }
+            if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeSearch(); }
           }} />
         <Tip text={t('ccAgent.presentation.previousMatch')}><button type="button" aria-label={t('ccAgent.presentation.previousMatch')} onClick={() => controls.current?.search(query, true)} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full hover:bg-[var(--surface-hover)] focus-visible:ring-2 focus-visible:ring-ring"><ChevronUp size={14} /></button></Tip>
         <Tip text={t('ccAgent.presentation.nextMatch')}><button type="button" aria-label={t('ccAgent.presentation.nextMatch')} onClick={() => controls.current?.search(query)} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full hover:bg-[var(--surface-hover)] focus-visible:ring-2 focus-visible:ring-ring"><ChevronDown size={14} /></button></Tip>
-        <Tip text={t('ccAgent.presentation.closeSearch')}><button type="button" aria-label={t('ccAgent.presentation.closeSearch')} onClick={() => { setSearching(false); controls.current?.search(''); void controls.current?.acquire(); }} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full hover:bg-[var(--surface-hover)] focus-visible:ring-2 focus-visible:ring-ring"><X size={14} /></button></Tip>
+        <Tip text={t('ccAgent.presentation.closeSearch')}><button type="button" aria-label={t('ccAgent.presentation.closeSearch')} onClick={closeSearch} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full hover:bg-[var(--surface-hover)] focus-visible:ring-2 focus-visible:ring-ring"><X size={14} /></button></Tip>
       </div>}
       <div ref={host} className="min-h-0 flex-1 overflow-hidden px-2 py-1" />
     </div>

@@ -9622,6 +9622,7 @@
   },
   "ccAgent": {
     "presentation": {
+      "inputRejected": "本次输入未发送：内容过长或仍有输入等待发送。请稍后分段粘贴（每次最多 1 MiB）。",
       "guiSteerInTui": "运行中补充输入请在 TUI 中操作。",
       "guiSteerQueued": "GUI 输入会排到下一轮。",
       "settingsNeedReopen": "模型或权限设置需在任务空闲后重新打开。",

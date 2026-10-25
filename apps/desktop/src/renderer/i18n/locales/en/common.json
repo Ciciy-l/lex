@@ -9637,6 +9637,7 @@
   },
   "ccAgent": {
     "presentation": {
+      "inputRejected": "This input was not sent: it is too large or other input is still pending. Wait, then paste in smaller parts (up to 1 MiB each).",
       "guiSteerInTui": "Use TUI to add input during a response.",
       "guiSteerQueued": "GUI input is queued for the next turn.",
       "settingsNeedReopen": "Reopen the task while idle to change model or permission settings.",

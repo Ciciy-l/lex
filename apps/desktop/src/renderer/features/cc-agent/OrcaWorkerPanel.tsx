@@ -6,13 +6,14 @@
  * 双栏布局与独立 resize/maximize。
  */
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 
 import { isAgentIslandSupported } from '@/hooks/useAgentIslandSettings';
 import { toast } from '@/lib/toast';
 import { isSidebarWindow } from '@/lib/sidebarWindow';
+import { getDataOwnerGeneration, isDataOwnerGenerationCurrent } from '@/contexts/dataOwnerGeneration';
 import { CCAgentSessionView } from './CCAgentSessionView';
 import { CreateWorkerPopover } from './CreateWorkerPopover';
 import { WorkerListToolbar } from './RolePillDropdown';
@@ -95,20 +96,45 @@ export function OrcaWorkerPanel({
     onSelectionIntentCleared,
   });
   const lastAgentIslandPayloadRef = useRef<string | string[] | null>(null);
+  const openEpoch = useRef(0);
+  const openPending = useRef<number | null>(null);
+  const pendingOwner = useRef(getDataOwnerGeneration());
+  const scope = JSON.stringify([leadSessionId, deviceId, remoteHostId, viewVisible]);
+  const currentScope = useRef(scope); currentScope.current = scope;
+  const mounted = useRef(false);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    openEpoch.current++;
+    openPending.current = null;
+    return () => { mounted.current = false; openEpoch.current++; openPending.current = null; };
+  }, [leadSessionId, deviceId, remoteHostId, viewVisible]);
 
   const handleOpenCreate = useCallback(async () => {
-    if (deviceId === undefined) return;
-    const result = await refreshCreationState();
-    if (result.status !== 'applied') {
-      toast.error(t('newChat.collaboration.createWorkerRefreshFailed'));
-      return;
+    if (createOpen || !mounted.current || !viewVisible || deviceId === undefined || currentScope.current !== scope) return;
+    if (openPending.current !== null && !isDataOwnerGenerationCurrent(pendingOwner.current)) {
+      openEpoch.current++; openPending.current = null;
     }
-    const activeCount = result.workers.filter((worker) =>
-      isActiveWorkerStatus(worker.status),
-    ).length;
-    if (result.hardLimit !== null && activeCount >= result.hardLimit) return;
-    setCreateOpen(true);
-  }, [deviceId, refreshCreationState, setCreateOpen, t]);
+    if (openPending.current !== null) return;
+    const epoch = openEpoch.current, owner = getDataOwnerGeneration();
+    pendingOwner.current = owner;
+    openPending.current = epoch;
+    const current = () => mounted.current && epoch === openEpoch.current && isDataOwnerGenerationCurrent(owner);
+    try {
+      const result = await refreshCreationState();
+      if (!current()) return;
+      if (result.status !== 'applied') {
+        toast.error(t('newChat.collaboration.createWorkerRefreshFailed'));
+        return;
+      }
+      const activeCount = result.workers.filter((worker) => isActiveWorkerStatus(worker.status)).length;
+      if (result.hardLimit !== null && activeCount >= result.hardLimit) return;
+      setCreateOpen(true);
+    } catch {
+      if (current()) toast.error(t('newChat.collaboration.createWorkerRefreshFailed'));
+    } finally {
+      if (openPending.current === epoch) openPending.current = null;
+    }
+  }, [createOpen, deviceId, refreshCreationState, setCreateOpen, t, viewVisible, scope]);
 
   // 硬上限时 + 按钮不再只是 disabled no-op，而是跳转到协同设置去调高上限（codex P1 逃生口）。
   // 但两类面板不接线跳转（onOpenSettings 传 undefined，+ 按钮回退为 disabled）：
@@ -122,29 +148,13 @@ export function OrcaWorkerPanel({
 
   useEffect(() => {
     if (!viewVisible || deviceId === undefined) return;
-    let active = true;
-    const unsubscribe = subscribeNewWorkerShortcut(async () => {
+    return subscribeNewWorkerShortcut(async () => {
       // Refresh both worker status and authoritative collaboration settings so the shortcut
       // cannot bypass a newly reached or newly lowered hard limit.
-      const result = await refreshCreationState();
-      if (!active) return true;
-      if (result.status !== 'applied') {
-        toast.error(t('newChat.collaboration.createWorkerRefreshFailed'));
-        return true;
-      }
-      const activeCount = result.workers.filter((worker) =>
-        isActiveWorkerStatus(worker.status),
-      ).length;
-      if (result.hardLimit !== null && activeCount < result.hardLimit) setCreateOpen(true);
+      await handleOpenCreate();
       return true;
     });
-    return () => {
-      // Prevent an in-flight refresh from opening the dialog after this panel stopped owning the
-      // visible collaboration context. No intent is retained for a later mount.
-      active = false;
-      unsubscribe();
-    };
-  }, [deviceId, refreshCreationState, setCreateOpen, t, viewVisible]);
+  }, [deviceId, handleOpenCreate, viewVisible]);
 
   useEffect(() => {
     if (!isAgentIslandSupported()) return;
