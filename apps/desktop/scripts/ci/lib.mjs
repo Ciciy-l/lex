@@ -1295,10 +1295,9 @@ export function notarizeMacApp(appPath, identity, {
 // ── DMG 安装界面(dmgbuild)─────────────────────────────────────────────────
 //
 // DMG 用 dmgbuild(pip,纯 Python 无原生依赖)生成:Splash 品牌背景 + 图标定位的
-// 安装窗口,替代裸 hdiutil 的无布局窗口。背景为 **PDF 矢量**——macOS 26 Finder
+// 安装窗口,替代裸 hdiutil 的无布局窗口。背景为 **高清 PDF**——macOS 26 Finder
 // 对位图背景只按 1x 绘制(Retina 必糊),但会按 backing scale 光栅化 PDF,
-// 这是唯一的高清通道;完整实测结论与视觉约束见
-// resources/dmg/render-background.swift 头注释。
+// 沿用既有 PDF 通道;当前生成方式与视觉约束见 resources/dmg/README.md。
 
 /**
  * dmgbuild pin 版本;bump 前先在本机验证背景仍能渲染(macOS 26 Finder 很挑剔)。
@@ -1346,10 +1345,10 @@ function ensureDmgbuild() {
 /**
  * 生成带品牌安装界面的 UDZO DMG。正式包传入 Developer ID identity 后签名；
  * 预览包不传 identity，保留未签名容器（其中的 .app 已由调用方 ad-hoc 签名）。
- * Splash 风浅色背景(高清立绘 + CINDY
- * 字标 + 手写体 + 拖拽箭头,PDF 矢量高清)、app 居左 / Applications 软链居右、
+ * Lex 浅色背景(现有产品图标 + Lex 字标 + 矢量拖拽箭头,高清 PDF)、
+ * app 居左 / Applications 软链居右、
  * 660×460 固定窗口。
- * 布局坐标与 resources/dmg/render-background.swift 内的品牌块/箭头位置联动,改动需两边同步。
+ * 布局坐标与 resources/dmg/render-background.mjs 内的品牌块/箭头位置联动,改动需两边同步。
  * @param {{ signIdentity: string } | undefined} identity
  */
 export function createMacDMG(appPath, dmgPath, volumeName, identity) {
