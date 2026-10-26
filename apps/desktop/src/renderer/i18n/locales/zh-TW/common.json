@@ -9622,7 +9622,7 @@
   },
   "ccAgent": {
     "presentation": {
-      "guiBodyText": "Pi 原生任務中，GUI 訊息按正文傳送；原生命令和輸入擴充請在 TUI 中使用。Lex 既有命令仍可使用。",
+      "guiBodyText": "Pi 原生任務中，GUI 訊息按正文傳送；原生命令和輸入擴充請在 TUI 中使用。{{appName}} 既有命令仍可使用。",
       "guiAppendText": "OMP 回應期間，GUI 追加按正文傳送；原生命令和輸入擴充請在 TUI 中使用。",
       "inputRejected": "本次輸入未傳送：內容過長或仍有輸入等待傳送。請稍後分段貼上（每次最多 1 MiB）。",
       "guiSteerInTui": "執行中補充輸入請在 TUI 中操作。",
