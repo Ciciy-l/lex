@@ -5,19 +5,16 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import Database from 'better-sqlite3';
-import { eq } from 'drizzle-orm';
-import { createSourceFile, forEachChild, isCallExpression, isFunctionDeclaration, ScriptTarget, transpileModule, type Node } from 'typescript';
+import { createSourceFile, forEachChild, isFunctionDeclaration, ScriptTarget, transpileModule, type Node } from 'typescript';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Session, type AgentSessionHandle } from '@cindy/maker-core';
 import { commitSessionContextClear } from '../../sessionContextClear.js';
 import { createNativeHistoryHandoff } from '../../../maker-ipc/nativeHistoryHandoff.js';
 import { createNativeHistoryJournal, readNativeHistoryForClear } from '../../../maker-ipc/nativeHistoryJournal.js';
 import { withNativeHistoryClear } from '../../../maker-ipc/nativeHistoryClear.js';
-import { InputClearReceipts } from '../../../maker-ipc/inputClearReceipts.js';
-import { createRehydrateCloseSuppression } from '../../../maker-host/rehydrateCloseSuppression.js';
+import { productionClearFixture } from '../../../../test/fixtures/nativeClearMain.js';
 import { withNativeHistoryOperation } from '../../../maker-ipc/nativeHistoryOperation.js';
 import * as atomic from '../../../utils/atomicWriteFile.js';
-import { sessions } from '../../schema.js';
 
 import { SESSION_SOURCES } from '../../../../shared/sessionSource.js';
 import { buildDbWorkerBundle } from '../../__tests__/dbWorkerTestUtils.js';
@@ -1535,7 +1532,7 @@ describe('db worker tx handlers', () => {
             agentKind: 'pi', workingDir: root, model: 'exact' }).read()).toBeNull();
           if (success) {
             await client.exec('UPDATE sessions SET sdk_session_id = ? WHERE id = ?', [path.join(root, 'fresh.jsonl'), 's1']);
-            expect((await main.read()).clearReceipt.status).toBe('unknown');
+            expect((await main.read()).clearReceipt.status).toBe('superseded');
           }
           main.changeOwner();
           expect((await main.read()).clearReceipt.status).toBe('unknown');
@@ -1544,6 +1541,55 @@ describe('db worker tx handlers', () => {
           await client.exec('DROP TRIGGER IF EXISTS reject_renderer_clear');
         }
       }
+    }, { useInlineWorker });
+  });
+
+  it.each([false, true])('distinguishes superseded authority from unknown without mutating recovery state (inline=%s)', async useInlineWorker => {
+    await withClient(async (client, config) => {
+      const root = path.join(path.dirname(config.dbPath!), 'receipt-authority');
+      const source = path.join(root, 'source.jsonl');
+      await seedSession(client, 's1', { sdkSessionId: source });
+      await seedSession(client, 'other-task');
+      const journal = createNativeHistoryJournal(root, { sessionId: 's1', nativeId: source,
+        agentKind: 'pi', workingDir: root, model: 'exact' });
+      journal.recordResult(journal.begin('chosen', 'draft'), { draftText: 'chosen draft' });
+      const session = new Session({ id: 's1', agentKind: 'pi', workDir: root, turnStallMs: 0,
+        capabilities: { sessionTree: { supported: true } } as never,
+        logger: { trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {}, child() { return this; } },
+        handle: { id: source, agentKind: 'pi', model: 'exact',
+          async send() { throw new Error('Unexpected prompt'); }, async steer() { throw new Error('Unexpected steer'); },
+          async abort() {}, async close() {}, events: async function* () {}, setInteractionResolver() {}, isTurnRunning: () => false,
+          getUsageSnapshot: () => ({ tokenUsage: 0, costUsd: 0, contextTokens: 0, contextWindow: 100 }) } });
+      vi.spyOn(session, 'presentation', 'get').mockReturnValue({} as never);
+      const main = productionClearFixture(client, root, session);
+      await main.clear();
+      const calls = [...main.calls];
+      expect((await main.read()).clearReceipt.status).toBe('committed');
+      for (const [nativeId, boundary, expected] of [
+        ['replacement', 500, 'superseded'], [null, 600, 'superseded'],
+        ['unconfirmed', null, 'unknown'], [null, null, 'unknown'],
+      ] as const) {
+        await client.exec('UPDATE sessions SET sdk_session_id = ?, cleared_at = ? WHERE id = ?', [nativeId, boundary, 's1']);
+        expect((await main.read()).clearReceipt.status).toBe(expected);
+      }
+      await client.exec('UPDATE sessions SET sdk_session_id = NULL, cleared_at = 500 WHERE id = ?', ['s1']);
+      journal.recordResult(journal.begin('unresolved', 'new draft'), { draftText: 'new chosen draft' });
+      const beforeJournal = readNativeHistoryForClear(root, 's1');
+      expect((await main.read()).clearReceipt.status).toBe('unknown');
+      expect(readNativeHistoryForClear(root, 's1')).toEqual(beforeJournal);
+      expect((await main.read(501)).clearReceipt.status).toBe('unknown');
+      expect((await main.read(500, 'other-task')).clearReceipt.status).toBe('unknown');
+      // Replacing the receipt during the actual SQLite await cannot reuse the
+      // earlier cached success. The new pending intent is not retired by reads.
+      const racingRead = main.read();
+      const next = main.receipts.begin(client, 1, 's1', new Date(700).toISOString());
+      expect((await racingRead).clearReceipt.status).toBe('unknown');
+      expect((await main.read(700)).clearReceipt.status).toBe('pending');
+      expect(next.status).toBe('pending');
+      main.changeOwner();
+      expect((await main.read(700)).clearReceipt.status).toBe('unknown');
+      expect(main.calls).toEqual(calls);
+      expect(readNativeHistoryForClear(root, 's1')).toEqual(beforeJournal);
     }, { useInlineWorker });
   });
 
@@ -3849,54 +3895,6 @@ describe('db worker tx handlers', () => {
   });
 });
 
-/** Compile only the production clear entry points; importing register itself
- * would initialize unrelated Electron/provider singletons in a SQLite test. */
-function productionClearFixture(client: DbClient, root: string, initial?: Session, hooks: { beforeClose?(): Promise<void>; beforePersist?(): Promise<void> } = {}) {
-  const source = fs.readFileSync(path.resolve('src/main/maker-ipc/register.ts'), 'utf8');
-  const ast = createSourceFile('register.ts', source, ScriptTarget.Latest, true);
-  let capture = '', callback = '', readCallback = '';
-  const visit = (node: Node) => {
-    if (isFunctionDeclaration(node) && node.name?.text === 'captureNativeHistoryClearDependencies') capture = node.getText(ast);
-    if (isCallExpression(node) && node.expression.getText(ast) === 'ipcMain.handle'
-      && node.arguments[0]?.getText(ast) === 'MAKER_INVOKE.INPUT_CLEAR_SESSION') callback = node.arguments[1]!.getText(ast);
-    if (isCallExpression(node) && node.expression.getText(ast) === 'ipcMain.handle'
-      && node.arguments[0]?.getText(ast) === 'MAKER_INVOKE.INPUT_GET_PROJECTION') readCallback = node.arguments[1]!.getText(ast);
-    forEachChild(node, visit);
-  };
-  visit(ast); expect(capture).not.toBe(''); expect(callback).not.toBe('');
-  let current = initial, generation = 1;
-  const calls: string[] = [];
-  const suppression = createRehydrateCloseSuppression({ debug() {}, warn() {} });
-  const dependencies = {
-    inputClearReceipts: new InputClearReceipts(),
-    withRehydrateCloseSuppressed: suppression.withSuppressed,
-    getDbClient: () => client, getCurrentDbClientSnapshot: () => client,
-    getActiveAppSession: () => ({ generation, dataOwnerId: 'isolated-owner' }), isAppSessionBoundaryPending: () => false,
-    getMaker: () => ({ getSession: () => current, closeSessionIfCurrent: async (session: Session) => {
-      expect(session).toBe(current); calls.push('close'); await hooks.beforeClose?.(); await session.close(); current = undefined;
-      await suppression.runOnCloseSideEffects(session.id, async () => { calls.push('temp-and-worktree-cleanup'); });
-    } }), ownerScopedUserDataPath: () => root, sessions, eq,
-    throwIpcError: (code: string, message: string) => { throw new Error(code + ': ' + message); },
-    requireSessionId: (id: string) => id, assertReviewExternalInputAllowed: async () => {}, isDeviceLinkInvoke: () => false,
-    beginRemoteInputClearGate: () => calls.push('gate'), endRemoteInputClearGate: () => calls.push('ungate'),
-    resolveClearSessionBoundary: ({ clearedAt }: { clearedAt: string }) => clearedAt,
-    inputCoordinator: { clearSession: () => { calls.push('queue'); return { sessionId: 's1', pendingQueue: [] }; },
-      getProjection: () => ({ sessionId: 's1', pendingQueue: [] }) },
-    workingDirectoryRecovery: { discard() {} }, resetAutomaticRecoveryForExplicitStop() {},
-    agentHandoffPending: { invalidate: () => calls.push('invalidate'), sealClearBoundary: () => calls.push('seal') },
-    getAgentIslandService: () => undefined, goalClearObserver: undefined,
-    clearSessionContextInDb: async (id: string, at: number, expected?: { nativeId: string | null; clearedAt: number | null }) => {
-      calls.push('persist'); await hooks.beforePersist?.(); return commitSessionContextClear(client, id, at, expected);
-    }, withNativeHistoryClear, readNativeHistoryForClear, log: { error() {} },
-  };
-  const code = transpileModule(capture + '\nreturn (' + callback + ');', { compilerOptions: { target: ScriptTarget.ES2022 } }).outputText;
-  const handler = new Function(...Object.keys(dependencies), code)(...Object.values(dependencies));
-  const readCode = transpileModule(capture + String.fromCharCode(10) + 'return (' + readCallback + ');', { compilerOptions: { target: ScriptTarget.ES2022 } }).outputText;
-  const readHandler = new Function(...Object.keys(dependencies), readCode)(...Object.values(dependencies));
-  return { calls, changeOwner: () => { generation++; },
-    read: (at = 500, id = 's1') => readHandler(undefined, id, { clearRequestAt: new Date(at).toISOString() }),
-    clear: (at = 500, id = 's1') => handler(undefined, id, new Date(at).toISOString()) as Promise<unknown> };
-}
 
 async function withClient(
   fn: (client: DbClient, config: CreateDbClientOptions) => Promise<void>,
@@ -3941,11 +3939,11 @@ async function withClient(
  * the full store to cover module state and live event ownership. */
 function productionRendererClearFixture(main: ReturnType<typeof productionClearFixture>, client: DbClient, lostReply = false) {
   const names = ['clearSessionAfterGuard', 'clearLocalSessionAfterGuard', 'clearSessionAfterGuardImpl',
-    'resetClearedSessionView', 'awaitRemoteClearOperation'];
+    'resetClearedSessionView', 'awaitRemoteClearOperation', 'captureActiveTurnBoundaryMarker', 'sameActiveTurnBoundaryMarker'];
   const ast = createSourceFile('store.ts', fs.readFileSync(path.resolve('src/renderer/lib/makerChatStore.ts'), 'utf8'), ScriptTarget.Latest, true);
   const bodies = ast.statements.filter(node => isFunctionDeclaration(node) && names.includes(node.name?.text ?? '')).map(node => node.getText(ast));
   expect(bodies).toHaveLength(names.length);
-  let state: Record<string, unknown> = { messages: [{ clientId: 'old', content: 'keep' }], pendingQueue: [], sdkSessionId: 'source', askUserDraft: 'draft' };
+  let state: Record<string, unknown> = { messages: [{ clientId: 'old', content: 'keep' }], pendingQueue: [], sdkSessionId: 'source', askUserDraft: 'draft', agentStatus: {} };
   const calls: string[] = [];
   const serviceAst = createSourceFile('service.ts', fs.readFileSync(path.resolve('src/renderer/lib/sessionService.ts'), 'utf8'), ScriptTarget.Latest, true);
   const updateBody = serviceAst.statements.find(node => isFunctionDeclaration(node) && node.name?.text === 'update')!.getText(serviceAst).replace('export ', '');
@@ -3975,6 +3973,7 @@ function productionRendererClearFixture(main: ReturnType<typeof productionClearF
     dismissVisionBridgeToast: no, noteRendererClearBoundary: no, invalidateMessageHistoryWindow: no, bumpInteractionReconcileEpoch: no,
     supersedeInputProjectionRequests: no, _lastViewedAt: new Map(), discardPendingTextDelta: no, emitPatch: no,
     remoteOptimisticSendRecords: () => undefined, EMPTY_WINDOW_ISLANDS: [],
+    getOrCreateState: () => state, _messagesEpoch: new Map(),
     setState: (_id: string, fn: (state: Record<string, unknown>) => Record<string, unknown>) => { state = fn(state); },
   };
   const code = transpileModule(bodies.join(String.fromCharCode(10)) + '; return clearSessionAfterGuard;', { compilerOptions: { target: ScriptTarget.ES2022 } }).outputText;

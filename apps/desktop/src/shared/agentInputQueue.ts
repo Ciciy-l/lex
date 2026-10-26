@@ -372,10 +372,12 @@ export function normalizeAgentInputClearBoundaryMs(value: unknown): number | nul
 }
 
 /** Local Main clear acknowledgement. Missing on older hosts and remote projections.
- * Only a committed native receipt transfers close/identity ownership to Main. */
+ * Only a committed native receipt transfers close/identity ownership to Main.
+ * Superseded confirms that exact clear completed but a newer Host authority
+ * owns the task: retire only its local request, never apply its empty view. */
 export interface AgentInputClearReceipt {
   requestAt: string;
-  status: 'pending' | 'committed' | 'failed' | 'unknown';
+  status: 'pending' | 'committed' | 'superseded' | 'failed' | 'unknown';
   native?: boolean;
   boundaryMs?: number;
 }

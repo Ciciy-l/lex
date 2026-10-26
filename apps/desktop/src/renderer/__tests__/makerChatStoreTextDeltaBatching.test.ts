@@ -5,7 +5,18 @@
  * text delta 合并、可恢复错误展示，以及基于 main projection 的队列保留。
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createRequire } from 'node:module';
+import Database from 'better-sqlite3';
+import { Session as CoreSession, type AgentSessionHandle } from '@cindy/maker-core';
+import { createDbClient } from '../../main/localDb/client/DbClient';
+import { buildDbWorkerBundle, createMigratedSmokeDb } from '../../main/localDb/__tests__/dbWorkerTestUtils';
+import { RETAINED_COMPANION_DDL } from '../../main/localDb/__tests__/fixtures/retiredCompanionTables';
+import { productionClearFixture } from '../../test/fixtures/nativeClearMain';
+import { createNativeHistoryJournal } from '../../main/maker-ipc/nativeHistoryJournal';
 import { GHOST_SETUP_MAX_INTERACTION_STEPS, GHOST_SETUP_MAX_STEPS } from '../../shared/ghost';
 import type { AgentInputProjection, AgentInputQueuedMessage } from '../../shared/agentInputQueue';
 import type { Message, Session } from '@/lib/ccAgent.types';
@@ -161,7 +172,7 @@ const deviceLinkInvoke =
   vi.fn<(deviceId: string, channel: string, args: unknown[]) => Promise<unknown>>();
 
 const input = {
-  getProjection: vi.fn(async (sessionId: string) => projection(sessionId)),
+  getProjection: vi.fn(async (sessionId: string, _options?: { clearRequestAt?: string }) => projection(sessionId)),
   enqueue: vi.fn(async (sessionId: string, item: AgentInputQueuedMessage) =>
     projection(sessionId, { pendingQueue: [item] }),
   ),
@@ -2456,6 +2467,99 @@ describe('makerChatStore text delta batching', () => {
     expect(window.electronAPI.maker.closeSession).not.toHaveBeenCalled();
     await makerChatStore.clearSession(SESSION_ID);
     expect(input.clearSession).toHaveBeenCalledTimes(1);
+    await expect(makerChatStore.sendMessage(SESSION_ID, 'must remain held', MODEL, EFFORT, PERMISSION_MODE, WORKING_DIR)).resolves.toBe(false);
+    await expect(makerChatStore.steerMessage(SESSION_ID, 'must remain held', MODEL, EFFORT, PERMISSION_MODE, WORKING_DIR)).resolves.toBe(false);
+    expect(input.enqueue).not.toHaveBeenCalled();
+    expect(input.steer).not.toHaveBeenCalled();
+  });
+
+  it.each(['before-read', 'during-read', 'late-ack'] as const)('retires only the known old clear when authority advances %s', async moment => {
+    let resolve!: (value: AgentInputProjection) => void;
+    input.clearSession.mockReturnValueOnce(new Promise<AgentInputProjection>(r => { resolve = r; }));
+    const clear = makerChatStore.clearSession(SESSION_ID); await flushPromises();
+    const requestAt = input.clearSession.mock.calls[0]![1]!;
+    const receipt = { requestAt, status: 'committed' as const, native: true, boundaryMs: Date.parse(requestAt) };
+    const replaceView = () => {
+      onInputProjection?.(projection(SESSION_ID, { clearBoundaryMs: Date.parse(requestAt) + 1 }));
+      emitTextDelta('new generation'); emitStatus({ status: 'Running', isRunning: true });
+    };
+    if (moment === 'late-ack') {
+      vi.advanceTimersByTime(500); await flushPromises(); await clear;
+      await expect(makerChatStore.sendMessage(SESSION_ID, 'held', MODEL, EFFORT, PERMISSION_MODE, WORKING_DIR)).resolves.toBe(false);
+    }
+    if (moment === 'before-read') replaceView();
+    input.getProjection.mockImplementationOnce(async () => {
+      if (moment !== 'before-read') replaceView();
+      return { ...projection(SESSION_ID), clearReceipt: { ...receipt, status: moment === 'during-read' ? 'committed' as const : 'superseded' as const } };
+    });
+    resolve({ ...projection(SESSION_ID), clearReceipt: receipt });
+    await flushPromises(); await clear; await flushPromises();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.waitFor(() => expect(makerChatStore.getSnapshot(SESSION_ID).messages.map(row => row.content)).toContain('new generation'));
+    await expect(makerChatStore.sendMessage(SESSION_ID, 'new explicit', MODEL, EFFORT, PERMISSION_MODE, WORKING_DIR)).resolves.toBe(true);
+    expect(input.enqueue).toHaveBeenCalledTimes(1);
+    expect(input.clearSession).toHaveBeenCalledTimes(1);
+    expect(sessionService.update).not.toHaveBeenCalled();
+    expect(window.electronAPI.maker.closeSession).not.toHaveBeenCalled();
+  });
+
+  it('does not let a late old acknowledgement remove a newer request after task purge', async () => {
+    let finishOld!: (value: AgentInputProjection) => void, finishNew!: (value: AgentInputProjection) => void;
+    input.clearSession.mockReturnValueOnce(new Promise(r => { finishOld = r; }));
+    const old = makerChatStore.clearSession(SESSION_ID);
+    await flushPromises(); vi.advanceTimersByTime(500); await flushPromises(); await old;
+    const oldAt = input.clearSession.mock.calls[0]![1]!;
+    makerChatStore.purgeSession(SESSION_ID);
+    vi.advanceTimersByTime(1);
+    input.clearSession.mockReturnValueOnce(new Promise(r => { finishNew = r; }));
+    const next = makerChatStore.clearSession(SESSION_ID); await flushPromises();
+    const nextAt = input.clearSession.mock.calls[1]![1]!;
+    finishOld({ ...projection(SESSION_ID), clearReceipt: { requestAt: oldAt, status: 'committed', native: true, boundaryMs: Date.parse(oldAt) } });
+    await vi.advanceTimersByTimeAsync(0);
+    await makerChatStore.clearSession(SESSION_ID);
+    await expect(makerChatStore.sendMessage(SESSION_ID, 'held by new request', MODEL, EFFORT, PERMISSION_MODE, WORKING_DIR)).resolves.toBe(false);
+    expect(input.clearSession).toHaveBeenCalledTimes(2);
+    finishNew({ ...projection(SESSION_ID), clearReceipt: { requestAt: nextAt, status: 'failed' } });
+    await next;
+    await expect(makerChatStore.sendMessage(SESSION_ID, 'allowed after rejection', MODEL, EFFORT, PERMISSION_MODE, WORKING_DIR)).resolves.toBe(true);
+    expect(input.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['other-task', 'other-request', 'missing-boundary', 'not-native'] as const)('keeps unknown clear fenced for %s readback', async mismatch => {
+    input.clearSession.mockImplementationOnce(async (_id, at) => ({ ...projection(SESSION_ID), clearReceipt: {
+      requestAt: at!, status: 'committed', native: true, boundaryMs: Date.parse(at!),
+    } }));
+    input.getProjection.mockImplementationOnce(async () => ({ ...projection(mismatch === 'other-task' ? 'other' : SESSION_ID), clearReceipt: {
+      requestAt: mismatch === 'other-request' ? new Date(0).toISOString() : input.clearSession.mock.calls[0]![1]!,
+      status: 'superseded', native: mismatch !== 'not-native', boundaryMs: mismatch === 'missing-boundary' ? undefined : 500,
+    } }));
+    await makerChatStore.clearSession(SESSION_ID);
+    await expect(makerChatStore.sendMessage(SESSION_ID, 'held', MODEL, EFFORT, PERMISSION_MODE, WORKING_DIR)).resolves.toBe(false);
+    expect(input.enqueue).not.toHaveBeenCalled();
+    expect(sessionService.update).not.toHaveBeenCalled();
+  });
+
+  it('resumes explicit send, steer and a new clear after Host confirms the old clear was superseded', async () => {
+    emitTextDelta('replacement context'); vi.advanceTimersByTime(32);
+    input.clearSession.mockImplementationOnce(async (_id, requestAt) => ({ ...projection(SESSION_ID),
+      clearReceipt: { requestAt: requestAt!, status: 'committed', native: true, boundaryMs: Date.parse(requestAt!) } }));
+    input.getProjection.mockImplementationOnce(async () => Object.assign(projection(SESSION_ID), { clearReceipt: {
+      requestAt: input.clearSession.mock.calls[0]![1]!, status: 'superseded' as const, native: true,
+      boundaryMs: Date.parse(input.clearSession.mock.calls[0]![1]!),
+    } }));
+    await makerChatStore.clearSession(SESSION_ID);
+    expect(makerChatStore.getSnapshot(SESSION_ID).messages.map(row => row.content)).toContain('replacement context');
+    expect(sessionService.update).not.toHaveBeenCalled();
+    expect(window.electronAPI.maker.closeSession).not.toHaveBeenCalled();
+    await expect(makerChatStore.sendMessage(SESSION_ID, 'explicit new input', MODEL, EFFORT, PERMISSION_MODE, WORKING_DIR)).resolves.toBe(true);
+    expect(input.enqueue).toHaveBeenCalledTimes(1);
+    await expect(makerChatStore.steerMessage(SESSION_ID, 'explicit addition', MODEL, EFFORT, PERMISSION_MODE, WORKING_DIR)).resolves.toBe(true);
+    expect(input.steer).toHaveBeenCalledTimes(1);
+    expect(input.clearSession).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1);
+    await makerChatStore.clearSession(SESSION_ID);
+    expect(input.clearSession).toHaveBeenCalledTimes(2);
+    expect(input.clearSession.mock.calls[1]![1]).not.toBe(input.clearSession.mock.calls[0]![1]);
   });
 
   it('permits a new explicit clear only after Main confirms the previous failure', async () => {
@@ -2468,6 +2572,112 @@ describe('makerChatStore text delta batching', () => {
     expect(sessionService.update).not.toHaveBeenCalled();
     await makerChatStore.clearSession(SESSION_ID);
     expect(input.clearSession).toHaveBeenCalledTimes(2);
+  });
+
+  describe('complete clear lifecycle with production Main and SQLite', () => {
+    let bundleRoot: string, workerScriptPath: string;
+    beforeAll(async () => {
+      bundleRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'clear-consumer-worker-'));
+      workerScriptPath = await buildDbWorkerBundle(bundleRoot);
+    });
+    afterAll(() => { fs.rmSync(bundleRoot, { recursive: true, force: true }); });
+
+    it.each([false, true])('preserves the replacement and admits the next send, steer and clear (inline=%s; same native ID on inline)', async useInlineWorker => {
+      vi.useRealTimers();
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clear-consumer-db-'));
+      const dbPath = path.join(root, 'db.sqlite'), drizzleDir = path.join(root, 'drizzle');
+      fs.mkdirSync(drizzleDir);
+      createMigratedSmokeDb(dbPath);
+      const seed = new Database(dbPath);
+      try {
+        seed.exec(RETAINED_COMPANION_DDL.join(';'));
+        seed.exec('CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT, sdk_session_id TEXT, cleared_at INTEGER, updated_at INTEGER, codex_plan_json TEXT, list_preview TEXT, list_preview_role TEXT)');
+        seed.prepare('INSERT INTO sessions(id, source, sdk_session_id) VALUES (?, ?, ?)').run(SESSION_ID, 'desktop', path.join(root, 'old.jsonl'));
+      } finally { seed.close(); }
+      const client = await createDbClient({ userId: 'clear-consumer', dbPath, drizzleDir,
+        betterSqliteModulePath: createRequire(import.meta.url).resolve('better-sqlite3'),
+        ...(useInlineWorker ? { useInlineWorker: true } : { workerScriptPath }) });
+      const closed: string[] = [];
+      const makeSession = (id: string) => {
+        const handle: AgentSessionHandle = { id, agentKind: 'pi', model: MODEL,
+          async send() { throw new Error('Unexpected prompt replay'); }, async steer() { throw new Error('Unexpected native steer'); },
+          async abort() {}, async close() { closed.push(id); }, events: async function* () {}, setInteractionResolver() {}, isTurnRunning: () => false,
+          getUsageSnapshot: () => ({ tokenUsage: 0, costUsd: 0, contextTokens: 0, contextWindow: 100 }) };
+        const logger = { trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {}, child() { return this; } };
+        const session = new CoreSession({ id: SESSION_ID, agentKind: 'pi', workDir: root, handle, logger, turnStallMs: 0,
+          capabilities: { sessionTree: { supported: true } } as never });
+        vi.spyOn(session, 'presentation', 'get').mockReturnValue({} as never);
+        return session;
+      };
+      const initial = makeSession(path.join(root, 'old.jsonl'));
+      const replacement = makeSession(path.join(root, useInlineWorker ? 'old.jsonl' : 'fresh.jsonl'));
+      const main = productionClearFixture(client, root, initial);
+      const journal = createNativeHistoryJournal(root, { sessionId: SESSION_ID, nativeId: initial.sdkSessionId,
+        agentKind: 'pi', workingDir: root, model: MODEL });
+      journal.recordResult(journal.begin('selected', 'native unsent draft'), { draftText: 'selected draft' });
+      let finishReply!: (projection: AgentInputProjection) => void;
+      let committed: Promise<unknown> | undefined;
+      input.clearSession.mockImplementationOnce((_id, at) => {
+        committed = main.clear(Date.parse(at!), SESSION_ID);
+        return new Promise(resolve => { finishReply = resolve; });
+      });
+      input.getProjection.mockImplementation(async (_id, options?: { clearRequestAt?: string }) => {
+        if (options?.clearRequestAt) return main.read(Date.parse(options.clearRequestAt), SESSION_ID);
+        return projection(SESSION_ID);
+      });
+      try {
+        const clearing = makerChatStore.clearSession(SESSION_ID);
+        await vi.waitFor(() => expect(committed).toBeDefined());
+        const oldResult = await committed as AgentInputProjection;
+        expect(closed).toEqual([initial.sdkSessionId]);
+        expect(journal.read()).toBeNull();
+        await client.exec('UPDATE sessions SET sdk_session_id = ? WHERE id = ?', [replacement.sdkSessionId, SESSION_ID]);
+        main.replaceExecutor(replacement);
+        // A DB result obtained while the captured executor exits cannot attest
+        // current authority, even though the old clear itself really committed.
+        const racingRead = main.read(Date.parse(oldResult.clearReceipt!.requestAt), SESSION_ID);
+        main.replaceExecutor(undefined);
+        expect((await racingRead).clearReceipt.status).toBe('unknown');
+        main.replaceExecutor(replacement);
+        emitTextDelta('new-window context');
+        emitStatus({ status: 'Done', isRunning: false });
+        const draft = { requestId: 'new-draft', currentIndex: 0, answers: { text: 'keep GUI draft' } };
+        makerChatStore.setAskUserDraft(SESSION_ID, draft);
+        const before = makerChatStore.getSnapshot(SESSION_ID);
+        finishReply(oldResult);
+        await clearing;
+        expect(makerChatStore.getSnapshot(SESSION_ID).messages).toEqual(before.messages);
+        expect(makerChatStore.getSnapshot(SESSION_ID).askUserDraft).toEqual(draft);
+        expect(window.electronAPI.maker.closeSession).not.toHaveBeenCalled();
+        expect(sessionService.update).not.toHaveBeenCalled();
+        expect(main.calls.filter(x => x === 'persist')).toHaveLength(1);
+        const dispatches: string[] = [];
+        input.enqueue.mockImplementationOnce(async (_id, item) => {
+          expect(main.currentExecutor()).toBe(replacement);
+          expect(await client.queryOne('SELECT sdk_session_id FROM sessions WHERE id = ?', [SESSION_ID]))
+            .toEqual({ sdk_session_id: replacement.sdkSessionId });
+          dispatches.push(item.text); return projection(SESSION_ID);
+        });
+        await expect(makerChatStore.sendMessage(SESSION_ID, 'explicit new input', MODEL, EFFORT, PERMISSION_MODE, WORKING_DIR)).resolves.toBe(true);
+        input.steer.mockImplementationOnce(async () => {
+          expect(main.currentExecutor()).toBe(replacement); dispatches.push('explicit steer'); return true;
+        });
+        await expect(makerChatStore.steerMessage(SESSION_ID, 'explicit steer', MODEL, EFFORT, PERMISSION_MODE, WORKING_DIR)).resolves.toBe(true);
+        expect(dispatches).toEqual(['explicit new input', 'explicit steer']);
+        expect(input.clearSession).toHaveBeenCalledTimes(1);
+        input.clearSession.mockImplementationOnce((_id, at) => main.clear(Date.parse(at!), SESSION_ID) as Promise<AgentInputProjection>);
+        await makerChatStore.clearSession(SESSION_ID);
+        expect(input.clearSession).toHaveBeenCalledTimes(2);
+        expect(main.calls.filter(x => x === 'persist')).toHaveLength(2);
+        expect(closed).toEqual([initial.sdkSessionId, replacement.sdkSessionId]);
+        expect(makerChatStore.getSnapshot(SESSION_ID).messages).toEqual([]);
+        expect(await client.queryOne('SELECT sdk_session_id FROM sessions WHERE id = ?', [SESSION_ID])).toEqual({ sdk_session_id: null });
+      } finally {
+        input.getProjection.mockImplementation(async (id: string) => projection(id));
+        await initial.close(); await replacement.close(); await client.dispose();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
   });
 
   it.each(['owner', 'purge'] as const)('ignores a late clear after %s replacement', async boundary => {
