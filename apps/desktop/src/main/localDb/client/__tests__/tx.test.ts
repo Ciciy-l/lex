@@ -13,6 +13,8 @@ import { commitSessionContextClear } from '../../sessionContextClear.js';
 import { createNativeHistoryHandoff } from '../../../maker-ipc/nativeHistoryHandoff.js';
 import { createNativeHistoryJournal, readNativeHistoryForClear } from '../../../maker-ipc/nativeHistoryJournal.js';
 import { withNativeHistoryClear } from '../../../maker-ipc/nativeHistoryClear.js';
+import { InputClearReceipts } from '../../../maker-ipc/inputClearReceipts.js';
+import { createRehydrateCloseSuppression } from '../../../maker-host/rehydrateCloseSuppression.js';
 import { withNativeHistoryOperation } from '../../../maker-ipc/nativeHistoryOperation.js';
 import * as atomic from '../../../utils/atomicWriteFile.js';
 import { sessions } from '../../schema.js';
@@ -1460,7 +1462,7 @@ describe('db worker tx handlers', () => {
         vi.spyOn(session, 'presentation', 'get').mockReturnValue({ suspendInput: () => () => {} } as never);
         const main = productionClearFixture(client, journalRoot, session);
         await main.clear();
-        expect(exits).toBe(1); expect(main.calls).toEqual(['gate', 'close', 'queue', 'invalidate', 'persist', 'seal', 'ungate']);
+        expect(exits).toBe(1); expect(main.calls).toEqual(['gate', 'close', 'invalidate', 'persist', 'queue', 'seal', 'ungate']);
         expect(await client.queryOne('SELECT sdk_session_id, cleared_at FROM sessions WHERE id = ?', ['s1']))
           .toEqual({ sdk_session_id: null, cleared_at: 500 });
         expect(createNativeHistoryJournal(journalRoot, { sessionId: 's1', nativeId: path.join(root, 'new.jsonl'),
@@ -1478,6 +1480,70 @@ describe('db worker tx handlers', () => {
         expect(session.getUsageSnapshot().tokenUsage).toBe(234);
         await expect(handoff.recover()).rejects.toThrow();
       } finally { await session.close(); }
+    }, { useInlineWorker });
+  });
+
+  it.each([false, true])('honors native clear authority through Renderer/Main/SQLite failures and lost replies (inline=%s)', async useInlineWorker => {
+    await withClient(async (client, config) => {
+      for (const scenario of ['intent', 'busy', 'exit', 'db', 'tombstone', 'success', 'lost-success', 'lost-failure']) {
+        await client.exec('DELETE FROM sessions');
+        const root = path.join(path.dirname(config.dbPath!), scenario), source = path.join(root, 'source.jsonl');
+        await seedSession(client, 's1', { sdkSessionId: source });
+        const journal = createNativeHistoryJournal(root, { sessionId: 's1', nativeId: source,
+          agentKind: 'pi', workingDir: root, model: 'exact' });
+        journal.recordResult(journal.begin('chosen', 'native draft'), { draftText: 'selected draft' });
+        let exits = 0, sends = 0;
+        const handle: AgentSessionHandle = { id: source, agentKind: 'pi', model: 'exact',
+          async send() { sends++; throw new Error('Unexpected replay'); }, async steer() { throw new Error('Unexpected steer'); },
+          async abort() {}, async close() { exits++; }, events: async function* () {}, setInteractionResolver() {}, isTurnRunning: () => false,
+          getUsageSnapshot: () => ({ tokenUsage: 234, costUsd: 0.12, contextTokens: 17, contextWindow: 100 }) };
+        const logger = { trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {}, child() { return this; } };
+        const session = new Session({ id: 's1', agentKind: 'pi', workDir: root, handle, logger, turnStallMs: 0,
+          capabilities: { sessionTree: { supported: true } } as never });
+        vi.spyOn(session, 'presentation', 'get').mockReturnValue({} as never);
+        const main = productionClearFixture(client, root, session, { beforeClose: async () => {
+          if (scenario === 'exit') throw new Error('Executor exit unconfirmed');
+        } });
+        const renderer = productionRendererClearFixture(main, client, scenario.startsWith('lost-'));
+        if (scenario === 'db' || scenario === 'lost-failure')
+          await client.exec("CREATE TRIGGER reject_renderer_clear BEFORE UPDATE ON sessions BEGIN SELECT RAISE(ABORT, 'clear unavailable'); END");
+        const original = atomic.atomicWriteFileSync;
+        const write = vi.spyOn(atomic, 'atomicWriteFileSync').mockImplementation((file, value, ...rest) => {
+          if ((scenario === 'intent' && value.includes('"clear"')) || (scenario === 'tombstone' && value === 'null'))
+            throw new Error('Injected journal failure');
+          return original(file, value, ...rest);
+        });
+        try {
+          if (scenario === 'busy') await withNativeHistoryOperation(root, 's1', () => renderer.clear());
+          else await renderer.clear();
+          const success = scenario === 'success' || scenario === 'lost-success';
+          expect(renderer.calls.filter(call => call === 'mutation')).toHaveLength(1);
+          expect(renderer.calls).not.toContain('generic-write');
+          expect(renderer.calls).not.toContain('independent-close');
+          expect(renderer.state().messages).toEqual(success ? [] : [{ clientId: 'old', content: 'keep' }]);
+          expect(renderer.state().askUserDraft).toBe(success ? null : 'draft');
+          expect(main.calls.filter(call => call === 'queue')).toHaveLength(success ? 1 : 0);
+          const committed = success || scenario === 'tombstone';
+          expect(await client.queryOne('SELECT sdk_session_id, cleared_at FROM sessions WHERE id = ?', ['s1']))
+            .toEqual({ sdk_session_id: committed ? null : source, cleared_at: committed ? 500 : null });
+          expect(sends).toBe(0); expect(exits).toBe(['busy', 'exit'].includes(scenario) ? 0 : 1);
+          expect(session.getUsageSnapshot().tokenUsage).toBe(234);
+          const beforeRead = [...main.calls];
+          expect((await main.read()).clearReceipt.status).toBe(success ? 'committed' : 'failed');
+          expect(main.calls).toEqual(beforeRead); // read is not another mutation or tombstone retry
+          if (success) expect(createNativeHistoryJournal(root, { sessionId: 's1', nativeId: path.join(root, 'fresh.jsonl'),
+            agentKind: 'pi', workingDir: root, model: 'exact' }).read()).toBeNull();
+          if (success) {
+            await client.exec('UPDATE sessions SET sdk_session_id = ? WHERE id = ?', [path.join(root, 'fresh.jsonl'), 's1']);
+            expect((await main.read()).clearReceipt.status).toBe('unknown');
+          }
+          main.changeOwner();
+          expect((await main.read()).clearReceipt.status).toBe('unknown');
+        } finally {
+          write.mockRestore(); await session.close();
+          await client.exec('DROP TRIGGER IF EXISTS reject_renderer_clear');
+        }
+      }
     }, { useInlineWorker });
   });
 
@@ -3785,40 +3851,50 @@ describe('db worker tx handlers', () => {
 
 /** Compile only the production clear entry points; importing register itself
  * would initialize unrelated Electron/provider singletons in a SQLite test. */
-function productionClearFixture(client: DbClient, root: string, initial?: Session) {
+function productionClearFixture(client: DbClient, root: string, initial?: Session, hooks: { beforeClose?(): Promise<void>; beforePersist?(): Promise<void> } = {}) {
   const source = fs.readFileSync(path.resolve('src/main/maker-ipc/register.ts'), 'utf8');
   const ast = createSourceFile('register.ts', source, ScriptTarget.Latest, true);
-  let capture = '', callback = '';
+  let capture = '', callback = '', readCallback = '';
   const visit = (node: Node) => {
     if (isFunctionDeclaration(node) && node.name?.text === 'captureNativeHistoryClearDependencies') capture = node.getText(ast);
     if (isCallExpression(node) && node.expression.getText(ast) === 'ipcMain.handle'
       && node.arguments[0]?.getText(ast) === 'MAKER_INVOKE.INPUT_CLEAR_SESSION') callback = node.arguments[1]!.getText(ast);
+    if (isCallExpression(node) && node.expression.getText(ast) === 'ipcMain.handle'
+      && node.arguments[0]?.getText(ast) === 'MAKER_INVOKE.INPUT_GET_PROJECTION') readCallback = node.arguments[1]!.getText(ast);
     forEachChild(node, visit);
   };
   visit(ast); expect(capture).not.toBe(''); expect(callback).not.toBe('');
   let current = initial, generation = 1;
   const calls: string[] = [];
+  const suppression = createRehydrateCloseSuppression({ debug() {}, warn() {} });
   const dependencies = {
+    inputClearReceipts: new InputClearReceipts(),
+    withRehydrateCloseSuppressed: suppression.withSuppressed,
     getDbClient: () => client, getCurrentDbClientSnapshot: () => client,
     getActiveAppSession: () => ({ generation, dataOwnerId: 'isolated-owner' }), isAppSessionBoundaryPending: () => false,
     getMaker: () => ({ getSession: () => current, closeSessionIfCurrent: async (session: Session) => {
-      expect(session).toBe(current); calls.push('close'); await session.close(); current = undefined;
+      expect(session).toBe(current); calls.push('close'); await hooks.beforeClose?.(); await session.close(); current = undefined;
+      await suppression.runOnCloseSideEffects(session.id, async () => { calls.push('temp-and-worktree-cleanup'); });
     } }), ownerScopedUserDataPath: () => root, sessions, eq,
     throwIpcError: (code: string, message: string) => { throw new Error(code + ': ' + message); },
     requireSessionId: (id: string) => id, assertReviewExternalInputAllowed: async () => {}, isDeviceLinkInvoke: () => false,
     beginRemoteInputClearGate: () => calls.push('gate'), endRemoteInputClearGate: () => calls.push('ungate'),
     resolveClearSessionBoundary: ({ clearedAt }: { clearedAt: string }) => clearedAt,
-    inputCoordinator: { clearSession: () => { calls.push('queue'); return { cleared: true }; } },
+    inputCoordinator: { clearSession: () => { calls.push('queue'); return { sessionId: 's1', pendingQueue: [] }; },
+      getProjection: () => ({ sessionId: 's1', pendingQueue: [] }) },
     workingDirectoryRecovery: { discard() {} }, resetAutomaticRecoveryForExplicitStop() {},
     agentHandoffPending: { invalidate: () => calls.push('invalidate'), sealClearBoundary: () => calls.push('seal') },
     getAgentIslandService: () => undefined, goalClearObserver: undefined,
     clearSessionContextInDb: async (id: string, at: number, expected?: { nativeId: string | null; clearedAt: number | null }) => {
-      calls.push('persist'); return commitSessionContextClear(client, id, at, expected);
+      calls.push('persist'); await hooks.beforePersist?.(); return commitSessionContextClear(client, id, at, expected);
     }, withNativeHistoryClear, readNativeHistoryForClear, log: { error() {} },
   };
   const code = transpileModule(capture + '\nreturn (' + callback + ');', { compilerOptions: { target: ScriptTarget.ES2022 } }).outputText;
   const handler = new Function(...Object.keys(dependencies), code)(...Object.values(dependencies));
+  const readCode = transpileModule(capture + String.fromCharCode(10) + 'return (' + readCallback + ');', { compilerOptions: { target: ScriptTarget.ES2022 } }).outputText;
+  const readHandler = new Function(...Object.keys(dependencies), readCode)(...Object.values(dependencies));
   return { calls, changeOwner: () => { generation++; },
+    read: (at = 500, id = 's1') => readHandler(undefined, id, { clearRequestAt: new Date(at).toISOString() }),
     clear: (at = 500, id = 's1') => handler(undefined, id, new Date(at).toISOString()) as Promise<unknown> };
 }
 
@@ -3858,6 +3934,52 @@ async function withClient(
     }
     fs.rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/** Production Renderer functions, Main callbacks and real SQLite in one chain.
+ * Only UI services/executor faults are synthetic; separate Renderer tests import
+ * the full store to cover module state and live event ownership. */
+function productionRendererClearFixture(main: ReturnType<typeof productionClearFixture>, client: DbClient, lostReply = false) {
+  const names = ['clearSessionAfterGuard', 'clearLocalSessionAfterGuard', 'clearSessionAfterGuardImpl',
+    'resetClearedSessionView', 'awaitRemoteClearOperation'];
+  const ast = createSourceFile('store.ts', fs.readFileSync(path.resolve('src/renderer/lib/makerChatStore.ts'), 'utf8'), ScriptTarget.Latest, true);
+  const bodies = ast.statements.filter(node => isFunctionDeclaration(node) && names.includes(node.name?.text ?? '')).map(node => node.getText(ast));
+  expect(bodies).toHaveLength(names.length);
+  let state: Record<string, unknown> = { messages: [{ clientId: 'old', content: 'keep' }], pendingQueue: [], sdkSessionId: 'source', askUserDraft: 'draft' };
+  const calls: string[] = [];
+  const serviceAst = createSourceFile('service.ts', fs.readFileSync(path.resolve('src/renderer/lib/sessionService.ts'), 'utf8'), ScriptTarget.Latest, true);
+  const updateBody = serviceAst.statements.find(node => isFunctionDeclaration(node) && node.name?.text === 'update')!.getText(serviceAst).replace('export ', '');
+  const updateCode = transpileModule(updateBody + '; return update;', { compilerOptions: { target: ScriptTarget.ES2022 } }).outputText;
+  const update = new Function('wrap', 'window', updateCode)((promise: Promise<unknown>) => promise, { electronAPI: { localDb: { sessions: {
+    update: async (id: string, patch: { sdkSessionId: string | null; clearedAt: string }) => {
+      calls.push('generic-write');
+      await client.exec('UPDATE sessions SET sdk_session_id = ?, cleared_at = ? WHERE id = ?', [patch.sdkSessionId, Date.parse(patch.clearedAt), id]);
+      return {};
+    },
+  } } } });
+  let task: Promise<unknown> | undefined;
+  const api = { input: { clearSession: (_id: string, at: string) => {
+    calls.push('mutation'); task = main.clear(Date.parse(at));
+    if (lostReply) { void task.catch(() => {}); return new Promise(() => {}); }
+    return task;
+  }, getProjection: async (_id: string, opts: { clearRequestAt: string }) => {
+    calls.push('read'); await task?.catch(() => {}); return main.read(Date.parse(opts.clearRequestAt));
+  } }, closeSession: async () => { calls.push('independent-close'); } };
+  const no = () => {};
+  const dependencies = {
+    remoteClearInFlight: new Set(), localClearRequests: new Map(), rendererClearGenerationBySession: new Map(), rendererClearBoundaryBySession: new Map(),
+    getStickySessionDeviceId: () => undefined, beginInputProjectionOperation: () => ({ api, dataOwner: {}, generation: 0 }),
+    isCurrentInputProjectionOrigin: () => true, isDataOwnerGenerationCurrent: () => true,
+    CLEAR_SESSION_GUARD_TIMEOUT_MS: 20, setTimeout, clearTimeout, log: { warn: no }, toast: { warning: no, error: no }, i18n: { t: (key: string) => key },
+    sessionService: { update },
+    dismissVisionBridgeToast: no, noteRendererClearBoundary: no, invalidateMessageHistoryWindow: no, bumpInteractionReconcileEpoch: no,
+    supersedeInputProjectionRequests: no, _lastViewedAt: new Map(), discardPendingTextDelta: no, emitPatch: no,
+    remoteOptimisticSendRecords: () => undefined, EMPTY_WINDOW_ISLANDS: [],
+    setState: (_id: string, fn: (state: Record<string, unknown>) => Record<string, unknown>) => { state = fn(state); },
+  };
+  const code = transpileModule(bodies.join(String.fromCharCode(10)) + '; return clearSessionAfterGuard;', { compilerOptions: { target: ScriptTarget.ES2022 } }).outputText;
+  const clear = new Function(...Object.keys(dependencies), code)(...Object.values(dependencies));
+  return { calls, state: () => state, clear: () => clear('s1', new Date(500).toISOString()) as Promise<void> };
 }
 
 async function withTwoClients(fn: (clients: [DbClient, DbClient]) => Promise<void>): Promise<void> {

@@ -6995,8 +6995,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     input: {
       getProjection: (
         sessionId: string,
+        options?: { clearRequestAt: string },
       ): Promise<import('../shared/agentInputQueue').AgentInputProjection> =>
-        ipcRenderer.invoke('maker:input:get-projection', sessionId),
+        ipcRenderer.invoke('maker:input:get-projection', sessionId, ...(options ? [options] : [])),
       enqueue: (
         sessionId: string,
         item: import('../shared/agentInputQueue').AgentInputQueuedMessage,

@@ -49,8 +49,9 @@ describe('/clear:墓碑 → cleared_at 落库 → 封 clear 边界', () => {
     const epochAt = handler.indexOf('agentHandoffPending.sealClearBoundary(sid)');
     const between = handler.slice(persistAt, epochAt);
     expect(between).toContain('} catch (err) {');
-    expect(between).toContain('if (guard) throw err');
+    expect(between).toContain("if (receipt) receipt.status = 'failed'");
+    expect(between).toContain('throw error');
     expect(between).toContain('finally {');
-    expect(handler).toContain('withNativeHistoryClear(nativeClear, at, commitClear)');
+    expect(handler).toContain('withNativeHistoryClear(nativeClear, at, async guard =>');
   });
 });

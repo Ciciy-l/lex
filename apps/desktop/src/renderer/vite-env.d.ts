@@ -5780,6 +5780,7 @@ interface ElectronAPI {
     input: {
       getProjection: (
         sessionId: string,
+        options?: { clearRequestAt: string },
       ) => Promise<import('../shared/agentInputQueue').AgentInputProjection>;
       enqueue: (
         sessionId: string,

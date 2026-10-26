@@ -468,6 +468,8 @@ import { createNativeHistoryHandoff } from './nativeHistoryHandoff.js';
 import { withNativeHistoryOperation } from './nativeHistoryOperation.js';
 import { nativeHistoryStartupTarget, nativeHistoryConfiguration, nativeHistoryRouteReference, readNativeHistoryForClear } from './nativeHistoryJournal.js';
 import { withNativeHistoryClear, finishCommittedNativeHistoryClear, type NativeHistoryClearDependencies } from './nativeHistoryClear.js';
+import { InputClearReceipts } from './inputClearReceipts.js';
+import type { AgentInputClearReceipt } from '../../shared/agentInputQueue.js';
 import type { SessionTreeConfiguration } from '../localDb/client/tx/types.js';
 import { NATIVE_HISTORY_RESUME } from '@cindy/maker-core';
 
@@ -4703,6 +4705,8 @@ const nativeHistoryBindings = new WeakMap<Session, {
   ready: Promise<void>;
 }>();
 
+const inputClearReceipts = new InputClearReceipts();
+
 function captureNativeHistoryClearDependencies(sessionId: string): NativeHistoryClearDependencies {
   const db = getDbClient();
   const ownerDb = getCurrentDbClientSnapshot();
@@ -4730,7 +4734,7 @@ function captureNativeHistoryClearDependencies(sessionId: string): NativeHistory
         async close() {
           assertCurrent();
           if (maker.getSession(sessionId) !== session) throwIpcError('PRECONDITION_FAILED', 'History executor changed');
-          await maker.closeSessionIfCurrent(session);
+          await withRehydrateCloseSuppressed(sessionId, () => maker.closeSessionIfCurrent(session));
           assertCurrent();
           if (maker.getSession(sessionId) === session) throwIpcError('PRECONDITION_FAILED', 'History executor exit unconfirmed');
         } },
@@ -15646,6 +15650,24 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   ipcMain.handle(MAKER_INVOKE.INPUT_GET_PROJECTION, async (_e, sessionId: unknown, options?: unknown) => {
     const sid = requireSessionId(sessionId);
     const remote = isDeviceLinkInvoke();
+    // Delivery recovery is deliberately read-only: do not retry a DB boundary,
+    // restore queues, finish a journal or dispatch another clear from this read.
+    if (!remote && options && typeof options === 'object' && 'clearRequestAt' in options) {
+      const requestAt = options.clearRequestAt;
+      if (typeof requestAt !== 'string' || !Number.isFinite(Date.parse(requestAt)))
+        throwIpcError('INVALID_PARAMS', 'Invalid clearRequestAt');
+      const owner = getCurrentDbClientSnapshot();
+      if (!owner) throwIpcError('PRECONDITION_FAILED', 'Clear owner unavailable');
+      const scope = captureNativeHistoryClearDependencies(sid);
+      const receipt = inputClearReceipts.read(owner, getActiveAppSession().generation, sid, requestAt);
+      const state = await scope.readState();
+      scope.assertCurrent();
+      if (receipt.status === 'committed' && receipt.native && (scope.executor || state.nativeId !== null
+        || state.clearedAt !== receipt.boundaryMs || readNativeHistoryForClear(scope.root, sid))) {
+        receipt.status = 'unknown';
+      }
+      return { ...inputCoordinator.getProjection(sid), clearReceipt: receipt };
+    }
     let deliveryClientIds: string[] | undefined;
     try {
       deliveryClientIds = readInputDeliveryClientIds(options);
@@ -16434,6 +16456,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       // including the DB await below.  Local clear is gated too so a remote
       // controller cannot enter the same sealing window through another peer.
       beginRemoteInputClearGate(sid);
+      const owner = getCurrentDbClientSnapshot();
+      let receipt: AgentInputClearReceipt | undefined;
       try {
         const remoteInvoke = isDeviceLinkInvoke();
         const clearBoundary = resolveClearSessionBoundary({
@@ -16441,9 +16465,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           isRemoteInvoke: remoteInvoke,
         });
         const nativeClear = captureNativeHistoryClearDependencies(sid);
-        const commitClear = async (guard?: { expected: { nativeId: string | null; clearedAt: number | null }; at: number }) => {
+        if (!remoteInvoke && typeof clearedAt === 'string' && owner)
+          receipt = inputClearReceipts.begin(owner, getActiveAppSession().generation, sid, clearedAt);
+        const commitClear = async () => {
           nativeClear.assertCurrent();
-          const projection = inputCoordinator.clearSession(sid, guard?.at ?? clearBoundary);
+          const projection = inputCoordinator.clearSession(sid, clearBoundary);
           workingDirectoryRecovery.discard(sid);
           resetAutomaticRecoveryForExplicitStop(sid);
           // 丢弃缓存的待注入交接 / fork 来源标记:它们是按 clear 之前的历史算出来的,
@@ -16467,8 +16493,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           const clearBoundaryMs =
             typeof clearBoundary === 'number' ? clearBoundary : new Date(clearBoundary).getTime();
           try {
-            if (guard) await clearSessionContextInDb(sid, guard.at, guard.expected);
-            else await clearSessionContextInDb(sid, clearBoundaryMs);
+            await clearSessionContextInDb(sid, clearBoundaryMs);
           } catch (err) {
             // The in-memory fence is still authoritative for this process. Keep
             // /clear remains a local cleanup action even when persistence fails;
@@ -16479,15 +16504,36 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               remoteInvoke,
               err: err instanceof Error ? err.message : String(err),
             });
-            if (guard) throw err;
           }
           return projection;
         };
         if (nativeClear.executor || readNativeHistoryForClear(nativeClear.root, sid)) {
           const at = typeof clearBoundary === 'number' ? clearBoundary : new Date(clearBoundary).getTime();
-          return await withNativeHistoryClear(nativeClear, at, commitClear);
+          if (receipt) receipt.native = true;
+          // Publish queue cleanup only after DB commit AND journal retirement.
+          // A failed transaction must not emit a speculative clear projection.
+          await withNativeHistoryClear(nativeClear, at, async guard => {
+            if (!guard) throw new Error('Native clear guard missing');
+            agentHandoffPending.invalidate(sid);
+            await clearSessionContextInDb(sid, guard.at, guard.expected);
+          });
+          nativeClear.assertCurrent();
+          const state = await nativeClear.readState();
+          nativeClear.assertCurrent();
+          workingDirectoryRecovery.discard(sid);
+          resetAutomaticRecoveryForExplicitStop(sid);
+          getAgentIslandService()?.notifyQueueEmptied(sid);
+          goalClearObserver?.(sid);
+          const projection = inputCoordinator.clearSession(sid, state.clearedAt ?? at);
+          if (receipt) Object.assign(receipt, { status: 'committed', boundaryMs: state.clearedAt ?? at });
+          return { ...projection, ...(receipt ? { clearReceipt: { ...receipt } } : {}) };
         }
-        return await commitClear();
+        const projection = await commitClear();
+        if (receipt) Object.assign(receipt, { status: 'committed', native: false });
+        return { ...projection, ...(receipt ? { clearReceipt: { ...receipt } } : {}) };
+      } catch (error) {
+        if (receipt) receipt.status = 'failed';
+        throw error;
       } finally {
         // 落库尝试结束后封边界:重立墓碑(清掉这段 await 里用 clear 前纪元挤进来的那份)
         // + 推进纪元(挡住后面才写回的那批)。顺序不可颠倒,理由见 sealClearBoundary 注释。

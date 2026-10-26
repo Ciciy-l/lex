@@ -1507,8 +1507,7 @@ describe('跳转补齐 — 窗口连续,不留历史空洞', () => {
     await makerChatStore.loadAroundMessageClientId(SID, 'island-clear', { radius: 60 });
     expect(makerChatStore.getSnapshot(SID).historyWindowIslands.length).toBeGreaterThan(0);
 
-    makerChatStore.clearSession(SID);
-    await flushMicrotasks();
+    await makerChatStore.clearSession(SID);
 
     // 窗口空了 → 按构造没有孤岛。
     expect(makerChatStore.getSnapshot(SID).messages).toHaveLength(0);

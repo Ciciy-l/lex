@@ -9621,6 +9621,10 @@
     }
   },
   "ccAgent": {
+    "clear": {
+      "failed": "清空未完成，已保留当前界面和草稿。请重试清空",
+      "unconfirmed": "尚未确认清空结果，已保留当前界面和草稿。再次选择清空可检查结果"
+    },
     "presentation": {
       "guiBodyText": "Pi 原生任务中，GUI 消息按正文发送；原生命令和输入扩展请在 TUI 中使用。{{appName}} 已有命令仍可使用。",
       "guiAppendText": "OMP 响应期间，GUI 追加按正文发送；原生命令和输入扩展请在 TUI 中使用。",

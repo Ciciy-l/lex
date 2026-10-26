@@ -9636,6 +9636,10 @@
     }
   },
   "ccAgent": {
+    "clear": {
+      "failed": "Could not finish clearing. Your current view and drafts have been kept. Try clearing again.",
+      "unconfirmed": "Clearing is not yet confirmed. Your current view and drafts have been kept. Choose Clear again to check the result."
+    },
     "presentation": {
       "guiBodyText": "In native Pi tasks, GUI messages are sent as text. Use TUI for native commands and input extensions. Existing {{appName}} commands still work.",
       "guiAppendText": "While OMP is responding, GUI additions are sent as text. Use TUI for native commands and input extensions.",

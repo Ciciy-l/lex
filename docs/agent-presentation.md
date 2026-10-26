@@ -52,6 +52,14 @@ proves that clear committed; an uncommitted intent requires explicit clear again
 Projection transactions compare the captured clear boundary so late results
 cannot restore pre-clear messages or native identity. Identity mismatches and
 unknown native operations remain fenced; clear never repeats fork or input.
+The local Renderer keeps its view and drafts until Main confirms completion.
+Native clear has no independent Renderer close or generic identity write. Lost
+or delayed replies reconcile an owner/generation-bound receipt through a read-only
+projection query; another click checks that request rather than repeating clear.
+Unknown results keep the local send fence. A confirmed rejection permits an
+explicit retry; successful legacy responses retain the ordinary close path.
+Missing receipts never prove native success. Remote clear retains its existing
+host-boundary/outbox compatibility flow.
 GUI history prefill never overwrites an existing composer draft or attachments.
 This does not roll back files in the working directory.
 

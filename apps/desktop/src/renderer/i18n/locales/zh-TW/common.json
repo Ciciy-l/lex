@@ -9621,6 +9621,10 @@
     "sessionLoading": "載入任務中"
   },
   "ccAgent": {
+    "clear": {
+      "failed": "清空未完成，已保留目前畫面和草稿。請重試清空",
+      "unconfirmed": "尚未確認清空結果，已保留目前畫面和草稿。再次選擇清空可檢查結果"
+    },
     "presentation": {
       "guiBodyText": "Pi 原生任務中，GUI 訊息按正文傳送；原生命令和輸入擴充請在 TUI 中使用。{{appName}} 既有命令仍可使用。",
       "guiAppendText": "OMP 回應期間，GUI 追加按正文傳送；原生命令和輸入擴充請在 TUI 中使用。",
