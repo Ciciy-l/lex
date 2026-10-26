@@ -5,6 +5,7 @@ import {
   INHERITED_CAPABILITY_SELECTION,
   appendAutoReviewUserIntent,
   MAIN_OWNED_SEND_CONTEXT,
+  GUI_NATIVE_BODY,
   PINNED_SKILL_INVOCATION,
   type AgentKind,
   type SessionSendOptions,
@@ -500,6 +501,30 @@ describe('maker SEND transaction', () => {
       origin: { kind: 'desktop' },
       rawChannelText: command,
     });
+  });
+
+  it('restores GUI body provenance through the owner queue without granting command authorization', () => {
+    const item = { clientId: 'body', text: 'GUI body', persistedContent: 'GUI body', files: [] } as unknown as AgentInputQueuedMessage;
+    const stamped = stampTrustedDesktopQueuedOrigin(item, false);
+    const body = (value: AgentInputQueuedMessage) => (value as typeof value & { [GUI_NATIVE_BODY]?: true })[GUI_NATIVE_BODY];
+    const roundtrip = (value: AgentInputQueuedMessage) => restoreTrustedDesktopQueuedOrigin(JSON.parse(JSON.stringify(value)));
+    expect(body(stamped)).toBe(true);
+    expect(body(roundtrip(stamped))).toBe(true);
+    expect(roundtrip(stamped).origin).toBeUndefined();
+    // A host plugin rewrite changes content, not who authored the input. It
+    // must still use the GUI body channel after restoring the queue.
+    expect(body(roundtrip({ ...stamped, text: 'prepared body' }))).toBe(true);
+    expect(body(roundtrip({ ...stamped, clientId: 'different' }))).toBeUndefined();
+    for (const changed of [
+      { ...stamped, autoResume: true }, { ...stamped, fromMobileClient: true },
+      { ...stamped, fromDeviceLinkClient: true },
+      { ...stamped, origin: { kind: 'orca' } },
+    ]) expect(body(roundtrip(changed as AgentInputQueuedMessage))).toBeUndefined();
+    // Trust comes from the local IPC, never a wire-carried receipt or symbol.
+    expect(body(roundtrip(stampTrustedDesktopQueuedOrigin(stamped, true)))).toBeUndefined();
+    expect(body(roundtrip(item))).toBeUndefined();
+    const edited = stampTrustedDesktopQueuedOrigin({ ...stamped, text: 'edited', persistedContent: 'edited' }, false);
+    expect(body(roundtrip(edited))).toBe(true);
   });
 
   it('strips forged or ineligible durable Desktop command authorization', () => {

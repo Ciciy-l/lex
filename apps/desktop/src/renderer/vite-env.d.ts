@@ -5956,7 +5956,7 @@ interface ElectronAPI {
     navigateSessionTree: (
       sessionId: string,
       entryId: string,
-      options?: { summarize?: boolean; customInstructions?: string },
+      options?: { fork?: boolean; summarize?: boolean; customInstructions?: string },
     ) => Promise<{
       tree: MakerSessionTreeSnapshot;
       draftText?: string;

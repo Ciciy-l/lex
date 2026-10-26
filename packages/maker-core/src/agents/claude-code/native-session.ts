@@ -10,8 +10,16 @@ import { createAsyncQueue, type AsyncQueue } from '../shared/async-queue.js';
 import { createClaudeNativeRuntime, type ClaudeNativeRuntime, type ClaudeNativeRuntimeOptions } from './native-runtime.js';
 import type { ClaudeNativeSubmission } from './native-messages.js';
 
+export const CLAUDE_ORCA_IDENTITY_KEYS = ['orcaRole', 'orcaWorkflowId', 'orcaLeadSessionId',
+  'orcaWorkerId', 'orcaWorkerSessionId', 'initialWorker'] as const;
+
 /** Existing Claude policy is supplied by the adapter, never rebuilt by the terminal. */
 export interface ClaudeNativeSessionPolicy {
+  /** Update only host identity for an already registered, fixed Orca catalog. */
+  prepareOrcaIdentity?(patch: Record<string, unknown>): (() => void) | undefined;
+  /** Same authority object used by the MCP handlers, not a requested-settings cache. */
+  readOrcaIdentity?(): Record<string, unknown>;
+  revokeOrcaIdentity?(): void;
   setInteractionResolver(resolver: InteractionResolver): void;
   setExtraDirs?(dirs: string[]): Promise<void>;
   setWritableDirs?(dirs: string[]): Promise<void>;
@@ -23,6 +31,8 @@ export interface ClaudeNativeSessionPolicy {
 
 export interface ClaudeNativeSessionOptions {
   model: string;
+  /** Exact CLI model after the existing host route/capability mapping. */
+  nativeModel?: string;
   usageTracker?: UsageTracker;
   disabledSkillPaths?: AgentSessionHandle['disabledSkillPaths'];
   runtime: Omit<ClaudeNativeRuntimeOptions, 'onNativeInput' | 'importNativeMedia' | 'onInputPreparation' | 'onTurnAdmission' | 'onAgentEvent' | 'onUserMessage' | 'onExit' | 'onFault' | 'usageTracker'>;
@@ -47,6 +57,11 @@ interface InputEntry {
 /** Host adapter access for typed controls and native acceptance; never an IPC value. */
 export interface ClaudeNativeSessionHandle extends AgentSessionHandle {
   readonly nativeRuntime: ClaudeNativeRuntime;
+  readonly nativeModel?: string;
+  isTurnRunning(): boolean;
+  tryUpdateOrcaIdentity?(patch: Record<string, unknown>): Promise<boolean>;
+  readOrcaIdentity?(): Record<string, unknown>;
+  revokeOrcaIdentity?(): void;
 }
 
 /**
@@ -60,6 +75,8 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
   const guiInputs = new Map<string, InputEntry>();
   const nativeInputs = new Map<string, InputEntry>();
   let resolver: AgentNativeInputResolver | undefined, importMedia: AgentNativeMediaResolver | undefined;
+  let ownerGeneration = 0;
+  let identityGeneration = 0;
   let runtime: ClaudeNativeRuntime | undefined;
   let currentTurn: { id: string; inputs: InputEntry[] } | undefined;
   const observedTurns = new Map<string, InputEntry[]>();
@@ -91,6 +108,7 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
   };
   function close(): Promise<void> {
     if (closing) return closing;
+    identityGeneration++; options.policy.revokeOrcaIdentity?.();
     closed = true; lifetime.abort();
     for (const entry of new Set([...guiInputs.values(), ...nativeInputs.values()])) { entry.cancel(); entry.stop(); }
     guiInputs.clear(); nativeInputs.clear(); observedTurns.clear(); currentTurn = undefined;
@@ -204,9 +222,16 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
     requireLive();
   } catch (error) { if (closing) await runtime?.close(); await close(); throw error; }
   const native = runtime;
+  const requestAbort = async () => {
+    requireLive();
+    for (const entry of [...guiInputs.values(), ...nativeInputs.values()]) entry.cancel();
+    const turn = currentTurn;
+    if (turn) await native.command('abort', { turnId: turn.id });
+  };
 
   return {
     nativeRuntime: native,
+    nativeModel: options.nativeModel ?? options.model,
     disabledSkillPaths: options.disabledSkillPaths,
     get id() { return initialized ? options.runtime.nativeSessionId : '<pending>'; },
     requestSessionId: options.runtime.nativeSessionId, agentKind: 'claude-code', model: options.model,
@@ -218,7 +243,32 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
       setPermissionModeMidSession: { supported: false, reason: 'not-implemented', recovery: 'idle-restart' },
       planMode: { supported: false, reason: 'not-implemented' },
     },
-    setNativeInputResolver(next, media) { requireLive(); resolver = next; importMedia = media; },
+    setNativeInputResolver(next, media) {
+      requireLive();
+      if (resolver !== next || importMedia !== media) ownerGeneration++;
+      resolver = next; importMedia = media;
+    },
+    async tryUpdateOrcaIdentity(patch) {
+      requireLive();
+      // Revoke the old role synchronously, before catalog IO can fail or race
+      // an account change. A missing catalog cannot retain old authorization.
+      const apply = options.policy.prepareOrcaIdentity?.({ ...patch });
+      if (!apply) return false;
+      const owner = ownerGeneration;
+      const identity = ++identityGeneration;
+      const tools = await native.command('tool-list', {}) as Array<{ name?: unknown }>;
+      requireLive();
+      if (owner !== ownerGeneration) throw new TurnDispatchRejectedError('Claude native input owner changed');
+      if (identity !== identityGeneration) throw new TurnDispatchRejectedError('Claude native role changed');
+      // These are native readbacks, not a claim that mutating a host closure
+      // registered a new MCP server. Missing/disconnected catalogs need reopen.
+      if (!Array.isArray(tools)
+        || !tools.some(tool => tool.name === 'mcp__cindy_orca__start_team')
+        || !tools.some(tool => tool.name === 'mcp__orca_worker_bridge__send_to_lead')) return false;
+      apply(); return true;
+    },
+    readOrcaIdentity: options.policy.readOrcaIdentity && (() => ({ ...options.policy.readOrcaIdentity!() })),
+    revokeOrcaIdentity() { identityGeneration++; options.policy.revokeOrcaIdentity?.(); },
     setInteractionResolver(next) { requireLive(); options.policy.setInteractionResolver(next); },
     async setExtraDirs(dirs) {
       requireLive();
@@ -262,17 +312,25 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
       }
     },
     async steer() { throw new NotSupportedError('steer', { supported: false, reason: 'sdk-missing', upstreamRef: 'Mods prompt.submit queues a new turn' }); },
-    async abort() {
-      requireLive();
-      for (const entry of [...guiInputs.values(), ...nativeInputs.values()]) entry.cancel();
-      const turn = currentTurn;
-      if (turn) await native.command('abort', { turnId: turn.id });
-    },
+    abort: requestAbort,
+    requestGracefulStop: requestAbort,
     getCurrentTurnId: () => currentTurn?.id ?? null,
     isTurnRunning: () => Boolean(currentTurn || guiInputs.size || nativeInputs.size),
     events: () => events,
     getUsageSnapshot: () => ({ ...usage }),
     getContextUsage: createClaudeNativeContextReader(native, lifetime.signal, live),
+    async readNativeEditorDraft() {
+      requireLive();
+      if (currentTurn || guiInputs.size || nativeInputs.size) throw new TurnDispatchRejectedError('Native Claude input is not idle');
+      const snapshot = await native.command('snapshot', {}) as { draft?: { text?: unknown } };
+      if (typeof snapshot.draft?.text !== 'string') throw new Error('Native Claude draft could not be read');
+      return snapshot.draft.text;
+    },
+    async restoreNativeEditorDraft(text) {
+      requireLive();
+      if (currentTurn || guiInputs.size || nativeInputs.size) throw new TurnDispatchRejectedError('Native Claude input is not idle');
+      await native.command('restore-draft', { text });
+    },
     close,
   };
 }

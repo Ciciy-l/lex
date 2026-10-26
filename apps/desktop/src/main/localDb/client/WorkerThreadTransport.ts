@@ -1860,6 +1860,11 @@ function mergeTreeUserAgentMeta(agentMeta, source) {
 function sessionTreeRehydrate(readyDb, args) {
   const payload = asRecord(args, 'session.treeRehydrate args');
   const sessionId = expectString(payload.sessionId, 'sessionId');
+  const nativeIdentity = payload.nativeIdentity === undefined ? undefined : asRecord(payload.nativeIdentity, 'nativeIdentity');
+  const nativeSource = nativeIdentity && expectString(nativeIdentity.source, 'nativeIdentity.source');
+  const nativeTarget = nativeIdentity && expectString(nativeIdentity.target, 'nativeIdentity.target');
+  const expectedConfiguration = payload.expectedConfiguration === undefined ? undefined
+    : asRecord(payload.expectedConfiguration, 'expectedConfiguration');
   const now = expectNumber(payload.now, 'now');
   const contextTokens = expectNumber(payload.contextTokens, 'contextTokens');
   if (contextTokens < 0) throw new TypeError('contextTokens must be non-negative');
@@ -1891,8 +1896,16 @@ function sessionTreeRehydrate(readyDb, args) {
     'INSERT INTO messages (id, client_id, session_id, role, content, tool_use_id, agent_meta, agent_kind, created_at, rewind_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL) ON CONFLICT(session_id, client_id) DO UPDATE SET role = excluded.role, content = excluded.content, tool_use_id = excluded.tool_use_id, agent_meta = excluded.agent_meta, agent_kind = excluded.agent_kind, created_at = excluded.created_at, rewind_at = NULL',
   );
   const hiddenClientIds = readyDb.transaction(() => {
-    const session = readyDb.prepare('SELECT id FROM sessions WHERE id = ? LIMIT 1').get(sessionId);
+    const session = readyDb.prepare('SELECT id, sdk_session_id FROM sessions WHERE id = ? LIMIT 1').get(sessionId);
+    if (session && nativeSource && session.sdk_session_id !== nativeSource && session.sdk_session_id !== nativeTarget)
+      throw Object.assign(new Error('Native history identity changed'), { code: 'PRECONDITION_FAILED' });
     if (!session) throw Object.assign(new Error('Session 不存在: ' + sessionId), { code: 'NOT_FOUND' });
+    if (expectedConfiguration) {
+      const current = readyDb.prepare('SELECT model, working_dir AS workingDir, provider_id AS providerId, effort, permission_mode AS permissionMode, fast_mode AS fastMode FROM sessions WHERE id = ?').get(sessionId);
+      current.fastMode = current.fastMode === 1;
+      if (Object.keys(current).some(key => current[key] !== expectedConfiguration[key]))
+        throw Object.assign(new Error('Native history settings changed'), { code: 'PRECONDITION_FAILED' });
+    }
     // Keep this fallback mirror in sync with worker/opHandlers/tx.ts: preserve only
     // Cindy-managed attachments matched by stable id/uuid/piEntryId or a verified visible prefix.
     const attachmentSources = selectUserAttachmentSources.all(sessionId);
@@ -1937,6 +1950,7 @@ function sessionTreeRehydrate(readyDb, args) {
       upsert.run(row.id, row.clientId, sessionId, row.role, content, row.toolUseId, agentMeta, row.agentKind, row.createdAt);
     }
     readyDb.prepare('UPDATE sessions SET cleared_at = NULL, context_tokens = ?, context_window = ?, updated_at = ?, list_preview = NULL, list_preview_role = NULL, list_message_count = NULL WHERE id = ?').run(contextTokens, contextWindow, now, sessionId);
+    if (nativeTarget) readyDb.prepare('UPDATE sessions SET sdk_session_id = ? WHERE id = ?').run(nativeTarget, sessionId);
     return captured;
   })();
   return { messageCount: rows.length, hiddenClientIds };

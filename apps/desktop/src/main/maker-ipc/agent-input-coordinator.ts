@@ -1,5 +1,7 @@
 import type { AgentNativeInputConsumption } from '@cindy/maker-core';
-import { AUTO_REVIEW_SOURCE_CONTENT, AUTO_REVIEW_USER_INTENT } from '@cindy/maker-core';
+import type { NativeMessageSource } from '@cindy/maker-shared/message-presentation';
+import { AUTO_REVIEW_SOURCE_CONTENT, AUTO_REVIEW_USER_INTENT, GUI_NATIVE_BODY, ORCA_NATIVE_BODY, type OrcaNativeBodySource } from '@cindy/maker-core';
+import { restoreOrcaNativeBody, readOrcaNativeBody } from './orcaNativeInput.js';
 import { throwIpcError } from '../utils/ipcValidate.js';
 import { SchedulerQueuedPreparationError } from './schedulerQueuedPreparation.js';
 /**
@@ -199,6 +201,9 @@ function hasRetryableQueuedContent(item: AgentInputQueuedMessage): boolean {
 }
 
 export interface AgentInputSendOpts {
+  readonly [ORCA_NATIVE_BODY]?: OrcaNativeBodySource;
+  /** Host-only receipt; never accepted from a renderer payload. */
+  onNativeUserMessage?: (source: NativeMessageSource) => void | Promise<void>;
   readonly [AUTO_REVIEW_DELEGATED_CONTINUATION]?: true;
   readonly [AUTO_REVIEW_SOURCE_CONTENT]?: string;
   readonly [AUTO_REVIEW_USER_INTENT]?: string;
@@ -590,6 +595,7 @@ export interface AgentInputCoordinatorDeps {
 
 interface ActiveTurn {
   nativeConsumption?: Pick<NativeSteerContinuation, 'consumption' | 'persistConsumption'>;
+  nativeSource?: { value?: NativeMessageSource };
   /** Owned by a native append continuation; never serialize/requeue as a new send. */
   nativeInput?: true;
   /** Retained after steering receipt cleanup until this turn ends. */
@@ -895,6 +901,7 @@ interface SteerObservation {
 }
 
 interface NativeSteerContinuation {
+  source?: NativeMessageSource;
   consumption?: AgentNativeInputConsumption;
   persistConsumption?(state: ReturnType<AgentNativeInputConsumption['read']>, clearBoundaryMs: number | null): Promise<boolean>;
   session: object; turnGeneration: number; messageId: string; signal: AbortSignal;
@@ -1357,7 +1364,8 @@ export class AgentInputCoordinator {
     try {
       items = (await this.deps.loadQueueSnapshot!(sessionId))
         .map(normalizeRestoredSyntheticTrigger)
-        .map(restoreTrustedDesktopQueuedOrigin);
+        .map(restoreTrustedDesktopQueuedOrigin)
+        .map(item => restoreOrcaNativeBody(sessionId, item));
     } catch (err) {
       log.warn('load queue snapshot failed; will retry on next entry', {
         sessionId,
@@ -2079,6 +2087,10 @@ export class AgentInputCoordinator {
 
   async steerControlInput(sessionId: string, target: { item: AgentInputQueuedMessage } | { queuedClientId: string },
     expectedTurn: { session: object; turnGeneration: number }): Promise<ControlSteerOutcome> {
+    // The native Pi/OMP capability is GUI-only. Host delegation cannot borrow
+    // that permission, including the explicit "steer queued message" entry.
+    const runtime = expectedTurn.session as { agentKind?: string; presentation?: unknown };
+    if (runtime.presentation && (runtime.agentKind === 'pi' || runtime.agentKind === 'omp')) return 'not-attempted';
     return this.steerOwnedInput(sessionId, target, expectedTurn);
   }
 
@@ -2281,6 +2293,7 @@ export class AgentInputCoordinator {
     // steerToAgent 把消息注入正在跑的 turn,不打断当前工作。需要打断的用户
     // 自己点 Stop。(历史:PR #394 曾把 Claude 改成 abort+新 turn,现回退。)
     const messageUuid = opts?.native?.messageId ?? crypto.randomUUID();
+    const nativeSource: { value?: NativeMessageSource } = { value: opts?.native?.source };
     const createdAt = new Date().toISOString();
     const steerGeneration = state.generation;
     const steerRequestToken = this.beginSteerRequest(sessionId, item.clientId);
@@ -2424,6 +2437,7 @@ export class AgentInputCoordinator {
         ...(typeof item.autoReviewUserText !== 'object' && readAutoReviewUserText(item.persistedContent) === null
           ? { [AUTO_REVIEW_USER_INTENT]: queuedAutoReviewText(item) } : {}),
         messageUuid,
+        onNativeUserMessage: source => { nativeSource.value = structuredClone(source); },
         userName: item.userName,
         signal: AbortSignal.any([inputBoundarySignal, steerAbort.signal, ...(opts?.native ? [opts.native.signal] : [])]),
         expectedClearBoundaryMs: steerClearBoundaryMs,
@@ -2613,6 +2627,7 @@ export class AgentInputCoordinator {
         item,
         delivery: 'steer',
         ...(opts?.native?.consumption ? { nativeConsumption: opts.native } : {}),
+        nativeSource,
         messageUuid,
         createdAt,
         generation: steerGeneration,
@@ -2671,6 +2686,7 @@ export class AgentInputCoordinator {
       replyInputClientIds: [...new Set([...replyInputClientIds, item.clientId])],
       delivery: 'steer',
       ...(opts?.native?.consumption ? { nativeConsumption: opts.native } : {}),
+      nativeSource,
       messageUuid,
       createdAt,
       generation: steerGeneration,
@@ -4692,7 +4708,7 @@ export class AgentInputCoordinator {
     const active: ActiveTurn = {
       item: head,
       delivery: 'turn',
-      messageUuid: native?.messageId ?? crypto.randomUUID(),
+      messageUuid: native?.messageId ?? readOrcaNativeBody(head)?.clientId ?? crypto.randomUUID(),
       ...(native ? { nativeInput: true as const } : {}),
       createdAt: new Date().toISOString(),
       generation: state.generation,
@@ -4799,6 +4815,8 @@ export class AgentInputCoordinator {
         // 手机来源透传到 send 事务:drain 已脱离入队时的 async context。
         ...(head.fromMobileClient ? { fromMobileClient: true } : {}),
         ...(head.fromDeviceLinkClient ? { fromDeviceLinkClient: true } : {}),
+        ...((head as typeof head & { [GUI_NATIVE_BODY]?: true })[GUI_NATIVE_BODY] ? { [GUI_NATIVE_BODY]: true as const } : {}),
+        ...(readOrcaNativeBody(head) ? { [ORCA_NATIVE_BODY]: readOrcaNativeBody(head) } : {}),
         persistUserMessage: {
           clientId: head.clientId,
           content: head.persistedContent,
@@ -6521,7 +6539,8 @@ export class AgentInputCoordinator {
           role: 'user',
           content: item.persistedContent,
           agentMeta: {
-            uuid: active.messageUuid,
+            uuid: active.nativeSource?.value?.messageId ?? active.messageUuid,
+            ...(active.nativeSource?.value ? { nativeSource: active.nativeSource.value } : {}),
             ...(item.autoReviewUserText !== undefined ? { autoReviewUserText:
               active.nativeConsumption?.consumption && active.nativeConsumption.consumption.read().status !== 'consumed'
                 ? { kind: 'native-input-pending', text: item.autoReviewUserText } : item.autoReviewUserText } : {}),

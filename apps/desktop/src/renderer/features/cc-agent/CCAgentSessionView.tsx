@@ -4482,6 +4482,7 @@ export function CCAgentSessionView({
                   click 区域宽度与文本一致(不拉伸到整行) */}
                   <div className="flex min-w-0 flex-1 basis-36 items-center gap-3">
                     {!readOnly && session && <AgentPresentationSwitch mode={presentation.mode} onChange={presentation.change} preparing={presentation.preparing}
+                      guiInputMode={presentation.runtime?.guiInputMode}
                       tuiUnavailable={!presentation.selectable ? t(session?.remoteHostId ? 'ccAgent.presentation.sshUnavailable'
                         : session?.orcaRole ? 'ccAgent.presentation.collaborationUnavailable'
                         : 'ccAgent.presentation.startupUnavailable.unsupported') : undefined} />}
@@ -4640,6 +4641,7 @@ export function CCAgentSessionView({
           SplitGroup 则把主权交给活动 pane，非活动 pane 不覆盖 header。 */}
       {ownsRoute && session ? (
           <SessionContentHeaderRegistration
+            nativeHistoryAvailable={presentation.runtime?.capabilities.sessionTree?.supported === true}
             session={session}
             remoteSessionUnavailable={remoteSessionUnavailable}
             readOnly={readOnly}

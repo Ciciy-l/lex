@@ -22,7 +22,7 @@ import {
 /** Host-authored evidence for accepted native input; RPC acceptance is not consumption. */
 export interface NativeMessageConsumption {
   readonly version: 1;
-  readonly engine: 'codex';
+  readonly engine: 'codex' | 'omp';
   readonly sessionId: string;
   readonly turnId: string;
   readonly messageId: string;
@@ -38,10 +38,11 @@ export function nativeMessageConsumptionStatus(meta: unknown): NativeMessageCons
   if (!meta || typeof meta !== 'object') return undefined;
   const value = meta as { uuid?: unknown; sdkSessionId?: unknown; nativeConsumption?: Partial<NativeMessageConsumption> };
   const record = value.nativeConsumption;
-  if (!record || record.version !== 1 || record.engine !== 'codex'
+  if (!record || record.version !== 1 || !['codex', 'omp'].includes(record.engine ?? '')
     || typeof record.sessionId !== 'string' || !record.sessionId || record.sessionId !== value.sdkSessionId
     || typeof record.turnId !== 'string' || !record.turnId
-    || typeof record.messageId !== 'string' || !record.messageId || record.messageId !== value.uuid
+    || typeof record.messageId !== 'string' || !record.messageId
+    || (record.engine === 'omp' && record.status === 'consumed' ? record.itemId !== value.uuid : record.messageId !== value.uuid)
     || !['pending', 'consumed', 'unconsumed', 'unknown'].includes(record.status ?? '')
     || (record.status === 'consumed' && (typeof record.itemId !== 'string' || !record.itemId))) return undefined;
   return record.status;

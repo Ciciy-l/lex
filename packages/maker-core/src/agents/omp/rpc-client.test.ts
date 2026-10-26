@@ -49,7 +49,7 @@ afterEach(() => {
 });
 
 describe('OMP RPC command channel', () => {
-  it.each(['new_session', 'prompt'] as const)(
+  it.each(['new_session', 'prompt', 'fork'] as const)(
     'keeps %s delivery unknown on close and never replays it',
     async (type) => {
       const test = fixture();
@@ -67,6 +67,22 @@ describe('OMP RPC command channel', () => {
       expect(test.closed).toHaveBeenCalledOnce();
     },
   );
+
+  it('validates typed native history commands before dispatch and never retries a lost fork receipt', async () => {
+    const f = fixture();
+    try {
+      expect(() => f.client.request({ type: 'branch', entryId: '' })).toThrow('entryId');
+      expect(() => f.client.request({ type: 'fork', entryId: 'x'.repeat(257) })).toThrow('entryId');
+      expect(f.writeLine).not.toHaveBeenCalled();
+      const read = f.client.request({ type: 'get_tree' });
+      f.emit({ type: 'response', id: read.id, command: 'get_tree', success: true, data: { tree: [], leafId: null } });
+      expect((await read.response).data).toEqual({ tree: [], leafId: null });
+      const fork = f.client.request({ type: 'fork', entryId: 'native-entry' });
+      const failure = expect(fork.response).rejects.toThrow('outcome is unknown');
+      f.disconnect(); await failure;
+      expect(f.writeLine.mock.calls.map(([line]) => JSON.parse(line).type)).toEqual(['get_tree', 'fork']);
+    } finally { f.client.close(); }
+  });
 
   it.each(["essential", "discoverable", undefined] as const)(
     "preserves host-tool visibility %s through the actual wire encoder",

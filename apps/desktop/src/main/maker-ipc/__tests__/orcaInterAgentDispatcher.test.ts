@@ -1,5 +1,6 @@
 import type { SessionSendOptions, SessionSendResult, UserMessage } from '@cindy/maker-core';
-import { AUTO_REVIEW_DELEGATED_CONTINUATION, appendAutoReviewUserIntent, AUTO_REVIEW_USER_INTENT } from '@cindy/maker-core';
+import { AUTO_REVIEW_DELEGATED_CONTINUATION, appendAutoReviewUserIntent, AUTO_REVIEW_USER_INTENT, ORCA_NATIVE_BODY, type OrcaNativeBodySource } from '@cindy/maker-core';
+import { readOrcaNativeBody } from '../orcaNativeInput.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
@@ -116,6 +117,48 @@ function firstQueuedItem(items: AgentInputQueuedMessage[]): AgentInputQueuedMess
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe('authorized native Orca bodies', () => {
+  const source: OrcaNativeBodySource = { version: 1, targetSessionId: 'target-session', clientId: 'client-1',
+    role: 'worker', teamId: 'team', workerId: 'worker', leadSessionId: 'lead' };
+  const params = { targetSessionId: 'target-session', rawContent: 'same text', source: 'lead' as const,
+    senderLabel: 'Lead', meta: { source: 'orca', context: 'native-input-test' } };
+  it('persists stable identity before dispatch and retains consumed success when receipt persistence fails', async () => {
+    const link = vi.fn(async () => { throw new Error('synthetic DB patch failure'); });
+    const h = createHarness({ captureOrcaNativeBody: async () => source, assertOrcaNativeBody: vi.fn(async () => {}),
+      captureNativeUserMessageLink: () => link });
+    h.liveSession.send.mockImplementation(async (_message, opts) => {
+      expect(opts?.messageUuid).toBe('client-1'); expect(opts?.[ORCA_NATIVE_BODY]).toEqual(source);
+      await opts?.onAccepted?.();
+      expect(h.deps.createDbMessage).toHaveBeenCalledWith('target-session', expect.objectContaining({ agentMeta: expect.objectContaining({ uuid: 'client-1' }) }));
+      await opts?.onNativeUserMessage?.({ version: 1, engine: 'pi', sessionId: 'native-file', messageId: 'row-1',
+        origin: { kind: 'plugin', name: 'lex-pi-native-bridge' }, bridge: { sessionId: 'native-file', messageId: 'row-1', submissionId: 'client-1', pluginName: 'lex-pi-native-bridge' } });
+      return { accepted: true };
+    });
+    expect(await h.dispatcher.dispatchOrEnqueueOrcaInterAgentMessage(params)).toMatchObject({ ok: true, mode: 'dispatched' });
+    expect(link).toHaveBeenCalledOnce(); expect(h.liveSession.send).toHaveBeenCalledOnce();
+  });
+  it('preserves authority when queuing, reserving interrupt input and cold-resuming', async () => {
+    const h = createHarness({ captureOrcaNativeBody: async () => source, shouldQueueNewTurn: () => true });
+    await h.dispatcher.dispatchOrEnqueueOrcaInterAgentMessage(params);
+    expect(readOrcaNativeBody(h.queuedItems[0]!)).toEqual(source);
+    h.queuedItems.length = 0;
+    await h.dispatcher.reserveNextOrcaInterAgentMessage(params);
+    expect(readOrcaNativeBody(h.queuedItems[0]!)).toEqual(source);
+    const cold = createHarness({ captureOrcaNativeBody: async () => source, getLiveSession: () => null });
+    await cold.dispatcher.dispatchOrEnqueueOrcaInterAgentMessage(params);
+    expect(cold.deps.sendToSessionInternal).toHaveBeenCalledWith(expect.objectContaining({ [ORCA_NATIVE_BODY]: source }));
+  });
+  it.each(['pi', 'omp'] as const)('does not treat %s native GUI steering as delegated steering', async agentKind => {
+    const steer = vi.fn();
+    const live = { ...createLiveSession(async () => ({ accepted: true })), agentKind, presentation: {},
+      isTurnRunning: () => true, getTurnGeneration: () => 1, capabilities: { sameTurnSteer: { supported: true } } };
+    const h = createHarness({ getLiveSession: () => live, steerControlInput: steer });
+    expect(await h.dispatcher.dispatchOrEnqueueOrcaInterAgentMessage({ ...params, delivery: 'steer' }))
+      .toMatchObject({ ok: true, mode: 'queued', steerFallbackReason: 'STEER_UNSUPPORTED' });
+    expect(steer).not.toHaveBeenCalled(); expect(h.queuedItems).toHaveLength(1);
+  });
 });
 
 describe('sender-chosen steering into an active turn', () => {
@@ -299,6 +342,7 @@ describe('Orca lead/worker dispatcher', () => {
       role: 'user',
       content: '{"orcaSource":"lead","content":"Implement feature"}',
       agentMeta: {
+        uuid: 'client-1',
         origin: { kind: 'orca', senderLabel: 'Lead', displayText: 'Implement feature' },
         autoReviewUserText: { kind: 'delegated-continuation' },
         delivery: 'turn',

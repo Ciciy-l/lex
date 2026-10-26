@@ -81,7 +81,8 @@ export function bindNativeSessionInput(session: Session, deps: NativeInputBindin
     assertCurrent();
     const item = nativeInputQueueItem(input, createOpts);
     if (input.nativeTurnId) {
-      if (!input.nativeMessageId) throwIpcError('PRECONDITION_FAILED', 'Native steering has no recorded message identity');
+      if (!input.nativeMessageId && !(input.submissionId && session.agentKind === 'omp' && input.consumption))
+        throwIpcError('PRECONDITION_FAILED', 'Native steering has no recorded message identity');
       const generation = session.getTurnGeneration();
       const checkTurn = () => {
         assertCurrent();
@@ -92,7 +93,8 @@ export function bindNativeSessionInput(session: Session, deps: NativeInputBindin
       checkTurn();
       if (!deps.steer || !deps.coordinator.acceptNativeSteer) throwIpcError('PRECONDITION_FAILED', 'Native steering owner unavailable');
       await deps.coordinator.acceptNativeSteer(session.id, item, {
-        session, turnGeneration: generation, messageId: input.nativeMessageId, signal: input.signal,
+        session, turnGeneration: generation, messageId: item.clientId, signal: input.signal,
+        ...(input.source ? { source: input.source } : {}),
         ...(input.consumption ? { consumption: input.consumption,
           persistConsumption: deps.captureConsumption?.(session, input) } : {}),
         buildMessage: head => preparedNativeMessage(input.message, head.text),

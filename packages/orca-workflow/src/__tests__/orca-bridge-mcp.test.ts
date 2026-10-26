@@ -274,6 +274,31 @@ function parseToolJson(result: unknown): Record<string, unknown> {
 }
 
 describe('orca_worker_bridge MCP helpers', () => {
+  it.each(['team', 'lead', 'revoked', 'instance'] as const)('refuses stale %s authority before dispatching a Worker report', async mismatch => {
+    const lead = makeSession('lead-1');
+    const { maker } = makeProvider({ activeSessions: { 'lead-1': lead } });
+    const runtime = { agentKind: 'pi' as const, workingDir: '/repo', sessionId: 'worker-session-1',
+      sessionInstanceId: 'instance-1', mcpCallerKind: 'root' as const, mcpCallerAttested: true,
+      vendorOptions: { orcaRole: 'worker' as string | null, orcaWorkflowId: 'team-1',
+        orcaLeadSessionId: 'lead-1', orcaWorkerId: 'worker-1', orcaWorkerSessionId: 'worker-session-1' } };
+    if (mismatch === 'team') runtime.vendorOptions.orcaWorkflowId = 'other-team';
+    if (mismatch === 'lead') runtime.vendorOptions.orcaLeadSessionId = 'other-lead';
+    const dispatch = vi.fn(async () => ({ ok: false as const })), persist = vi.fn(), update = vi.fn();
+    const provider = createOrcaWorkerBridgeMcpProvider({ getMaker: () => maker as unknown as Maker, logger: makeLogger(),
+      persistUserMessage: persist, wireSession() {}, dispatchInterAgentMessage: dispatch,
+      orcaTeamStore: { async getWorkerLink() {
+        if (mismatch === 'revoked') runtime.vendorOptions.orcaRole = null;
+        if (mismatch === 'instance') runtime.sessionInstanceId = 'instance-2';
+        return { workerId: 'worker-1', workflowId: 'team-1', workerSessionId: 'worker-session-1', leadSessionId: 'lead-1',
+          leadSession: { sessionId: 'lead-1', agentKind: 'pi', workingDir: '/repo', model: 'exact' } };
+      }, updateWorkerStatus: update } });
+    const server = getServer(provider, { ...runtime, getSessionContext: () => runtime });
+    const result = await server._registeredTools.send_to_lead.handler({ worker_id: 'worker-1', message: 'stale report' });
+    expectToolError(result);
+    expect(dispatch).not.toHaveBeenCalled(); expect(persist).not.toHaveBeenCalled(); expect(update).not.toHaveBeenCalled();
+    expect(lead.sent).toEqual([]);
+  });
+
   it('keeps the caller policy and model-only report contract concise', () => {
     expect(authorizeSendToLeadCaller({
       agentKind: 'codex',

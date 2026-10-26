@@ -8,13 +8,14 @@ import { SessionBranchTreeDialog } from '../SessionBranchTreeDialog';
 const mocks = vi.hoisted(() => ({
   t: (key: string) => key,
   getSessionTree: vi.fn(), navigateSessionTree: vi.fn(), reloadMessages: vi.fn(),
-  saveDraft: vi.fn(), onOpenChange: vi.fn(), navigate: vi.fn(),
+  saveDraft: vi.fn(), getDraft: vi.fn(), onOpenChange: vi.fn(), navigate: vi.fn(),
 }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: mocks.t }) }));
 vi.mock('react-router-dom', () => ({ useNavigate: () => mocks.navigate }));
 vi.mock('@/lib/makerTransport', () => ({ makerApiFor: () => mocks }));
 vi.mock('@/lib/makerChatStore', () => ({ makerChatStore: mocks }));
-vi.mock('@/lib/composerDraftStore', () => ({ saveDraft: mocks.saveDraft, plainTextToTiptapDoc: (text: string) => text }));
+vi.mock('@/lib/composerDraftStore', () => ({ saveDraft: mocks.saveDraft, getDraft: mocks.getDraft,
+  draftHasContent: (draft: any) => Boolean(draft?.text || draft?.attachments?.length), plainTextToTiptapDoc: (text: string) => text }));
 vi.mock('@/lib/orcaSessionIdentity', () => ({ resolveSessionRoute: vi.fn() }));
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), warning: vi.fn() } }));
 
@@ -37,10 +38,45 @@ async function show(roots: SessionTreeNode[], flags = {}, familyDepth = false) {
     running={false} writeBlocked={false} {...flags} />);
   if (roots.length) await screen.findByText(roots[0].preview);
 }
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => { vi.clearAllMocks(); mocks.getDraft.mockReturnValue(undefined); });
 afterEach(cleanup);
 
 describe('Pi tree visible indentation', () => {
+  it.each(['tree-and-fork', 'fork'] as const)('uses only advertised native history actions (%s)', async mode => {
+    const tree = { ...snapshot([node('other')]), navigationMode: mode };
+    mocks.getSessionTree.mockResolvedValue(tree);
+    mocks.navigateSessionTree.mockResolvedValue({ tree });
+    const session = { ...current, agentKind: mode === 'fork' ? 'omp' : 'pi' } as Session;
+    render(<SessionBranchTreeDialog open onOpenChange={mocks.onOpenChange} session={session} sessions={[session]} running={false} writeBlocked={false} />);
+    await screen.findByText('other');
+    expect(screen.queryByText('ccAgent.sidebar.sessionBranches.summarize')).toBeNull();
+    if (mode === 'tree-and-fork') fireEvent.click(screen.getByLabelText('ccAgent.sidebar.sessionBranches.forkHistory'));
+    else expect(screen.getByText('ccAgent.sidebar.sessionBranches.forkOnly')).toBeTruthy();
+    fireEvent.click(row('other'));
+    await waitFor(() => expect(mocks.navigateSessionTree).toHaveBeenCalledWith('session', 'other', { fork: true, summarize: false }));
+  });
+  it('keeps unsent text and attachments entered while history navigation is pending', async () => {
+    let done!: (value: unknown) => void;
+    mocks.navigateSessionTree.mockImplementationOnce(() => new Promise(resolve => { done = resolve; }));
+    await show([node('other')]);
+    fireEvent.click(row('other'));
+    mocks.getDraft.mockReturnValue({ text: 'my unsent text', attachments: [{ id: 'owned-attachment' }] });
+    done({ tree: snapshot([node('other')]), draftText: 'old historical prompt' });
+    await waitFor(() => expect(mocks.onOpenChange).toHaveBeenCalledWith(false));
+    expect(mocks.saveDraft).not.toHaveBeenCalled();
+    expect(mocks.reloadMessages).toHaveBeenCalledWith('session');
+  });
+  it('does not restore a historical draft or close a later view after unmount', async () => {
+    let done!: (value: unknown) => void;
+    mocks.navigateSessionTree.mockImplementationOnce(() => new Promise(resolve => { done = resolve; }));
+    await show([node('other')]);
+    fireEvent.click(row('other'));
+    cleanup();
+    done({ tree: snapshot([node('other')]), draftText: 'old historical prompt' });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(mocks.saveDraft).not.toHaveBeenCalled();
+    expect(mocks.onOpenChange).not.toHaveBeenCalled();
+  });
   it('keeps a long single chain aligned inside a nested Cindy task', async () => {
     await show([chain(40)], {}, true);
     for (let i = 0; i < 40; i++) expect(row(`chain-${i}`).style.paddingLeft).toBe('46px');

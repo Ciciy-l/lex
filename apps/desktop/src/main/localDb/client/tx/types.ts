@@ -112,8 +112,18 @@ export interface RewindCommitArgs {
   now: number;
 }
 
+export interface SessionTreeConfiguration {
+  model: string;
+  workingDir: string | null;
+  providerId: string | null;
+  effort: string;
+  permissionMode: string;
+  fastMode: boolean;
+}
 export interface SessionTreeRehydrateArgs {
   sessionId: string;
+  nativeIdentity?: { source: string; target: string };
+  expectedConfiguration?: SessionTreeConfiguration;
   now: number;
   contextTokens: number;
   contextWindow: number;

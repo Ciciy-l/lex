@@ -30,7 +30,7 @@ async function fixture() {
   mocks.runtime.mockImplementation(async options => { callbacks = options; return runtime; });
   const factory = vi.fn(async (options: ClaudeLocalNativeSessionOptions) => {
     launch = options;
-    const handle = await createClaudeNativeSession({ ...options, runtime: {
+    const handle = await createClaudeNativeSession({ ...options, nativeModel: options.launch.model, runtime: {
       nativeSessionId: options.launch.resume ?? options.launch.sessionId!, executable: options.launch.binaryPath, cwd: root,
       args: [], env: options.launch.env, onEvent: options.onEvent, launch: () => driver, canUseTool: options.launch.canUseTool,
     } });
@@ -50,6 +50,184 @@ async function fixture() {
 }
 
 describe('Claude production agent native factory selection', () => {
+  it.each(['lead', 'worker'] as const)('does not resurrect a revoked %s after failed catalog readback and model reopen', async role => {
+    const f = await fixture();
+    f.deps.mcpProviders = ['cindy_orca', 'orca_worker_bridge'].map(name => ({ name,
+      toClaudeSdkConfig: () => ({ type: 'sdk', name, instance: {} }) }));
+    const controls: Array<{ command: ReturnType<typeof vi.fn>; submit: ReturnType<typeof vi.fn> }> = [];
+    mocks.runtime.mockImplementation(async (options: ClaudeNativeRuntimeOptions) => {
+      const presentation = new AgentPresentationRuntime(options.nativeSessionId, { write() {}, resize() {}, onData: () => () => {}, onExit: () => () => {}, close() {} });
+      const exactModel = f.launch().launch.model;
+      let draft = '';
+      const command = vi.fn(async (kind: string, payload: { text?: string }) => {
+        if (kind === 'tool-list') throw new Error('catalog rejected');
+        if (kind === 'restore-draft') draft = payload.text!;
+        return { sessionId: options.nativeSessionId, cwd: f.root, model: exactModel, draft: { text: draft } };
+      });
+      const runtime = { presentation, ready: Promise.resolve(), command, submit: vi.fn(), close: vi.fn(async () => { await presentation.close(); }) };
+      controls.push(runtime); return runtime;
+    });
+    const id = '76de74f7-694a-45bd-8337-8a5f837c9e13';
+    const handle = await f.start({ resumeSessionId: id, vendorOptions: { orcaRole: role, orcaWorkflowId: 'team',
+      orcaLeadSessionId: 'lead-task', orcaWorkerId: role === 'worker' ? 'worker' : null,
+      orcaWorkerSessionId: role === 'worker' ? 'business-task' : null } });
+    await handle.restoreNativeEditorDraft!('unsent exact text');
+    const usage = handle.getUsageSnapshot();
+    await expect(handle.setVendorOptions!({ orcaRole: null })).rejects.toThrow('catalog rejected');
+    expect(f.launch().launch.mcpSources!.context.vendorOptions?.orcaRole).toBeNull();
+    await handle.setModel!('claude-haiku-4-5');
+    expect(f.launch().launch.mcpSources!.context.vendorOptions).toMatchObject({
+      orcaRole: null, orcaWorkflowId: null, orcaLeadSessionId: null, orcaWorkerId: null, orcaWorkerSessionId: null,
+    });
+    expect(handle.id).toBe(id); expect(await handle.readNativeEditorDraft!()).toBe('unsent exact text');
+    expect(handle.getUsageSnapshot()).toEqual(usage);
+    expect(controls.every(control => control.submit.mock.calls.length === 0)).toBe(true);
+    await handle.close();
+  });
+
+  it.each(['reject', 'timeout'] as const)('requires a new real catalog confirmation to reenter after %s', async failure => {
+    const f = await fixture();
+    f.deps.mcpProviders = ['cindy_orca', 'orca_worker_bridge'].map(name => ({ name,
+      toClaudeSdkConfig: () => ({ type: 'sdk', name, instance: {} }) }));
+    const role = { orcaRole: 'lead', orcaWorkflowId: 'team', orcaLeadSessionId: 'business-task' };
+    const handle = await f.start({ vendorOptions: role });
+    let reject!: (reason: Error) => void;
+    f.runtime.command.mockImplementation(() => new Promise<{}>((_resolve, fail) => { reject = fail; }));
+    const leaving = handle.setVendorOptions!({ orcaRole: null });
+    expect(f.launch().launch.mcpSources!.context.vendorOptions?.orcaRole).toBeNull();
+    reject(new Error('catalog ' + failure));
+    await expect(leaving).rejects.toThrow('catalog ' + failure);
+    f.runtime.command.mockResolvedValue([{ name: 'mcp__cindy_orca__start_team' }, { name: 'mcp__orca_worker_bridge__send_to_lead' }]);
+    await handle.setVendorOptions!(role);
+    expect(f.runtime.command).toHaveBeenCalledTimes(2);
+    expect(f.launch().launch.mcpSources!.context.vendorOptions?.orcaRole).toBe('lead');
+    expect(f.runtime.submit).not.toHaveBeenCalled();
+    await handle.close();
+  });
+
+  it.each(['revoke', 'close'] as const)('discards a late successful role readback after %s', async action => {
+    const f = await fixture();
+    f.deps.mcpProviders = ['cindy_orca', 'orca_worker_bridge'].map(name => ({ name,
+      toClaudeSdkConfig: () => ({ type: 'sdk', name, instance: {} }) }));
+    const handle = await f.start({ vendorOptions: { orcaRole: null } });
+    const context = f.launch().launch.mcpSources!.context;
+    let finish!: (value: unknown) => void;
+    f.runtime.command.mockImplementation(() => new Promise<{}>(resolve => { finish = value => resolve(value as {}); }));
+    const entering = handle.setVendorOptions!({ orcaRole: 'lead', orcaWorkflowId: 'team' });
+    if (action === 'close') await handle.close();
+    else await expect(handle.setVendorOptions!({ orcaRole: null })).rejects.toThrow('not ready');
+    finish([{ name: 'mcp__cindy_orca__start_team' }, { name: 'mcp__orca_worker_bridge__send_to_lead' }]);
+    await expect(entering).rejects.toThrow();
+    expect(context.vendorOptions?.orcaRole).toBeNull();
+    expect(f.runtime.submit).not.toHaveBeenCalled();
+    await handle.close();
+  });
+
+  it('revokes an existing Lead before native catalog IO and keeps it revoked if readback fails', async () => {
+    const f = await fixture();
+    f.deps.mcpProviders = ['cindy_orca', 'orca_worker_bridge'].map(name => ({ name,
+      toClaudeSdkConfig: () => ({ type: 'sdk', name, instance: {} }) }));
+    f.runtime.command.mockResolvedValue([{ name: 'mcp__cindy_orca__start_team' }, { name: 'mcp__orca_worker_bridge__send_to_lead' }]);
+    const handle = await f.start({ vendorOptions: { orcaRole: null } });
+    await handle.setVendorOptions!({ orcaRole: 'lead', orcaWorkflowId: 'owned-team' });
+    const context = f.launch().launch.mcpSources!.context;
+    expect(context.vendorOptions?.orcaRole).toBe('lead');
+    let reject!: (reason: Error) => void;
+    f.runtime.command.mockImplementation(() => new Promise<{}>((_resolve, fail) => { reject = fail; }));
+    const leaving = handle.setVendorOptions!({ orcaRole: null });
+    expect(context.vendorOptions?.orcaRole).toBeNull();
+    reject(new Error('native connection lost'));
+    await expect(leaving).rejects.toThrow('native connection lost');
+    expect(context.vendorOptions?.orcaRole).toBeNull();
+    await handle.close();
+  });
+  it('updates the already registered Orca identity during an active turn without restarting or changing tools', async () => {
+    const f = await fixture();
+    f.deps.mcpProviders = ['cindy_orca', 'orca_worker_bridge'].map(name => ({ name,
+      toClaudeSdkConfig: () => ({ type: 'sdk', name, instance: {} }) }));
+    f.runtime.command.mockResolvedValue([
+      { name: 'mcp__cindy_orca__start_team' }, { name: 'mcp__orca_worker_bridge__send_to_lead' },
+    ]);
+    const handle = await f.start({ vendorOptions: { orcaRole: null } });
+    await handle.send({ type: 'user', content: 'synthetic user request' }, { messageUuid: 'initial' });
+    expect(handle.isTurnRunning?.()).toBe(true);
+    const context = f.launch().launch.mcpSources!.context;
+    await handle.setVendorOptions!({ orcaRole: 'lead', orcaWorkflowId: 'team', orcaLeadSessionId: 'business-task' });
+    expect(context.vendorOptions).toMatchObject({ orcaRole: 'lead', orcaWorkflowId: 'team' });
+    await handle.setVendorOptions!({ orcaRole: null, orcaWorkflowId: null });
+    expect(context.vendorOptions).toMatchObject({ orcaRole: null, orcaWorkflowId: null });
+    expect(f.factory).toHaveBeenCalledOnce(); expect(f.runtime.close).not.toHaveBeenCalled();
+    expect(f.runtime.submit).toHaveBeenCalledOnce();
+    expect(f.runtime.command.mock.calls).toEqual([['tool-list', {}], ['tool-list', {}]]);
+    await handle.close();
+  });
+
+  it.each(['missing-native-tool', 'new-server'] as const)('refuses an active Orca update with %s instead of claiming a hot catalog', async mode => {
+    const f = await fixture();
+    f.deps.mcpProviders = ['cindy_orca', 'orca_worker_bridge'].map(name => ({ name,
+      toClaudeSdkConfig: () => ({ type: 'sdk', name, instance: {} }) }));
+    if (mode === 'new-server') f.deps.mcpProviders.push({ name: 'only-lead', isEnabled: ctx => ctx.vendorOptions?.orcaRole === 'lead',
+      toClaudeSdkConfig: () => ({ type: 'sdk', name: 'only-lead', instance: {} }) });
+    f.runtime.command.mockResolvedValue(mode === 'missing-native-tool' ? [] : [
+      { name: 'mcp__cindy_orca__start_team' }, { name: 'mcp__orca_worker_bridge__send_to_lead' },
+    ]);
+    const handle = await f.start({ vendorOptions: { orcaRole: null } });
+    await handle.send({ type: 'user', content: 'synthetic user request' }, { messageUuid: 'initial' });
+    await expect(handle.setVendorOptions!({ orcaRole: 'lead' })).rejects.toThrow('idle');
+    expect(f.launch().launch.mcpSources!.context.vendorOptions?.orcaRole).toBeNull();
+    expect(f.factory).toHaveBeenCalledOnce(); expect(f.runtime.close).not.toHaveBeenCalled();
+    await handle.close();
+  });
+
+  it('does not apply an Orca identity after the native input owner changes during catalog readback', async () => {
+    const f = await fixture();
+    f.deps.mcpProviders = ['cindy_orca', 'orca_worker_bridge'].map(name => ({ name,
+      toClaudeSdkConfig: () => ({ type: 'sdk', name, instance: {} }) }));
+    let finish!: (value: unknown) => void;
+    f.runtime.command.mockImplementation(() => new Promise<{}>(resolve => { finish = value => resolve(value as {}); }));
+    const handle = await f.start({ vendorOptions: { orcaRole: null } });
+    handle.setNativeInputResolver!(vi.fn());
+    const change = handle.setVendorOptions!({ orcaRole: 'lead' });
+    handle.setNativeInputResolver!(vi.fn());
+    finish([{ name: 'mcp__cindy_orca__start_team' }, { name: 'mcp__orca_worker_bridge__send_to_lead' }]);
+    await expect(change).rejects.toThrow('owner changed');
+    expect(f.launch().launch.mcpSources!.context.vendorOptions?.orcaRole).toBeNull();
+    await handle.close();
+  });
+
+  it('rebuilds the real policy and MCP sources for a same-history idle model change', async () => {
+    const f = await fixture();
+    const controls: Array<{ close: ReturnType<typeof vi.fn>; command: ReturnType<typeof vi.fn> }> = [];
+    mocks.runtime.mockImplementation(async (options: ClaudeNativeRuntimeOptions) => {
+      const presentation = new AgentPresentationRuntime(options.nativeSessionId, { write() {}, resize() {}, onData: () => () => {}, onExit: () => () => {}, close() {} });
+      let draft = '';
+      const command = vi.fn(async (kind: string, payload: { text?: string }) => {
+        if (kind === 'restore-draft') draft = payload.text!;
+        return { sessionId: options.nativeSessionId, cwd: f.root, model: f.launch().launch.model, draft: { text: draft } };
+      });
+      const runtime = { presentation, ready: Promise.resolve(), command, submit: vi.fn(), close: vi.fn(async () => { await presentation.close(); }) };
+      controls.push(runtime); return runtime;
+    });
+    const id = '76de74f7-694a-45bd-8337-8a5f837c9e13';
+    const handle = await f.start({ resumeSessionId: id, vendorOptions: { orcaRole: 'lead', orcaWorkflowId: 'synthetic-team' } });
+    const first = f.launch();
+    await handle.restoreNativeEditorDraft!('unsent exact text');
+    await handle.setModel!('claude-haiku-4-5');
+    const next = f.launch();
+    expect(f.factory).toHaveBeenCalledTimes(2);
+    expect(controls[0]!.close).toHaveBeenCalledOnce();
+    expect(first.launch.abortController.signal.aborted).toBe(true);
+    expect(next.launch.abortController.signal.aborted).toBe(false);
+    expect(next.usageTracker).toBe(first.usageTracker);
+    expect(next.launch.resume).toBe(id); expect(handle.id).toBe(id);
+    expect(next.launch.permissionMode).toBe(first.launch.permissionMode);
+    expect(next.launch.mcpSources?.context).not.toBe(first.launch.mcpSources?.context);
+    expect(next.launch.mcpSources?.context).toMatchObject({ sessionId: 'business-task', sessionInstanceId: 'business-instance',
+      vendorOptions: { orcaRole: 'lead', orcaWorkflowId: 'synthetic-team' } });
+    expect(await handle.readNativeEditorDraft!()).toBe('unsent exact text');
+    expect(mocks.query).not.toHaveBeenCalled();
+    await handle.close();
+  });
   it.each([false, true])('confirms frozen startup directory grants without terminating native onboarding (populated=%s)', async populated => {
     const f = await fixture();
     const extraDirs = populated ? [path.join(f.root, 'reference')] : [];

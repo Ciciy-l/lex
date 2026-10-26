@@ -16,6 +16,46 @@ function fixture(maxReplayBytes?: number) {
 }
 
 describe('task-owned native presentation', () => {
+  it('fences both controllers during a host history handoff without dropping output or the native draft', () => {
+    const f = fixture();
+    const local = f.runtime.attach('local', vi.fn());
+    const remote = f.runtime.attach('remote', vi.fn());
+    const old = local.acquireControl()!;
+    local.write(old, 1, 'unsent draft');
+    const resume = f.runtime.suspendInput();
+    expect(local.read().controlling).toBe(false);
+    expect(local.acquireControl(true)).toBeNull();
+    expect(remote.acquireControl(true)).toBeNull();
+    expect(() => local.write(old, 2, '\r')).toThrow('expired');
+    expect(() => local.resize(old, 80, 24)).toThrow('expired');
+    f.data('authoritative output during handoff');
+    expect(remote.read().frames.map(frame => frame.data).join('')).toBe('authoritative output during handoff');
+    expect(f.driver.write).toHaveBeenCalledExactlyOnceWith('unsent draft');
+    expect(f.driver.close).not.toHaveBeenCalled();
+    resume(); resume();
+    const next = remote.acquireControl()!;
+    expect(next.lease).not.toBe(old.lease);
+    expect(() => local.write(old, 2, 'stale')).toThrow('expired');
+    remote.write(next, 1, 'new input');
+    expect(f.driver.write).toHaveBeenLastCalledWith('new input');
+  });
+
+  it('keeps nested host handoffs fenced and rejects reentrant acquisition from notifications', async () => {
+    const f = fixture();
+    const view = f.runtime.attach('desktop', vi.fn());
+    view.acquireControl();
+    const attempts: unknown[] = [];
+    const observer = f.runtime.attach('observer', () => { attempts.push(observer.acquireControl(true)); });
+    const first = f.runtime.suspendInput(), second = f.runtime.suspendInput();
+    first(); first();
+    expect(view.acquireControl(true)).toBeNull();
+    expect(attempts.every(value => value === null)).toBe(true);
+    await f.runtime.close(); second();
+    expect(f.runtime.state().status).toBe('closed');
+    expect(() => f.runtime.suspendInput()).toThrow('not running');
+    expect(f.driver.close).toHaveBeenCalledOnce();
+  });
+
   it('pages escaped output within the wire budget without splitting surrogate pairs', () => {
     const f = fixture(2_000_000); const view = f.runtime.attach('desktop', vi.fn());
     const data = String.fromCharCode(27).repeat(90_000) + '😀'.repeat(20_000); f.data(data);

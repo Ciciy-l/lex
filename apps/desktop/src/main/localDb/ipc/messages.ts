@@ -1999,7 +1999,7 @@ export function captureNativeInputConsumption(target: {
   const current = () => Boolean(owner && owner === getCurrentDbClientSnapshot()
     && !isAppSessionBoundaryPending() && isOwnerBroadcastScopeCurrent(scope) && target.isCurrent());
   return async (state, clearBoundaryMs) => {
-    if (!owner || !current() || state.version !== 1 || state.engine !== 'codex'
+    if (!owner || !current() || state.version !== 1 || !['codex', 'omp'].includes(state.engine)
       || state.sessionId !== target.nativeSessionId || state.turnId !== target.nativeTurnId
       || state.messageId !== target.clientId || !['consumed', 'unconsumed', 'unknown'].includes(state.status)
       || (state.status === 'consumed' && (typeof state.itemId !== 'string' || !state.itemId))) return false;
@@ -2008,7 +2008,11 @@ export function captureNativeInputConsumption(target: {
       AND json_type(${messages.agentMeta}) = 'object' THEN ${messages.agentMeta} ELSE '{}' END`;
     // The existing authority trigger watches autoReviewUserText. Only consumption
     // unwraps the Host-captured receipt; unconsumed/unknown never restore an Auto grant.
-    const withConsumption = sql`json_set(${meta}, '$.nativeConsumption', json(${serialized}))`;
+    const receiptMeta = state.engine === 'omp' && state.status === 'consumed'
+      ? sql`json_set(${meta}, '$.uuid', ${state.itemId}, '$.nativeSource', json(${JSON.stringify({
+          version: 1, engine: 'omp', sessionId: state.sessionId, messageId: state.itemId, origin: { kind: 'native' },
+        })}))` : meta;
+    const withConsumption = sql`json_set(${receiptMeta}, '$.nativeConsumption', json(${serialized}))`;
     const [row] = await owner.client.drizzle.update(messages).set({
       agentMeta: sql`CASE WHEN ${state.status} = 'consumed'
         AND json_extract(${meta}, '$.autoReviewUserText.kind') = 'native-input-pending'
@@ -2017,10 +2021,11 @@ export function captureNativeInputConsumption(target: {
     }).where(and(
       eq(messages.sessionId, target.sessionId), eq(messages.clientId, target.clientId),
       eq(messages.role, 'user'), isNull(messages.rewindAt),
-      sql`json_extract(${meta}, '$.uuid') = ${target.clientId}`,
+      or(sql`json_extract(${meta}, '$.uuid') = ${target.clientId}`,
+        sql`json_extract(${meta}, '$.nativeConsumption') = ${serialized}`),
       sql`json_extract(${meta}, '$.sdkSessionId') = ${target.nativeSessionId}`,
       sql`json_extract(${meta}, '$.nativeConsumption.version') = 1`,
-      sql`json_extract(${meta}, '$.nativeConsumption.engine') = 'codex'`,
+      sql`json_extract(${meta}, '$.nativeConsumption.engine') = ${state.engine}`,
       sql`json_extract(${meta}, '$.nativeConsumption.sessionId') = ${target.nativeSessionId}`,
       sql`json_extract(${meta}, '$.nativeConsumption.turnId') = ${target.nativeTurnId}`,
       sql`json_extract(${meta}, '$.nativeConsumption.messageId') = ${target.clientId}`,

@@ -117,7 +117,16 @@ export function register(on) {
               } else if (command.kind === 'abort') {
                 result = await $.turn.abort({ turnId: payload.turnId });
               } else if (command.kind === 'snapshot') {
-                result = { draft: await $.prompt.read(), usage: await $.session.usage(), model: await $.session.model() };
+                result = { sessionId: await $.session.id(), cwd: await $.session.cwd(),
+                  draft: await $.prompt.read(), usage: await $.session.usage(), model: await $.session.model() };
+              } else if (command.kind === 'restore-draft') {
+                if (typeof payload.text !== 'string' || payload.text.length > 1000000) throw new Error('Invalid draft');
+                const filled = await $.prompt.fill({ text: payload.text, mode: 'replace' });
+                const draft = await $.prompt.read();
+                if (filled.isFilled !== true || draft.text !== payload.text) throw new Error('Native draft was not restored');
+                result = { draft };
+              } else if (command.kind === 'tool-list') {
+                result = await $.tool.list();
               } else if (command.kind === 'context-usage') {
                 result = await $.session.usage({ breakdown: 'full' });
               } else if (command.kind === 'compact') {
@@ -127,6 +136,8 @@ export function register(on) {
                   tokensBefore: result.tokensBefore, tokensAfter: result.tokensAfter });
               } else if (command.kind === 'config') {
                 result = await $.config.set(payload);
+              } else if (command.kind === 'config-list') {
+                result = await $.config.list();
               } else if (command.kind === 'command') {
                 result = await $.command.run(payload);
               } else throw new Error('Unsupported bridge command');

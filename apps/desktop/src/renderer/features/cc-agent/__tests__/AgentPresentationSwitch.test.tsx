@@ -14,6 +14,24 @@ import { useDisableTab } from '../../../hooks/useDisableTab';
 
 afterEach(cleanup);
 
+it.each([['en', en], ['ja', ja], ['ko', ko], ['zh-CN', zhCN], ['zh-TW', zhTW]] as const)(
+  'describes only the active native GUI text semantics in %s without changing switch behavior', async (language, locale) => {
+    const i18n = createInstance();
+    await i18n.init({ lng: language, fallbackLng: false, resources: { [language]: { translation: locale } } });
+    const change = vi.fn();
+    const { rerender } = render(<I18nextProvider i18n={i18n}><AgentPresentationSwitch mode="gui" onChange={change} guiInputMode="plain-text" /></I18nextProvider>);
+    const gui = screen.getByRole('button', { name: locale.ccAgent.presentation.guiDescription });
+    expect(gui.title).toBe(locale.ccAgent.presentation.guiBodyText);
+    expect(gui.getAttribute('aria-description')).toBe(gui.title);
+    fireEvent.click(gui); expect(change).toHaveBeenCalledExactlyOnceWith('gui');
+    rerender(<I18nextProvider i18n={i18n}><AgentPresentationSwitch mode="tui" onChange={change} guiInputMode="append-plain-text" /></I18nextProvider>);
+    expect(gui.title).toBe(locale.ccAgent.presentation.guiAppendText);
+    rerender(<I18nextProvider i18n={i18n}><AgentPresentationSwitch mode="gui" onChange={change} /></I18nextProvider>);
+    expect(gui.getAttribute('title')).toBeNull();
+    expect(gui.getAttribute('aria-description')).toBeNull();
+  },
+);
+
 it('keeps local Tab and arrow navigation available under the desktop Tab gate without changing the selected view', async () => {
   const i18n = createInstance();
   await i18n.init({ lng: 'en', resources: { en: { translation: en } } });

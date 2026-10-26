@@ -9637,6 +9637,8 @@
   },
   "ccAgent": {
     "presentation": {
+      "guiBodyText": "In native Pi tasks, GUI messages are sent as text. Use TUI for native commands and input extensions. Existing Lex commands still work.",
+      "guiAppendText": "While OMP is responding, GUI additions are sent as text. Use TUI for native commands and input extensions.",
       "inputRejected": "This input was not sent: it is too large or other input is still pending. Wait, then paste in smaller parts (up to 1 MiB each).",
       "guiSteerInTui": "Use TUI to add input during a response.",
       "guiSteerQueued": "GUI input is queued for the next turn.",
@@ -10155,9 +10157,11 @@
       "sessionBranches": {
         "title": "Session branches",
         "close": "Close session branches",
-        "description": "{{appName}} session forks and Pi's in-session branches live in one tree.",
+        "description": "Browse session forks and history branches saved by the engine.",
         "current": "Current",
-        "empty": "This session has no Pi branches to switch yet.",
+        "empty": "This session has no history branches to switch yet.",
+        "forkHistory": "Save a separate history branch here and continue this session",
+        "forkOnly": "OMP saves a separate history branch at the selected point and continues in this session.",
         "emptyEntry": "No visible content",
         "loadFailed": "Failed to load session branches",
         "switchFailed": "Failed to switch branch",

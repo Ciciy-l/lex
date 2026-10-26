@@ -12,6 +12,8 @@ export interface OmpRpcTransport {
 type OmpRpcRequestType =
   | 'get_available_commands'
   | 'get_state'
+  | 'get_tree'
+  | 'get_session_stats'
   | 'abort'
   | 'new_session'
   | 'compact'
@@ -30,6 +32,8 @@ export type OmpRpcRequest =
   | { type: OmpRpcRequestType }
   | { type: 'prompt' | 'steer' | 'follow_up'; message: string }
   | { type: 'switch_session'; sessionPath: string }
+  | { type: 'branch'; entryId: string }
+  | { type: 'fork'; entryId?: string }
   | { type: 'set_model'; provider: string; modelId: string }
   | { type: 'set_thinking_level'; level: string }
   | { type: 'export_html'; outputPath: string }
@@ -68,12 +72,16 @@ const MAX_PENDING_REQUESTS = 64;
 const REQUEST_TYPES = new Set([
   'get_available_commands',
   'get_state',
+  'get_tree',
+  'get_session_stats',
   'abort',
   'prompt',
   'steer',
   'follow_up',
   'new_session',
   'switch_session',
+  'branch',
+  'fork',
   'set_model',
   'set_thinking_level',
   'compact',
@@ -191,6 +199,11 @@ function buildRequestPayload(
         id,
         sessionPath: requestText(command.sessionPath, 'switch_session', 4096),
       };
+    case 'branch':
+      return { type: command.type, id, entryId: requestText(command.entryId, 'branch entryId', 256) };
+    case 'fork':
+      return { type: command.type, id,
+        ...(command.entryId === undefined ? {} : { entryId: requestText(command.entryId, 'fork entryId', 256) }) };
     case 'set_model':
       return {
         type: command.type,

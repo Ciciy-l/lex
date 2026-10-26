@@ -44,7 +44,8 @@ import type {
 import { discoverSubagentDefinitions } from './subagent-definitions.js';
 import { claudeSdkOptions, type ClaudeLocalSessionLaunch } from './local-session-launch.js';
 import { prepareClaudeLocalMcp, type ClaudeLocalMcpSources } from './local-mcp-servers.js';
-import type { ClaudeNativeSessionHandle } from './native-session.js';
+import { CLAUDE_ORCA_IDENTITY_KEYS, type ClaudeNativeSessionHandle } from './native-session.js';
+import { CLAUDE_NATIVE_RAW, CLAUDE_NATIVE_USAGE, manageClaudeNativeModel } from './native-idle-reopen.js';
 import { prepareClaudeNativeInputContent } from './native-input-content.js';
 import { claudeMcpServerToolsReport, type ClaudeMcpServerStatusEntry } from './mcp-server-tools.js';
 import {
@@ -2812,7 +2813,7 @@ export class ClaudeCodeAgent extends BaseAgent {
     // handle.getUsageSnapshot 也读它, 形成"SDK 原始 usage → tracker → status event / handle snapshot"
     // 单一可信源。预算跟随已应用的进程配置；设置变更等待重建后才反映到用量。
     let appliedContextWindow = resolveModelContextWindow(mutableModel);
-    const usageTracker = new UsageTracker();
+    const usageTracker = (opts as StartSessionOptions & { [CLAUDE_NATIVE_USAGE]?: UsageTracker })[CLAUDE_NATIVE_USAGE] ?? new UsageTracker();
     usageTracker.setContextWindow(appliedContextWindow ?? 0);
 
     // ── 跨 turn 共享状态 ───────────────────────────────────────────────────
@@ -3999,11 +4000,34 @@ export class ClaudeCodeAgent extends BaseAgent {
             }
           };
           handedToHost = true;
+          const revokeNativeOrcaIdentity = () => {
+            for (const key of CLAUDE_ORCA_IDENTITY_KEYS) vo[key] = null;
+          };
           const handle = await factory({
             launch, model: mutableModel, logger: log, events: eventQueue, usageTracker, disabledSkillPaths: disabledSkillSnapshot,
             onEvent() {},
             onFault: () => log.warn('native Claude semantic connection interrupted'),
             policy: {
+              readOrcaIdentity: () => Object.fromEntries(CLAUDE_ORCA_IDENTITY_KEYS.map(key => [key, vo[key]])),
+              revokeOrcaIdentity: revokeNativeOrcaIdentity,
+              prepareOrcaIdentity(patch) {
+                if (closed || !Object.keys(patch).length || Object.keys(patch).some(key => !(CLAUDE_ORCA_IDENTITY_KEYS as readonly string[]).includes(key))) return undefined;
+                const sources = localMcpSources;
+                if (!sources) return undefined;
+                const nextContext = { ...sources.context, vendorOptions: { ...vo, ...patch } };
+                if (patch.orcaRole === null) {
+                  for (const key of CLAUDE_ORCA_IDENTITY_KEYS) nextContext.vendorOptions[key] = null;
+                }
+                nextContext.getSessionContext = () => nextContext;
+                // Never advertise that a newly enabled role-dependent server
+                // exists in the old process. It must use the idle reopen path.
+                const registered = sources.factories.cindy_orca && sources.factories.orca_worker_bridge
+                  && !mcpProviders.some(provider => provider.isEnabled
+                    && Boolean(provider.isEnabled(sources.context)) !== Boolean(provider.isEnabled(nextContext)));
+                revokeNativeOrcaIdentity();
+                if (!registered) return undefined;
+                return () => Object.assign(vo, nextContext.vendorOptions);
+              },
               setInteractionResolver(resolver) { interactionResolver = resolver; },
               async setExtraDirs(dirs) { confirmDirectoryGrants('extraDirs', dirs); },
               async setWritableDirs(dirs) { confirmDirectoryGrants('writableDirs', dirs); },
@@ -5678,7 +5702,19 @@ export class ClaudeCodeAgent extends BaseAgent {
       && (this.deps.useLocalClaudeNativePresentation?.(opts) ?? true)) {
       const execution = await buildExecution(undefined, true);
       if (execution.kind !== 'native') throw new Error('Native Claude startup did not produce a native handle');
-      return execution.handle;
+      if ((opts as StartSessionOptions & { [CLAUDE_NATIVE_RAW]?: boolean })[CLAUDE_NATIVE_RAW]) return execution.handle;
+      return manageClaudeNativeModel({
+        initial: execution.handle, cwd: opts.workingDir, providerId: opts.providerId, effort: opts.effort,
+        vendorOptions: opts.vendorOptions,
+        reopen: async (model, nativeId, vendorOptions) => {
+          // Rebuild all policy closures and MCP tokens. Closing the old handle
+          // aborts its policy; reusing buildExecution here would retain it.
+          const nextOptions = { ...opts, model, vendorOptions, resumeSessionId: nativeId, [CLAUDE_NATIVE_RAW]: true, [CLAUDE_NATIVE_USAGE]: usageTracker };
+          const next = await this.startSession(nextOptions);
+          if (!('nativeRuntime' in next)) { await next.close(); throw new Error('Claude replacement selected a different transport'); }
+          return next as ClaudeNativeSessionHandle;
+        },
+      });
     }
     q = await buildQuery();
     startForwardLoop(q);

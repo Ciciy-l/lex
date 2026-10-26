@@ -72,7 +72,7 @@ import {
   listPiSubagentRuns,
   piSubagentRunRoot,
 } from '@cindy/maker-core/pi-subagent-runs';
-import { AUTO_REVIEW_SOURCE_CONTENT, AUTO_REVIEW_USER_INTENT, INHERITED_CAPABILITY_SELECTION, MAIN_OWNED_SEND_CONTEXT } from '@cindy/maker-core';
+import { AUTO_REVIEW_SOURCE_CONTENT, AUTO_REVIEW_USER_INTENT, INHERITED_CAPABILITY_SELECTION, MAIN_OWNED_SEND_CONTEXT, GUI_NATIVE_APPEND, GUI_NATIVE_BODY } from '@cindy/maker-core';
 import { AUTO_REVIEW_DELEGATED_CONTINUATION, readAutoReviewUserText, restoreAutoReviewSteerIntent, restoreAutoReviewUserIntent } from './autoReviewUserIntent.js';
 import type {
   AgentEvent,
@@ -464,6 +464,11 @@ import { captureMediaRefCompensationScope } from '../cindy-media/refCompensation
 import { requestUtilityText } from '../utility-model/oneShotCandidates.js';
 import { gitExec } from '../worktree/gitExec.js';
 import { ownerScopedUserDataPath } from '../appSessionState.js';
+import { createNativeHistoryHandoff } from './nativeHistoryHandoff.js';
+import { withNativeHistoryOperation } from './nativeHistoryOperation.js';
+import { nativeHistoryStartupTarget, nativeHistoryConfiguration, nativeHistoryRouteReference } from './nativeHistoryJournal.js';
+import type { SessionTreeConfiguration } from '../localDb/client/tx/types.js';
+import { NATIVE_HISTORY_RESUME } from '@cindy/maker-core';
 
 
 
@@ -716,6 +721,8 @@ import {
   readOrcaWorkerOutputReadOnly,
 } from './orcaDiagnostics.js';
 import { startOrcaTeamWithPermissionGate } from './orcaStartTeamPermissionGate.js';
+import { stampOrcaNativeBody } from './orcaNativeInput.js';
+import { ORCA_NATIVE_BODY, type OrcaNativeBodySource } from '@cindy/maker-core';
 import { createWorkerCreationPrefsSyncHandler } from './workerCreationPrefsSyncHandler.js';
 import {
   containsManagedAttachment,
@@ -878,6 +885,7 @@ import { testProviderConnection } from '../maker-host/provider-diagnostics.js';
 import { fetchProviderModels, fetchSavedOAuthProviderModels } from '../maker-host/provider-model-fetch.js';
 import {
   beginProviderRouteMutation,
+  getProviderRoutingDescriptor,
   setPendingCredentialSwitchReader,
 } from '../maker-host/provider-route.js';
 import {
@@ -4679,6 +4687,60 @@ const sessionTurnObserverDependencies = {
   log,
 };
 
+type NativeHistoryResult = Awaited<ReturnType<Session['navigateSessionTree']>>;
+type NativeHistoryProjection = { hiddenClientIds: string[]; now: number };
+const nativeHistoryStartupConfigurations = new WeakMap<Session, string>();
+function nativeHistoryConfigurationForSession(value: Parameters<typeof nativeHistoryConfiguration>[0] & { model: string; agentKind: Session['agentKind'] }): string {
+  const provider = getActiveCatalog().providers.find(candidate => candidate.id === value.providerId);
+  const model = findCatalogModel(provider, value.model, value.agentKind);
+  return nativeHistoryConfiguration({ ...value, routeReference: nativeHistoryRouteReference(
+    getProviderRoutingDescriptor(value.providerId, value.agentKind, value.model)), effort: model
+    ? resolveCompatibleSessionRuntimeEffort(model, (value.effort ?? null) as Parameters<typeof resolveCompatibleSessionRuntimeEffort>[1]) : value.effort });
+}
+const nativeHistoryBindings = new WeakMap<Session, {
+  controller: ReturnType<typeof createNativeHistoryHandoff<NativeHistoryProjection>>;
+  ready: Promise<void>;
+}>();
+
+async function persistNativeHistoryProjection(
+  session: Session, db: ReturnType<typeof getDbClient>, assertCurrent: () => void, result: NativeHistoryResult,
+  expectedConfiguration?: SessionTreeConfiguration,
+): Promise<NativeHistoryProjection> {
+  assertCurrent();
+  const now = Date.now();
+  const { hiddenClientIds } = await db.tx('session.treeRehydrate', {
+    sessionId: session.id, now, contextTokens: result.contextTokens, contextWindow: result.contextWindow,
+    ...(result.nativeIdentity ? { nativeIdentity: result.nativeIdentity } : {}),
+    ...(expectedConfiguration ? { expectedConfiguration } : {}),
+    messages: result.messages.map(message => ({
+      id: createId(), clientId: message.clientId, role: message.role, content: JSON.stringify(message.content),
+      toolUseId: message.toolUseId ?? null, agentMeta: message.agentMeta ? JSON.stringify(message.agentMeta) : null,
+      agentKind: session.agentKind, createdAt: message.createdAt,
+    })),
+  });
+  assertCurrent();
+  return { hiddenClientIds, now };
+}
+
+async function publishNativeHistoryProjection(
+  sessionId: string, db: ReturnType<typeof getDbClient>, assertCurrent: () => void,
+  result: NativeHistoryResult, { hiddenClientIds, now }: NativeHistoryProjection,
+): Promise<void> {
+  assertCurrent();
+  clearSessionThinkingSnapshots(sessionId);
+  resetTurnPersistState(sessionId);
+  const visibleRows = await db.drizzle.select().from(messages)
+    .where(and(eq(messages.sessionId, sessionId), isNull(messages.rewindAt))).orderBy(messages.createdAt);
+  assertCurrent();
+  if (hiddenClientIds.length > 0) broadcastMessageDeleted({ sessionId, clientId: hiddenClientIds[0], clientIds: hiddenClientIds });
+  for (const row of visibleRows) broadcastMessageRow(sessionId, messageToCamel(row));
+  broadcastSessionPatched(sessionId, {
+    clearedAt: null, contextTokens: result.contextTokens, contextWindow: result.contextWindow,
+    ...(result.nativeIdentity ? { sdkSessionId: result.nativeIdentity.target } : {}),
+    updatedAt: new Date(now).toISOString(), _count: { messages: visibleRows.length },
+  });
+}
+
 export function wireSessionToIpc(
   session: ReturnType<Maker['getSession']>,
   presentationStartup?: Promise<AgentPresentationInitialization>,
@@ -4739,6 +4801,7 @@ export function wireSessionToIpc(
   // listeners never treat it as turn text; Desktop persist/broadcast still
   // consumes the localized notice.
   const emitWiredSessionEvent = (event: AgentEvent) => {
+    if (event.type === 'session_id' && nativeHistoryBindings.get(session)?.controller.pending) return;
     if (event.type === 'plan_mode_changed') {
       const enabled = (event.data as { enabled?: unknown })?.enabled;
       if (typeof enabled === 'boolean') {
@@ -4756,6 +4819,74 @@ export function wireSessionToIpc(
   };
   const ownerDb = getCurrentDbClientSnapshot();
   const presentationOwnerGeneration = getActiveAppSession().generation;
+  if (session.presentation && session.capabilities.sessionTree?.supported && !session.remoteHostId) {
+    const historyDb = getDbClient();
+    const assertHistoryOwner = () => {
+      if (!ownerDb || ownerDb !== getCurrentDbClientSnapshot() || isAppSessionBoundaryPending()
+        || !getActiveAppSession().dataOwnerId || getActiveAppSession().generation !== presentationOwnerGeneration
+        || sessionBindings.getSession(session.id) !== session) {
+        throwIpcError('PRECONDITION_FAILED', 'History owner changed');
+      }
+    };
+    try {
+      assertHistoryOwner();
+      let configurationHydrated = false;
+      const historyRoot = ownerScopedUserDataPath('native-history-handoffs');
+      let expectedConfiguration: SessionTreeConfiguration | undefined;
+      const controller = createNativeHistoryHandoff({
+        root: historyRoot, session, assertCurrent: assertHistoryOwner,
+        exclusive: operation => withNativeHistoryOperation(historyRoot, session.id, async () => {
+          assertHistoryOwner();
+          const [row] = await historyDb.drizzle.select({ nativeId: sessions.sdkSessionId, model: sessions.model,
+            workingDir: sessions.workingDir, providerId: sessions.providerId, effort: sessions.effort,
+            permissionMode: sessions.permissionMode, fastMode: sessions.fastMode }).from(sessions)
+            .where(eq(sessions.id, session.id)).limit(1);
+          assertHistoryOwner();
+          const recovery = nativeHistoryStartupTarget(historyRoot, { sessionId: session.id, nativeId: session.sdkSessionId,
+            agentKind: session.agentKind, workingDir: session.workDir, model: session.model,
+            configuration: nativeHistoryConfigurationForSession({ model: session.model, agentKind: session.agentKind, providerId: getSessionProvider(session.id), effort: getSessionEffort(session.id),
+              permissionMode: session.permissionModeState.mode, fastMode: getSessionFastMode(session.id) }),
+          });
+          if (!row || (row.nativeId !== session.sdkSessionId && (!recovery.pending || row.nativeId !== recovery.source)))
+            throwIpcError('PRECONDITION_FAILED', 'Native history binding changed in storage');
+          if (row.model !== session.model || (row.workingDir !== null && row.workingDir !== session.workDir)
+            || nativeHistoryConfigurationForSession({ ...row, agentKind: session.agentKind }) !== nativeHistoryConfigurationForSession({
+              model: session.model, agentKind: session.agentKind, providerId: getSessionProvider(session.id), effort: getSessionEffort(session.id),
+              permissionMode: session.permissionModeState.mode, fastMode: getSessionFastMode(session.id) }))
+            throwIpcError('PRECONDITION_FAILED', 'Native history settings changed in storage');
+          expectedConfiguration = { model: row.model, workingDir: row.workingDir, providerId: row.providerId,
+            effort: row.effort, permissionMode: row.permissionMode, fastMode: row.fastMode };
+          return operation();
+        }),
+        configuration: () => !configurationHydrated && nativeHistoryStartupConfigurations.has(session)
+          ? nativeHistoryStartupConfigurations.get(session)!
+          : nativeHistoryConfigurationForSession({ model: session.model, agentKind: session.agentKind, providerId: getSessionProvider(session.id), effort: getSessionEffort(session.id),
+            permissionMode: session.permissionModeState.mode, fastMode: getSessionFastMode(session.id) }),
+        persist: async result => {
+          const persisted = await persistNativeHistoryProjection(session, historyDb, assertHistoryOwner, result, expectedConfiguration);
+          await publishNativeHistoryProjection(session.id, historyDb, assertHistoryOwner, result, persisted);
+          return persisted;
+        },
+      });
+      const ready = Promise.resolve(presentationStartup).then(async startup => {
+        configurationHydrated = startup?.status !== 'unavailable';
+        if (startup?.status === 'unavailable' || !controller.pending) return;
+        await withSendToSessionLock(session.id, async () => {
+          assertHistoryOwner();
+          await controller.recover();
+        });
+      });
+      nativeHistoryBindings.set(session, { controller, ready });
+      // Keep the unfinished operation frozen and on disk. The history action
+      // may retry reconciliation; it must never replay the native mutation.
+      void ready.catch(() => log.warn('native history recovery remains pending', { sessionId: session.id }));
+    } catch (error) {
+      // An unreadable or mismatched checkpoint cannot be treated as an empty
+      // history. Retire this newly wired executor, not another owner's task.
+      void session.close({ reason: 'navigation' }).catch(() => {});
+      throw error;
+    }
+  }
   if (nativeInputBindingDepsHolder && typeof session.onNativeInput === 'function') {
     const nativeDeps = nativeInputBindingDepsHolder;
     const isCurrent = (current: typeof session) => Boolean(ownerDb && ownerDb === getCurrentDbClientSnapshot()
@@ -4938,7 +5069,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     const session = maker.getSession(sessionId);
     if (!session) return undefined;
     const { switchModel, effort, setPermissionModeMidSession, planMode, sameTurnSteer, sessionTree, fork, rewind, manualCompact } = session.capabilities;
-    return { agentKind: session.agentKind, capabilities: { switchModel, effort, setPermissionModeMidSession, planMode, sameTurnSteer, sessionTree, fork, rewind, manualCompact } };
+    return { agentKind: session.agentKind, capabilities: { switchModel, effort, setPermissionModeMidSession, planMode, sameTurnSteer, sessionTree, fork, rewind, manualCompact },
+      ...(session.presentation && !session.remoteHostId && (session.agentKind === 'pi' || session.agentKind === 'omp')
+        ? { guiInputMode: session.agentKind === 'pi' ? 'plain-text' as const : 'append-plain-text' as const } : {}) };
   });
   ipcMain.removeHandler(AGENT_PRESENTATION_CHANNEL);
   ipcMain.handle(AGENT_PRESENTATION_CHANNEL, presentationHandler.handle);
@@ -6988,6 +7121,18 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       throwIpcError('UNSUPPORTED_CAPABILITY', 'This task has no native presentation transport');
     }
     o.nativePresentation = localNative && (o.agentKind === 'codex' || o.requireNativePresentation === true);
+    if (o.id && o.resumeSessionId && !o.remoteHostId && (o.agentKind === 'pi' || o.agentKind === 'omp')) {
+      const recovery = nativeHistoryStartupTarget(ownerScopedUserDataPath('native-history-handoffs'), {
+        sessionId: o.id, nativeId: o.resumeSessionId, agentKind: o.agentKind, workingDir: o.workingDir, model: o.model,
+        configuration: nativeHistoryConfigurationForSession(o),
+      });
+      if (recovery.pending) {
+        if (!localNative) throwIpcError('PRECONDITION_FAILED', 'Native history recovery requires its original local frontend');
+        o.nativePresentation = true;
+        o.resumeSessionId = recovery.target;
+        o[NATIVE_HISTORY_RESUME] = { source: recovery.source, target: recovery.target };
+      }
+    }
     let session: Awaited<ReturnType<typeof maker.createSession>> | undefined;
     try {
       assertSshCodexOwnerCurrent();
@@ -7042,6 +7187,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     });
     let presentationStartupResult: AgentPresentationInitialization = { status: 'unavailable', reason: 'startup-failed' };
     try {
+      nativeHistoryStartupConfigurations.set(session, nativeHistoryConfigurationForSession(o));
       wireSessionToIpc(session, presentationStartup);
       markOrcaMcpHydratedIfNeeded(session.id, o);
 
@@ -8664,8 +8810,15 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         ) as UserMessage)
       : { type: 'user', content: message };
     try {
+      const current = maker.getSession(session.id);
+      const link = current === session ? captureSessionNativeMessageLink({ session: current, clientId: anchorClientId, expectedUuid: anchorClientId }) : undefined;
       const sendResult = await session.send(outgoingMessage, {
         ...opts,
+        messageUuid: anchorClientId,
+        onNativeUserMessage: async source => {
+          try { await link?.(source); }
+          catch { log.warn('Orca native receipt persistence failed', { sessionId: session.id, clientId: anchorClientId }); }
+        },
         onAccepted: async () => {
           await opts.onAccepted?.();
           await beginTurnChangeSetAtDispatch(session, anchorClientId);
@@ -8674,6 +8827,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             await gitSnapshotCoordinator.onTurnStart(session.id);
             baselineStarted = true;
           }
+          if (opts[ORCA_NATIVE_BODY]) await assertOrcaNativeBody(opts[ORCA_NATIVE_BODY]);
         },
       });
       if (turnChangeSetStarted && !sendResult.accepted) {
@@ -8698,6 +8852,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   }
 
   async function sendToSessionInternal(params: {
+    [ORCA_NATIVE_BODY]?: OrcaNativeBodySource;
     targetSessionId?: string;
     message: string;
     persistedContent?: string;
@@ -9109,6 +9264,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           onAcceptedCommit,
           origin: queuedOrigin,
           autoReviewUserText: params.autoReviewUserText,
+          [ORCA_NATIVE_BODY]: params[ORCA_NATIVE_BODY],
         });
         return {
           ok: true as const,
@@ -9142,7 +9298,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           clientId,
           role: 'user',
           content: persistedContent ?? message,
-          ...(inputAgentMeta ? { agentMeta: inputAgentMeta } : {}),
+          agentMeta: { ...inputAgentMeta, uuid: clientId },
         });
         await runAcceptedCallback(onAccepted, targetSessionId, clientId);
       };
@@ -9172,6 +9328,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             onAcceptedCommit,
             origin: queuedOrigin,
             autoReviewUserText: params.autoReviewUserText,
+          [ORCA_NATIVE_BODY]: params[ORCA_NATIVE_BODY],
           });
           return {
             ok: true as const,
@@ -9250,7 +9407,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         lockStage = 'live-send';
         try {
           const sendResult = await sendUserMessageWithAwaitedGitBaseline(live, message, clientId, {
-            ...(params.autoReviewUserText ? {
+            ...(params[ORCA_NATIVE_BODY] ? { [ORCA_NATIVE_BODY]: params[ORCA_NATIVE_BODY] } : {}),
+          ...(params.autoReviewUserText ? {
               [AUTO_REVIEW_SOURCE_CONTENT]: '',
               [AUTO_REVIEW_USER_INTENT]: restoreAutoReviewUserIntent(await readAutoReviewHistory(targetSessionId)),
             [AUTO_REVIEW_DELEGATED_CONTINUATION]: true as const,
@@ -9301,6 +9459,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               onAcceptedCommit,
               origin: queuedOrigin,
               autoReviewUserText: params.autoReviewUserText,
+          [ORCA_NATIVE_BODY]: params[ORCA_NATIVE_BODY],
             });
             return {
               ok: true as const,
@@ -9337,7 +9496,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           model: meta.model,
           resumeSessionId: meta.sdkSessionId,
           // Plugin task permissions are user settings, including for cold resumes.
-          permissionMode: params.resumeWithStoredPermissionMode
+          permissionMode: params.resumeWithStoredPermissionMode || params[ORCA_NATIVE_BODY]
             ? permissionModeOrAsk(dbRow.permissionMode)
             : 'bypassPermissions',
           // 发起方回合结束后进程常被释放。漏掉 providerId = 回落到隐式默认路由,
@@ -9368,6 +9527,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         const { session } = await bootstrapSession(createOpts);
         await markOrcaRoleIfNeeded(session.id, createOpts.orcaRole);
         const sendResult = await sendUserMessageWithAwaitedGitBaseline(session, message, clientId, {
+          ...(params[ORCA_NATIVE_BODY] ? { [ORCA_NATIVE_BODY]: params[ORCA_NATIVE_BODY] } : {}),
           ...(params.autoReviewUserText ? {
             [AUTO_REVIEW_SOURCE_CONTENT]: '',
             [AUTO_REVIEW_USER_INTENT]: restoreAutoReviewUserIntent(await readAutoReviewHistory(targetSessionId)),
@@ -9419,6 +9579,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             onAcceptedCommit,
             origin: queuedOrigin,
             autoReviewUserText: params.autoReviewUserText,
+          [ORCA_NATIVE_BODY]: params[ORCA_NATIVE_BODY],
           });
           return {
             ok: true as const,
@@ -9458,6 +9619,45 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (!owner || isAppSessionBoundaryPending() || getCurrentDbClientSnapshot() !== owner) throw new Error('账号已变化，请重新发起任务');
     };
   };
+  async function captureOrcaNativeBody(targetSessionId: string, clientId: string): Promise<OrcaNativeBodySource | undefined> {
+    const assertOwner = captureSessionOwner();
+    const [row] = await getDbClient().drizzle.select().from(sessions).where(eq(sessions.id, targetSessionId)).limit(1);
+    assertOwner();
+    if (!row || row.agentKind !== 'pi' || row.remoteHostId) return undefined;
+    const role = row.orcaRole;
+    if (role !== 'lead' && role !== 'worker') throw new Error('Pi collaboration target has no active role');
+    const worker = role === 'worker' ? await getWorkerLink({ workerSessionId: targetSessionId }) : undefined;
+    assertOwner();
+    if (role === 'worker' && !worker) throw new Error('Pi collaboration worker link is unavailable');
+    const leadSessionId = worker?.leadSessionId ?? targetSessionId;
+    const team = await getActiveTeamByLead(leadSessionId);
+    assertOwner();
+    if (!team || (worker && team.id !== worker.teamId)) throw new Error('Pi collaboration team is no longer active');
+    return { version: 1, targetSessionId, clientId, role, leadSessionId, teamId: team.id,
+      ...(worker ? { workerId: worker.workerId } : {}) };
+  }
+  async function assertOrcaNativeBody(source: OrcaNativeBodySource): Promise<void> {
+    const actual = await captureOrcaNativeBody(source.targetSessionId, source.clientId);
+    if (!actual || Object.keys(actual).some(key => actual[key as keyof OrcaNativeBodySource] !== source[key as keyof OrcaNativeBodySource]))
+      throw new Error('Orca input belongs to a retired collaboration identity');
+  }
+  function captureSessionNativeMessageLink({ session, clientId, expectedUuid, expectedClearBoundaryMs, origin }:
+    Parameters<NonNullable<Parameters<typeof createMakerSendTransaction>[0]['captureNativeUserMessageLink']>>[0]) {
+    const coordinator = agentInputCoordinatorHolder;
+    const generation = coordinator?.getGeneration(session.id);
+    const nativeSessionId = session.sdkSessionId;
+    if (!nativeSessionId || nativeSessionId === '<pending>') return async () => false;
+    const link = captureNativeUserMessageLink({ sessionId: session.id, clientId, expectedUuid, nativeSessionId,
+      expectedClearBoundaryMs, origin, isCurrent: () => maker.getSession(session.id) === session
+        && session.sdkSessionId === nativeSessionId && session.getStatus?.() === 'active'
+        && agentInputCoordinatorHolder === coordinator
+        && (!coordinator || (generation !== undefined && coordinator.isGenerationCurrent(session.id, generation))),
+    });
+    return (source: Parameters<typeof link>[0]) => {
+      const receipt = structuredClone(source);
+      return enqueueDurableWrite('native-entry-link:' + session.id + ':' + clientId, () => link(receipt));
+    };
+  }
   const resolveSessionExecution = createSessionExecutionResolver({
     captureOwner: captureSessionOwner,
     readCaller: async sessionId => {
@@ -10308,6 +10508,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   }
 
   async function enqueueSendToSessionMessage(params: {
+    [ORCA_NATIVE_BODY]?: OrcaNativeBodySource;
     targetSessionId: string;
       message: string;
     persistedContent: string;
@@ -10322,7 +10523,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     autoReviewUserText?: { kind: 'delegated-continuation' };
   }): Promise<void> {
     await assertNotRetiredCompanionSession(params.targetSessionId);
-    const queued = await buildSessionControlInputItem(params);
+    const queued = stampOrcaNativeBody(await buildSessionControlInputItem(params), params[ORCA_NATIVE_BODY]);
     if (params.onAccepted) {
       orcaInterAgentDispatcher.registerQueuedOrcaInterAgentAcceptedCallback(
         params.clientId,
@@ -10409,6 +10610,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   }
 
   const orcaInterAgentDispatcher: OrcaInterAgentDispatcher = createOrcaInterAgentDispatcher({
+    captureOrcaNativeBody,
+    assertOrcaNativeBody,
+    captureNativeUserMessageLink: (sessionId, clientId) => {
+      const session = maker.getSession(sessionId);
+      return session ? captureSessionNativeMessageLink({ session, clientId, expectedUuid: clientId }) : async () => false;
+    },
     readAutoReviewHistory: sessionId => readAutoReviewHistory(sessionId),
     createId,
     getSessionMeta: (sessionId) => maker.getSessionMeta(sessionId).catch(() => null),
@@ -12607,6 +12814,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   }));
 
   const { sendToAgentAccepted: sendToAgentAcceptedUnlocked, acceptNativeInput } = createMakerSendTransaction({
+    assertOrcaNativeBody,
     readAutoReviewHistory,
     readScheduledPermissions: getSessionFsSnapshot,
     getSession: (sessionId) => maker.getSession(sessionId),
@@ -12739,22 +12947,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       enqueueDurableWrite(`pi-entry-link:${sessionId}:${clientId}`, () =>
         patchMessageAgentMeta(sessionId, clientId, { piEntryId }),
       ),
-    captureNativeUserMessageLink: ({ session, clientId, expectedUuid, expectedClearBoundaryMs, origin }) => {
-      const coordinator = agentInputCoordinatorHolder;
-      const generation = coordinator?.getGeneration(session.id);
-      const nativeSessionId = session.sdkSessionId;
-      if (!nativeSessionId || nativeSessionId === '<pending>') return async () => false;
-      const link = captureNativeUserMessageLink({ sessionId: session.id, clientId, expectedUuid, nativeSessionId,
-        expectedClearBoundaryMs, origin, isCurrent: () => maker.getSession(session.id) === session
-          && session.sdkSessionId === nativeSessionId && session.getStatus?.() === 'active'
-          && agentInputCoordinatorHolder === coordinator
-          && (!coordinator || (generation !== undefined && coordinator.isGenerationCurrent(session.id, generation))),
-      });
-      return source => {
-        const receipt = structuredClone(source);
-        return enqueueDurableWrite(`native-entry-link:${session.id}:${clientId}`, () => link(receipt));
-      };
-    },
+    captureNativeUserMessageLink: captureSessionNativeMessageLink,
     beforeDispatchDirectUserTurn: (sessionId) => gitSnapshotCoordinator?.onTurnStart(sessionId),
     assertBeforeVendorDispatch: (sessionId, sendOpts) => {
       const remote = isDeviceLinkInvoke();
@@ -13188,6 +13381,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       messageUuid?: string;
       userName?: string;
       signal?: AbortSignal;
+      onNativeUserMessage?: NonNullable<Parameters<Session['steer']>[1]>['onNativeUserMessage'];
       /** coordinator 从队列项透传的手机来源(main 构造,非 wire 输入)。 */
       fromMobileClient?: boolean;
       expectedClearBoundaryMs?: number | null;
@@ -13301,10 +13495,17 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         ? (payload: unknown, options: Parameters<Session['steer']>[1]) => sess.acceptNativeSteer({ ...native.input, message: payload as UserMessage }, options)
         : sess.steer.bind(sess);
       await dispatch(steerPayload as never, {
+        ...(!native && so[AUTO_REVIEW_DELEGATED_CONTINUATION] !== true
+          && (trustedDesktopSteerText.getStore() !== undefined || so[MAIN_OWNED_SEND_CONTEXT]?.origin.kind === 'desktop')
+          ? { [GUI_NATIVE_APPEND]: true as const } : {}),
         logTitle: meta?.title,
         messageUuid: so.messageUuid,
         userName: so.userName,
         signal: so.signal,
+        ...(typeof so.onNativeUserMessage === 'function' ? { onNativeUserMessage: async source => {
+          if (source.sessionId !== sess.sdkSessionId || source.engine !== sess.agentKind) return;
+          await so.onNativeUserMessage!(source);
+        } } : {}),
         [MAIN_OWNED_SEND_CONTEXT]: so[MAIN_OWNED_SEND_CONTEXT],
         [AUTO_REVIEW_SOURCE_CONTENT]: so[AUTO_REVIEW_SOURCE_CONTENT],
         [AUTO_REVIEW_DELEGATED_CONTINUATION]: so[AUTO_REVIEW_DELEGATED_CONTINUATION],
@@ -13346,6 +13547,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     const persisted = opts?.persistUserMessage && typeof opts.persistUserMessage === 'object'
       ? opts.persistUserMessage as Record<string, unknown>
       : undefined;
+    // Body provenance is separate from command/resource authorization. Images
+    // and mentions may use the text channel without receiving those privileges.
+    if (persisted?.autoResume !== true && persisted?.origin === undefined
+      && opts?.origin === undefined && opts?.fromMobileClient !== true) {
+      sendOpts = { ...opts, [GUI_NATIVE_BODY]: true };
+    }
     if (rawChannelText === undefined
       || (expectedText !== undefined && rawChannelText !== expectedText)
       || containsManagedAttachment(message)
@@ -18338,7 +18545,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     const live = maker.getSession(sessionId);
     if (live) return live;
     const meta = await maker.getSessionMeta(sessionId).catch(() => null);
-    if (!meta || meta.agentKind !== 'pi') return null;
+    if (!meta || (meta.agentKind !== 'pi' && meta.agentKind !== 'omp')) return null;
     const db = getDbClient().drizzle;
     const [row] = await db
       .select({
@@ -18354,6 +18561,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       .where(eq(sessions.id, sessionId))
       .limit(1);
     if (!row) return null;
+    // OMP tree mutation is only implemented by the owned local native handoff.
+    if (meta.agentKind === 'omp' && row.remoteHostId) return null;
     // 轮 40-w3 MEDIUM:会话树是历史浏览入口, lazy resume 会**复活**会话
     // (重建 desktop 内存 session + 远端 daemon session)。已归档/软删除的
     // 会话必须保持死态 —— 只允许 active 会话被懒恢复, 否则「查看会话树」
@@ -18367,7 +18576,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     }
     const createOpts = buildCreateOptsWithStderr({
       id: sessionId,
-      agentKind: 'pi',
+      agentKind: meta.agentKind,
       workingDir: meta.workDir,
       model: meta.model,
       // providerId=null 是显式的 Cindy 默认路由；undefined 才允许 Pi 按同名模型
@@ -18396,7 +18605,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     await ensureRemoteReadyForSessionStart({ createOpts });
     const { session: resumed } = await bootstrapSession(createOpts);
     await markOrcaRoleIfNeeded(resumed.id, createOpts.orcaRole);
-    log.info('session-tree: lazily resumed Pi session', {
+    log.info('session-tree: lazily resumed native session', {
       sessionId,
       sdkSessionId: meta.sdkSessionId ?? null,
     });
@@ -18414,6 +18623,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     }
     const sess = await getOrResumeSessionTreeSession(sessionId);
     if (!sess || !sess.capabilities.sessionTree?.supported) return null;
+    const recovery = nativeHistoryBindings.get(sess);
+    if (recovery) {
+      await recovery.ready.catch(() => {});
+      if (recovery.controller.pending) await withSendToSessionLock(sessionId, () => recovery.controller.recover());
+    }
     return sess.getSessionTree();
   });
 
@@ -18433,6 +18647,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         throwIpcError('INVALID_PARAMS', 'options must be an object');
       }
       const parsed = rawOptions as Record<string, unknown>;
+      if (parsed.fork !== undefined && typeof parsed.fork !== 'boolean') {
+        throwIpcError('INVALID_PARAMS', 'fork must be boolean');
+      }
       if (parsed.summarize !== undefined && typeof parsed.summarize !== 'boolean') {
         throwIpcError('INVALID_PARAMS', 'summarize must be boolean');
       }
@@ -18444,6 +18661,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       }
       const sess = await getOrResumeSessionTreeSession(sessionId);
       if (!sess || !sess.capabilities.sessionTree?.supported) return null;
+      if (parsed.fork === true && (!sess.presentation || sess.remoteHostId || !['pi', 'omp'].includes(sess.agentKind)))
+        throwIpcError('PRECONDITION_FAILED', 'Native fork is unavailable for this runtime');
       // 整个「原生分支导航 → 捕获 result.messages → session.treeRehydrate 重建 SQLite」窗口
       // 必须与 maker:send 走同一把 per-session 锁(acquireSendToSessionLock)。否则另一窗口 /
       // device-link 在 navigate 捕获 result.messages 之后、rehydrate 之前发一个 turn:Pi 把它
@@ -18451,56 +18670,31 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       // 在 JSONL 里有、SQLite 里被旧快照覆盖/隐藏(hiddenClientIds 只修复 Renderer 删除广播,
       // 修不了 JSONL 与 DB 的这处分叉,codex review P1)。summarize turn 是 Pi 内部 RPC,不经
       // maker:send IPC,故不与本锁重入。
-      const { result, hiddenClientIds, now } = await withSendToSessionLock(sessionId, async () => {
-        const result = await sess.navigateSessionTree(entryId, {
-          summarize: parsed.summarize === true,
-          ...(typeof parsed.customInstructions === 'string'
-            ? { customInstructions: parsed.customInstructions }
-            : {}),
-        });
-        const now = Date.now();
-        // hiddenClientIds 由重投影事务原子返回:它是隐藏动作发生那一刻的完整可见集。
-        const { hiddenClientIds } = await getDbClient().tx('session.treeRehydrate', {
-          sessionId,
-          now,
-          contextTokens: result.contextTokens,
-          contextWindow: result.contextWindow,
-          messages: result.messages.map((message) => ({
-            id: createId(),
-            clientId: message.clientId,
-            role: message.role,
-            content: JSON.stringify(message.content),
-            toolUseId: message.toolUseId ?? null,
-            agentMeta: message.agentMeta ? JSON.stringify(message.agentMeta) : null,
-            agentKind: 'pi',
-            createdAt: message.createdAt,
-          })),
-        });
-        return { result, hiddenClientIds, now };
-      });
-      clearSessionThinkingSnapshots(sessionId);
-      resetTurnPersistState(sessionId);
-
-      // 多窗口与 device-link 控制端先清旧投影，再按 DB 真相补当前活动路径。
-      if (hiddenClientIds.length > 0) {
-        broadcastMessageDeleted({
-          sessionId,
-          clientId: hiddenClientIds[0],
-          clientIds: hiddenClientIds,
-        });
-      }
-      const visibleRows = await getDbClient()
-        .drizzle.select()
-        .from(messages)
-        .where(and(eq(messages.sessionId, sessionId), isNull(messages.rewindAt)))
-        .orderBy(messages.createdAt);
-      for (const row of visibleRows) broadcastMessageRow(sessionId, messageToCamel(row));
-      broadcastSessionPatched(sessionId, {
-        clearedAt: null,
-        contextTokens: result.contextTokens,
-        contextWindow: result.contextWindow,
-        updatedAt: new Date(now).toISOString(),
-        _count: { messages: visibleRows.length },
+      const treeOwner = getCurrentDbClientSnapshot();
+      const treeDb = getDbClient();
+      const assertTreeOwner = () => {
+        if (!treeOwner || treeOwner !== getCurrentDbClientSnapshot() || maker.getSession(sessionId) !== sess)
+          throwIpcError('PRECONDITION_FAILED', 'History owner changed');
+      };
+      const historyBinding = nativeHistoryBindings.get(sess);
+      // Startup recovery owns this lock too; wait before acquiring it. A
+      // failed recovery can be retried below while its input hold stays live.
+      if (historyBinding) await historyBinding.ready.catch(() => {});
+      const { result } = await withSendToSessionLock(sessionId, async () => {
+        assertTreeOwner();
+        const navigation = { summarize: parsed.summarize === true,
+          ...(parsed.fork === true ? { fork: true } : {}),
+          ...(typeof parsed.customInstructions === 'string' ? { customInstructions: parsed.customInstructions } : {}) };
+        const persist = (result: NativeHistoryResult) => persistNativeHistoryProjection(sess, treeDb, assertTreeOwner, result);
+        if (sess.presentation) {
+          if (!historyBinding) throwIpcError('PRECONDITION_FAILED', 'Native history recovery is unavailable');
+          const { result, persisted } = await historyBinding.controller.navigate(entryId, navigation);
+          return { result, ...persisted };
+        }
+        const result = await sess.navigateSessionTree(entryId, navigation);
+        const persisted = await persist(result);
+        await publishNativeHistoryProjection(sessionId, treeDb, assertTreeOwner, result, persisted);
+        return { result, ...persisted };
       });
       return {
         tree: result.tree,

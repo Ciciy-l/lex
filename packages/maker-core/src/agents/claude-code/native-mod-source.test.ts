@@ -23,7 +23,8 @@ function fixture() {
       events.push(...body.events);
       return { ok: true, text: JSON.stringify({ acknowledged: body.events.at(-1)?.sequence ?? events.at(-1)?.sequence ?? 0, commands: commands.splice(0) }) };
     }) },
-    prompt: { submit: vi.fn(async (input: { text: string }) => input), read: vi.fn(async () => ({ text: 'draft', cursor: 2 })) },
+    prompt: { submit: vi.fn(async (input: { text: string }) => input), read: vi.fn(async () => ({ text: 'draft', cursor: 2 })),
+      fill: vi.fn(async (_input: unknown) => ({ isFilled: true })) },
     turn: { abort: vi.fn(async (_input: unknown) => {}) },
     command: { run: vi.fn(async (_input: unknown) => ({ queued: true })) },
   };
@@ -33,6 +34,21 @@ function fixture() {
 }
 
 describe('packaged Claude native Mod', () => {
+  it('restores editor text only when fill and actual draft readback both agree, without submitting', async () => {
+    const f = fixture(); await f.start();
+    f.commands.push({ id: 1, kind: 'restore-draft', payload: { text: 'draft' } });
+    await f.tick(); await f.flush();
+    expect(f.events).toContainEqual(expect.objectContaining({ kind: 'command-result', value: { id: 1, ok: true, result: { draft: { text: 'draft', cursor: 2 } } } }));
+    expect(f.$.prompt.fill).toHaveBeenCalledWith({ text: 'draft', mode: 'replace' });
+    f.commands.push({ id: 2, kind: 'restore-draft', payload: { text: 'changed by extension' } });
+    await f.tick(); await f.flush();
+    expect(f.events).toContainEqual(expect.objectContaining({ kind: 'command-result', value: { id: 2, ok: false } }));
+    f.$.prompt.fill.mockResolvedValueOnce({ isFilled: false });
+    f.commands.push({ id: 3, kind: 'restore-draft', payload: { text: 'draft' } });
+    await f.tick(); await f.flush();
+    expect(f.events).toContainEqual(expect.objectContaining({ kind: 'command-result', value: { id: 3, ok: false } }));
+    expect(f.$.prompt.submit).not.toHaveBeenCalled(); expect(f.$.command.run).not.toHaveBeenCalled();
+  });
   it('reports a committed compaction from the terminal or host command, excluding children and precompute', async () => {
     const f = fixture(); await f.start();
     const result = { messages: [{ text: 'private native summary' }], tokensBefore: 900, tokensAfter: 200 };

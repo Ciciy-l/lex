@@ -1848,6 +1848,8 @@ export class TurnDispatchRejectedError extends Error {
 }
 
 export interface StartSessionOptions {
+  /** Host-only recovery: the history projection transaction owns resume identity. */
+  [NATIVE_HISTORY_RESUME]?: { source: string; target: string };
   /** Host-owned GUI/TUI capability for this task, frozen before service lookup. */
   nativePresentation?: boolean;
   /**
@@ -2022,6 +2024,22 @@ export interface StartSessionOptions {
  * this proof. Main dispatchers attach it only after authenticating the source.
  */
 export const MAIN_OWNED_SEND_CONTEXT = Symbol('cindy.main-owned-send-context');
+/** Host-authenticated GUI append intent; never deserialize from renderer/agent input. */
+export const GUI_NATIVE_APPEND = Symbol('lex.gui-native-append');
+/** Host-attested local GUI body; Pi's native frontend uses a causal custom row. */
+export const GUI_NATIVE_BODY = Symbol('lex.gui-native-body');
+/** Host-authorized idle Orca delivery, distinct from GUI and native input. */
+export const ORCA_NATIVE_BODY = Symbol('lex.orca-native-body');
+export interface OrcaNativeBodySource {
+  readonly version: 1;
+  readonly targetSessionId: string;
+  readonly clientId: string;
+  readonly role: 'lead' | 'worker';
+  readonly teamId: string;
+  readonly leadSessionId: string;
+  readonly workerId?: string;
+}
+export const NATIVE_HISTORY_RESUME = Symbol('lex.native-history-resume');
 /** Optional question replies must never be queued for a later execution. */
 export const ASYNC_QUESTION_ANSWER = Symbol('cindy.async-question-answer');
 
@@ -2059,6 +2077,9 @@ export interface MainOwnedSendContext {
  * 缺省 / 不识别字段必须安全忽略。
  */
 export interface SendOptions {
+  readonly [ORCA_NATIVE_BODY]?: OrcaNativeBodySource;
+  readonly [GUI_NATIVE_BODY]?: true;
+  readonly [GUI_NATIVE_APPEND]?: true;
   readonly [ASYNC_QUESTION_ANSWER]?: true;
   readonly [AUTO_REVIEW_SOURCE_CONTENT]?: UserMessage['content'];
   readonly [AUTO_REVIEW_USER_INTENT]?: AutoReviewUserIntent;
@@ -2524,9 +2545,19 @@ export interface AgentSessionHandle {
 
   /** 读取 / 切换同一 SDK session 内的原生分支树。 */
   getSessionTree?(): Promise<SessionTreeSnapshot>;
+  /** Read the current native branch and usage without performing another mutation. */
+  readSessionTree?(): Promise<NavigateSessionTreeResult>;
+  /** Host-only preservation of the native editor during controlled recovery. */
+  readNativeEditorDraft?(): Promise<string>;
+  restoreNativeEditorDraft?(text: string): Promise<void>;
   navigateSessionTree?(
     entryId: string,
     options?: NavigateSessionTreeOptions,
+    handoff?: {
+      beforeReplacement(): Promise<void>;
+      target(nativeId: string): Promise<void>;
+      holdInput(release: () => void): void;
+    },
   ): Promise<NavigateSessionTreeResult>;
 
   /** 运行时切换 Fast mode；不支持的 agent 不实现。 */

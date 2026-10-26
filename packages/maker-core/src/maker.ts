@@ -24,6 +24,7 @@ import { clearTimeout as clearNodeTimeout, setTimeout as setNodeTimeout } from '
 import type { AgentKind } from './types/common.js';
 import type { Capabilities } from './types/capabilities.js';
 import type { AgentEvent, ForkSdkSessionOptions, ForkSdkSessionResult } from './types/events.js';
+import { NATIVE_HISTORY_RESUME } from './agents/base-agent.js';
 import type {
   ScanAtResourcesOptions,
   ScanAtResourcesResult,
@@ -1176,12 +1177,16 @@ export class Maker {
     let updatedSdkSessionId = false;
     try {
       existingRowBeforePersistence = opts.id ? await this.storage.get(opts.id) : null;
+      const historyResume = opts[NATIVE_HISTORY_RESUME];
+      if (historyResume && (!existingRowBeforePersistence || handle.id !== historyResume.target
+        || ![historyResume.source, historyResume.target].includes(existingRowBeforePersistence.sdkSessionId ?? '')))
+        throw new Error('Native history recovery identity changed before persistence');
       const staleAfterStorageRead = readStartupScopeFailure();
       if (staleAfterStorageRead) {
         return closeUnpublishedHandle(handle, staleAfterStorageRead.error, 'storage');
       }
       if (existingRowBeforePersistence) {
-        updatedSdkSessionId = handle.id !== '<pending>'
+        updatedSdkSessionId = !historyResume && handle.id !== '<pending>'
           && existingRowBeforePersistence.sdkSessionId !== handle.id;
         meta = updatedSdkSessionId
           ? await this.storage.update(id, { sdkSessionId: handle.id })
@@ -1343,6 +1348,7 @@ export class Maker {
     // 当 SDK 回填 sdkSessionId 时持久化
     session.onEvent((evt) => {
       if (evt.type === 'session_id' && typeof evt.data === 'string' && evt.data) {
+        if (opts[NATIVE_HISTORY_RESUME]?.target === evt.data) return;
         if (opts.agentKind === 'codex' && isClaimableCodexThreadId(evt.data)) {
           try {
             if (codexThreadClaim) {

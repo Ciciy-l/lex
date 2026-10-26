@@ -1,7 +1,8 @@
 import path from 'node:path';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import type { NativeMessageSource } from '@cindy/maker-shared/message-presentation';
-import { TurnDispatchRejectedError, TurnDispatchUnconfirmedError, type AgentSessionHandle, type SendOptions } from '../base-agent.js';
+import { GUI_NATIVE_APPEND, TurnDispatchRejectedError, TurnDispatchUnconfirmedError, type AgentSessionHandle, type SendOptions } from '../base-agent.js';
 import type { AgentNativeInputResolver, AgentNativeInputOwnership } from '../native-input.js';
 import { AgentPresentationRuntime, type AgentTerminalDriver } from '../presentation.js';
 import type { AgentEvent, InteractionResolver } from '../../types/events.js';
@@ -14,6 +15,8 @@ import { OmpHostToolBridge } from './host-tools.js';
 import { OmpTranslator } from './translator.js';
 import { toOmpPromptText } from './session-handle.js';
 import type { OmpSessionLaunchPlan } from './launch-plan.js';
+import { OmpNativeConsumption } from './native-consumption.js';
+import { activeNativeJournalHistory, nativeJournalContextTokens, normalizeNativeJournalTree } from '../shared/native-session-tree.js';
 
 /** Host-only launch injection; never accepted over an IPC request. */
 export interface OmpLocalNativeSessionOptions {
@@ -26,6 +29,8 @@ export interface OmpLocalNativeSessionOptions {
   executable: string;
   plan: OmpSessionLaunchPlan;
   hostTools: readonly OmpHostToolDefinition[];
+  /** The session-owned context captured by the exact host-tool handlers. */
+  vendorOptions?: Record<string, unknown>;
   disabledSkillPaths?: readonly string[];
   logger: Logger;
   registerProcess?(pid: number): void | (() => void);
@@ -37,20 +42,47 @@ export interface OmpNativeTerminalOptions extends OmpLocalNativeSessionOptions {
   launch(environment: Record<string, string>, tools: ReturnType<OmpHostToolBridge['definitions']>): Promise<AgentTerminalDriver>;
 }
 
-type GuiInput = { commandId: number; text: string; options: SendOptions; accepted: boolean; refused: boolean; messageId: string };
+export interface OmpNativeSessionHandle extends AgentSessionHandle {
+  revokeOrcaIdentity?(): void;
+}
+
+type GuiInput = { commandId: number; text: string; options: SendOptions; accepted: boolean; refused: boolean; messageId: string; turnRowId?: string };
 /** A prepared submission is distinct from the journal ID allocated later by OMP. */
 type NativeInput = { submissionId: string; fingerprint: string; cancelled?: boolean;
-  gui?: GuiInput; owner?: AgentNativeInputResolver; ownership?: AgentNativeInputOwnership; receipt?: SendOptions['onNativeUserMessage'] };
+  gui?: GuiInput; owner?: AgentNativeInputResolver; ownership?: AgentNativeInputOwnership; receipt?: SendOptions['onNativeUserMessage'];
+  consumption?: OmpNativeConsumption; turnRowId?: string };
 const levels: Record<Effort, string> = { minimal: 'low', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'xhigh', ultra: 'xhigh' };
 
 /** One original interactive OMP + official extension, with Core as the only product writer. */
-export async function createOmpNativeSession(options: OmpNativeTerminalOptions): Promise<AgentSessionHandle> {
+export async function createOmpNativeSession(options: OmpNativeTerminalOptions): Promise<OmpNativeSessionHandle> {
   const events = createAsyncQueue<AgentEvent>(), lifetime = new AbortController();
   const translator = new OmpTranslator({ logger: options.logger });
   let terminal: AgentTerminalDriver | undefined, presentation: AgentPresentationRuntime | undefined;
   let resolver: AgentNativeInputResolver | undefined, interactions: InteractionResolver | undefined;
   let nativeId: string | undefined, gui: GuiInput | undefined, activeRow: string | undefined;
   let activeInput: NativeInput | undefined;
+  const pendingSteers = new Map<string, NativeInput>();
+  const retirePending = () => {
+    for (const input of pendingSteers.values()) input.consumption?.finish('unknown');
+    pendingSteers.clear();
+  };
+  let inputVersion = 0;
+  let hostContextGeneration = 0, contextChanging = false;
+  let roleGeneration = 0;
+  let contextChange: Promise<void> = Promise.resolve();
+  let confirmedVendorOptions = { ...options.vendorOptions }, contextChanges = 0;
+  const revokedIdentity = { orcaRole: null, orcaWorkflowId: null, orcaLeadSessionId: null,
+    orcaWorkerId: null, orcaWorkerSessionId: null, initialWorker: null };
+  const toolCancellations = new Map<string, () => void>();
+  const revokeOrcaIdentity = () => {
+    roleGeneration++;
+    Object.assign(confirmedVendorOptions, revokedIdentity);
+    if (options.vendorOptions) Object.assign(options.vendorOptions, revokedIdentity);
+    for (const cancel of toolCancellations.values()) cancel();
+  };
+  // Host-only causal scope: a role-changing handler must receive its own
+  // result, while unrelated requests made under the old role are cancelled.
+  const executingTool = new AsyncLocalStorage<string>();
   let closed = false, faulted = false, closing: Promise<void> | undefined, admitting = false;
   let effort: Effort | null = options.effort ?? null;
   let earlyStart: Record<string, unknown> | undefined;
@@ -68,7 +100,10 @@ export async function createOmpNativeSession(options: OmpNativeTerminalOptions):
     const translated = translator.translate(frame);
     if (translated.kind !== 'events') return;
     for (const event of translated.events) {
-      if (event.type === 'done') { activeRow = undefined; activeInput = undefined; earlyStart = undefined; }
+      if (event.type === 'done') {
+        inputVersion++; retirePending();
+        activeRow = undefined; activeInput = undefined; earlyStart = undefined;
+      }
       events.push(event);
     }
   };
@@ -90,6 +125,9 @@ export async function createOmpNativeSession(options: OmpNativeTerminalOptions):
         nativeId = file;
         if (typeof value.contextWindow === 'number') translator.setContextWindow(value.contextWindow);
         readyResolve();
+      } else if (event.kind === 'native-queue-retired') {
+        if (value.sessionFile !== nativeId || activeInput) { fail(); return; }
+        void close().catch(() => options.logger.warn('OMP cancelled input exit could not be confirmed'));
       } else if (event.kind === 'agent-event') {
         if (!nativeId || value.sessionFile !== nativeId) { fail(); return; }
         const frame = record(value.event);
@@ -111,8 +149,10 @@ export async function createOmpNativeSession(options: OmpNativeTerminalOptions):
       }
       if (request.kind === 'prepare-input') return prepare(value, signal);
       if (request.kind === 'input-receipt') return receipt(value, signal);
-      if (!nativeId || value.sessionFile !== nativeId || !activeRow || (activeInput?.ownership && !activeInput.ownership.isCurrent()))
+      if (!nativeId || value.sessionFile !== nativeId || !activeRow || activeInput?.cancelled
+        || (activeInput?.ownership && !activeInput.ownership.isCurrent()))
         throw new Error('OMP request has no current task input');
+      if (request.kind === 'provider-admission') return { accepted: value.turnRowId === activeRow && !signal.aborted };
       if (request.kind === 'tool-policy') {
         const current = interactions;
         if (!current || typeof value.toolCallId !== 'string' || typeof value.toolName !== 'string' || !value.input || typeof value.input !== 'object') return { allowed: false };
@@ -127,9 +167,13 @@ export async function createOmpNativeSession(options: OmpNativeTerminalOptions):
 
   async function prepare(value: Record<string, unknown>, requestSignal: AbortSignal): Promise<unknown> {
     requireLive();
-    if (!nativeId || value.sessionFile !== nativeId || activeInput || admitting) throw new Error('OMP native admission is not current');
+    const root = activeInput, turnRowId = activeRow;
+    if (!nativeId || value.sessionFile !== nativeId || admitting || pendingSteers.size >= 32 || root?.cancelled
+        || (root && !turnRowId) || value.turnRowId !== turnRowId) throw new Error('OMP native admission is not current');
+    const version = inputVersion;
     const message = record(value.message), submissionId = value.submissionId;
-    if (typeof submissionId !== 'string' || !submissionId || submissionId.length > 256 || message.role !== 'user'
+    const custom = message.role === 'custom' && message.customType === 'lex-gui-append' && message.attribution === 'user';
+    if (typeof submissionId !== 'string' || !submissionId || submissionId.length > 256 || (!custom && message.role !== 'user')
       || typeof message.timestamp !== 'number' || !Number.isFinite(message.timestamp)
       || admittedSubmissions.has(submissionId) || admittedSubmissions.size >= 4096) throw new Error('OMP input has no new submission identity');
     const text = nativeText(message.content);
@@ -140,29 +184,38 @@ export async function createOmpNativeSession(options: OmpNativeTerminalOptions):
     try {
       if (value.commandId !== undefined) {
         const pending = gui;
-        if (!pending || pending.commandId !== value.commandId || pending.accepted || pending.text !== text || pending.options.signal?.aborted || signal.aborted) throw new Error('OMP GUI input association changed');
-        pending.accepted = true;
-        activeInput = { submissionId, fingerprint,
-          gui: pending, receipt: pending.options.onNativeUserMessage };
+        if (!pending || pending.commandId !== value.commandId || pending.accepted || pending.options.signal?.aborted || signal.aborted) throw new Error('OMP GUI input association changed');
+        if (pending.turnRowId ? !custom || record(message.details).submissionId !== pending.messageId || submissionId !== pending.messageId
+          : custom || pending.text !== text) return { accepted: false };
+        if (pending.turnRowId !== turnRowId) throw new Error('OMP GUI steering changed');
+        const prepared: NativeInput = { submissionId, fingerprint,
+          gui: pending, receipt: pending.options.onNativeUserMessage, turnRowId };
+        if (turnRowId) pendingSteers.set(submissionId, prepared); else activeInput = prepared;
         if (earlyStart) { publish(earlyStart); earlyStart = undefined; }
         return { accepted: true, text };
       }
       const current = resolver;
-      if (!current || gui) throw new Error('OMP native input has no product owner');
+      if (!current || custom || (gui && !root)) throw new Error('OMP native input has no product owner');
+      const consumption = turnRowId ? new OmpNativeConsumption(nativeId, turnRowId, submissionId) : undefined;
       let prepared: string | undefined;
       await current({ nativeSessionId: nativeId, submissionId, signal,
+        ...(turnRowId ? { nativeTurnId: turnRowId, consumption } : {}),
         message: { type: 'user', content: text },
         async accept(input, sendOptions, ownership) {
           requireLive();
-          if (prepared !== undefined || current !== resolver || signal.aborted || sendOptions.signal?.aborted) throw new TurnDispatchRejectedError('OMP input owner changed');
+          if (prepared !== undefined || current !== resolver || version !== inputVersion || signal.aborted || sendOptions.signal?.aborted
+            || (ownership && !ownership.isCurrent())) throw new TurnDispatchRejectedError('OMP input owner changed');
           prepared = toOmpPromptText(input);
-          activeInput = { submissionId, fingerprint, owner: current, ownership,
-            receipt: sendOptions.onNativeUserMessage };
+          const candidate = { submissionId, fingerprint, owner: current, ownership,
+            receipt: sendOptions.onNativeUserMessage, consumption, turnRowId };
+          if (turnRowId) pendingSteers.set(submissionId, candidate); else activeInput = candidate;
           if (earlyStart) { publish(earlyStart); earlyStart = undefined; }
         },
       });
       requireLive();
-      if (prepared === undefined || signal.aborted || current !== resolver) throw new TurnDispatchRejectedError('OMP native input was not admitted');
+      if (prepared === undefined || signal.aborted || current !== resolver || version !== inputVersion) {
+        consumption?.finish('unconsumed'); throw new TurnDispatchRejectedError('OMP native input was not admitted');
+      }
       return { accepted: true, text: prepared };
     } catch {
       if (gui && value.commandId === gui.commandId) gui.refused = true;
@@ -171,14 +224,21 @@ export async function createOmpNativeSession(options: OmpNativeTerminalOptions):
   }
   async function receipt(value: Record<string, unknown>, signal: AbortSignal): Promise<unknown> {
     requireLive();
-    const input = activeInput, row = record(value.row), message = record(row.message), rowId = row.id;
+    const input = typeof value.submissionId === 'string' ? pendingSteers.get(value.submissionId) ?? activeInput : undefined;
+    const row = record(value.row), message = record(row.message), rowId = row.id;
+    const matches = input?.gui?.turnRowId
+      ? row.type === 'custom_message' && row.customType === 'lex-gui-append' && row.attribution === 'user'
+        && record(row.details).submissionId === input.gui.messageId
+      : row.type === 'message' && message.role === 'user' && nativeFingerprint(message) === input?.fingerprint;
     if (!nativeId || value.sessionFile !== nativeId || !input || input.submissionId !== value.submissionId
-      || input.cancelled || input.gui?.options.signal?.aborted || signal.aborted || (input.owner && input.owner !== resolver) || activeRow
+      || input.cancelled || activeInput?.cancelled || input.gui?.options.signal?.aborted || signal.aborted || (input.owner && input.owner !== resolver)
+      || input.turnRowId !== activeRow
       || (input.ownership && !input.ownership.isCurrent())
-      || row.type !== 'message' || typeof rowId !== 'string' || !rowId || rowId.length > 256
-      || message.role !== 'user' || nativeFingerprint(message) !== input.fingerprint
+      || !matches || typeof rowId !== 'string' || !rowId || rowId.length > 256
       || admittedRows.has(rowId) || admittedRows.size >= 4096) throw new Error('OMP journal receipt does not match its prepared input');
-    activeRow = rowId; admittedRows.add(rowId);
+    activeRow ??= rowId; admittedRows.add(rowId);
+    if (input.gui) input.gui.accepted = true;
+    input.consumption?.finish('consumed', rowId);
     const submission = input.gui?.messageId;
     const source: NativeMessageSource = { version: 1, engine: 'omp', sessionId: nativeId, messageId: rowId,
       origin: submission ? { kind: 'plugin', name: 'lex-omp-native-bridge' } : { kind: 'native' },
@@ -187,25 +247,29 @@ export async function createOmpNativeSession(options: OmpNativeTerminalOptions):
     try { await input.receipt?.(source); }
     catch { options.logger.warn('OMP native journal receipt could not be persisted'); }
     requireLive();
-    if (signal.aborted || input.cancelled || input.gui?.options.signal?.aborted || activeInput !== input
+    if (signal.aborted || input.cancelled || input.gui?.options.signal?.aborted || (pendingSteers.get(input.submissionId) ?? activeInput) !== input
       || (input.owner && input.owner !== resolver) || (input.ownership && !input.ownership.isCurrent()))
       throw new Error('OMP journal receipt owner changed');
+    pendingSteers.delete(input.submissionId);
     return { accepted: true };
   }
   function hostTool(request: NativeBridgeRequest, signal: AbortSignal): Promise<OmpHostToolResult> {
     const value = record(request.input);
+    if (contextChanging || value.contextGeneration !== hostContextGeneration)
+      return Promise.reject(new Error('OMP host tool context changed'));
     let rejectCall!: (error: Error) => void;
     const cancel = () => { tools.handleFrame({ type: 'host_tool_cancel', targetId: request.requestId }); rejectCall(new Error('OMP host tool cancelled')); };
     return new Promise<OmpHostToolResult>((resolve, reject) => {
       rejectCall = reject;
       if (signal.aborted) { reject(new Error('OMP host tool cancelled')); return; }
       toolResults.set(request.requestId, resolve); signal.addEventListener('abort', cancel, { once: true });
-      tools.handleFrame({ type: 'host_tool_call', id: request.requestId, toolCallId: value.toolCallId, toolName: value.toolName, arguments: value.arguments });
-    }).finally(() => { toolResults.delete(request.requestId); signal.removeEventListener('abort', cancel); });
+      toolCancellations.set(request.requestId, cancel);
+      executingTool.run(request.requestId, () => tools.handleFrame({ type: 'host_tool_call', id: request.requestId, toolCallId: value.toolCallId, toolName: value.toolName, arguments: value.arguments }));
+    }).finally(() => { toolResults.delete(request.requestId); toolCancellations.delete(request.requestId); signal.removeEventListener('abort', cancel); });
   }
   function close(): Promise<void> {
     if (closing) return closing;
-    closed = true; lifetime.abort(); tools.close(); readyReject(new Error('OMP native session closed'));
+    closed = true; inputVersion++; retirePending(); lifetime.abort(); tools.close(); readyReject(new Error('OMP native session closed'));
     closing = (async () => {
       try { await bridge.close(); await (presentation ? presentation.close() : terminal?.close()); }
       finally { events.end(); }
@@ -224,49 +288,140 @@ export async function createOmpNativeSession(options: OmpNativeTerminalOptions):
     presentation = new AgentPresentationRuntime(nativeId!, terminal);
     await bridge.command('initialize', { ...(options.resumeSessionId ? { resumeSessionId: nativeId } : {}),
       ...(options.effort ? { effort: levels[options.effort] } : {}) }, 10_000);
+    if (confirmedVendorOptions.orcaRole) {
+      const role = confirmedVendorOptions.orcaRole;
+      // A valid Host role alone does not prove native registration. Confirm
+      // the actual extension catalog before exposing this executor to Main.
+      if (!options.hostTools.some(tool => tool.name === (role === 'worker' ? 'send_to_lead' : 'start_team')))
+        throw new Error('OMP native collaboration tool is not registered');
+      const generation = ++hostContextGeneration;
+      const result = record(await bridge.command('host-context', { generation }, 10_000));
+      const expected = tools.definitions().map(tool => tool.name);
+      const catalog = result.catalog;
+      if (result.generation !== generation || !Array.isArray(catalog)
+        || catalog.length !== expected.length || expected.some((name, index) => catalog[index] !== name))
+        throw new Error('OMP native host tool catalog could not be confirmed');
+    }
     events.push({ type: 'session_id', source: 'omp', data: nativeId! });
   } catch (error) { await close(); throw error; }
 
   const validate = (sendOptions: SendOptions = {}) => {
     requireLive();
-    if (activeInput || gui || sendOptions.signal?.aborted) throw new TurnDispatchRejectedError('Native OMP input is busy or cancelled');
+    if (gui || contextChanging || sendOptions.signal?.aborted) throw new TurnDispatchRejectedError('Native OMP input is busy or cancelled');
+  };
+  async function dispatch(message: UserMessage, sendOptions: SendOptions, steering: boolean) {
+    validate(sendOptions);
+    if (steering && sendOptions[GUI_NATIVE_APPEND] !== true) throw new TurnDispatchRejectedError('OMP native GUI append requires an explicit GUI intent');
+    if (admitting || pendingSteers.size || (steering ? !activeRow || activeInput?.cancelled : activeInput))
+      throw new TurnDispatchRejectedError('Native OMP input has no current execution slot');
+    const text = toOmpPromptText(message);
+    if (!text || text.length > 1_000_000) throw new TurnDispatchRejectedError('Invalid OMP prompt');
+    const turnRowId = steering ? activeRow : undefined;
+    const messageId = sendOptions.messageUuid ?? randomUUID();
+    const command = bridge.enqueueCommand(steering ? 'steer' : 'prompt', { text, ...(turnRowId ? { turnRowId, submissionId: messageId } : {}) }, 120_000);
+    const input: GuiInput = { commandId: command.id, text, options: sendOptions, accepted: false, refused: false,
+      messageId, turnRowId };
+    gui = input;
+    try {
+      const answer = record(await command.result);
+      if (!input.accepted && answer.cancelledBeforeConsumption === true) {
+        await close(); input.refused = true;
+      }
+      if (!input.accepted && (answer.refusedBeforeSubmission === true || input.refused))
+        throw new TurnDispatchRejectedError('OMP input was not consumed');
+      if (!input.accepted) throw new Error('OMP prompt receipt has no admitted native row');
+    } catch (error) {
+      if (error instanceof TurnDispatchRejectedError) throw error;
+      if (input.refused) throw new TurnDispatchRejectedError('OMP refused input before provider execution');
+      if (!input.accepted) { fail(); throw new TurnDispatchUnconfirmedError('OMP native input execution outcome is unknown'); }
+    } finally { if (gui === input) gui = undefined; }
+  }
+  const requestAbort = async () => {
+    requireLive(); inputVersion++; if (activeInput) activeInput.cancelled = true;
+    // Session owns the graceful-stop safe point. Both stop entrances revoke
+    // this exact input's admission before awaiting the official native abort.
+    // An ACK alone never marks queued inputs as unconsumed.
+    await bridge.command('abort', {}, 10_000);
   };
   return {
     id: nativeId!, agentKind: 'omp', model: options.model, presentation, disabledSkillPaths: options.disabledSkillPaths,
-    setNativeInputResolver(next) { requireLive(); resolver = next; },
+    setNativeInputResolver(next) {
+      requireLive();
+      if (resolver && resolver !== next) { inputVersion++; if (activeInput) activeInput.cancelled = true; retirePending(); }
+      resolver = next;
+    },
     setInteractionResolver(next) { requireLive(); interactions = next; },
     validateSendOptions: validate,
-    async send(message: UserMessage, sendOptions: SendOptions = {}) {
-      validate(sendOptions);
-      if (admitting) throw new TurnDispatchRejectedError('Native OMP admission is already pending');
-      const text = toOmpPromptText(message);
-      if (!text || text.length > 1_000_000) throw new TurnDispatchRejectedError('Invalid OMP prompt');
-      const command = bridge.enqueueCommand('prompt', { text }, 30_000);
-      const input: GuiInput = { commandId: command.id, text, options: sendOptions, accepted: false, refused: false, messageId: sendOptions.messageUuid ?? randomUUID() };
-      gui = input;
-      try {
-        const receipt = record(await command.result);
-        if (!input.accepted && receipt.refusedBeforeSubmission === true) throw new TurnDispatchRejectedError('OMP input was busy before submission');
-        if (!input.accepted) throw new Error('OMP prompt receipt has no admitted native row');
-      }
-      catch (error) {
-        if (error instanceof TurnDispatchRejectedError) throw error;
-        if (input.refused) throw new TurnDispatchRejectedError('OMP refused input before provider execution');
-        if (!input.accepted) { fail(); throw new TurnDispatchUnconfirmedError('OMP native input execution outcome is unknown'); }
-      } finally { if (gui === input) gui = undefined; }
+    send: (message, sendOptions = {}) => dispatch(message, sendOptions, false),
+    steer: (message, sendOptions = {}) => dispatch(message, sendOptions, true),
+    getCurrentTurnId: () => activeRow ?? null,
+    revokeOrcaIdentity,
+    setVendorOptions(patch) {
+      // The stable native schema stays unchanged. Rotate the command/callback
+      // generation and verify its live registration before publishing a new
+      // role into the handler context. Revocation remains effective on failure.
+      const ownedPatch = { ...patch };
+      if (ownedPatch.orcaRole === null) Object.assign(ownedPatch, revokedIdentity);
+      const role = roleGeneration;
+      // Revoke at invocation, before the queued update's first microtask. A
+      // running handler receives cancellation; its effects are not rolled back.
+      const release = presentation!.suspendInput();
+      contextChanges++; contextChanging = true;
+      if (options.vendorOptions) Object.assign(options.vendorOptions, revokedIdentity);
+      const caller = executingTool.getStore();
+      for (const [id, cancel] of toolCancellations) if (id !== caller) cancel();
+      const change = contextChange.then(async () => {
+        requireLive();
+        if (!options.vendorOptions) throw new Error('OMP host context is unavailable');
+        const generation = ++hostContextGeneration;
+        try {
+          const result = record(await bridge.command('host-context', { generation }, 10_000));
+          requireLive();
+          if (role !== roleGeneration) throw new Error('OMP native role changed during history handoff');
+          const expected = tools.definitions().map(tool => tool.name);
+          const catalog = result.catalog;
+          if (result.generation !== generation || !Array.isArray(catalog)
+            || catalog.length !== expected.length || expected.some((name, index) => catalog[index] !== name))
+            throw new Error('OMP native host tool catalog could not be confirmed');
+          confirmedVendorOptions = { ...confirmedVendorOptions, ...ownedPatch };
+          if (contextChanges === 1) Object.assign(options.vendorOptions, confirmedVendorOptions);
+        } catch (error) {
+          Object.assign(confirmedVendorOptions, revokedIdentity);
+          throw error;
+        }
+      }).finally(() => { contextChanges--; contextChanging = contextChanges > 0; release(); });
+      contextChange = change.catch(() => {});
+      return change;
     },
-    async steer() {
+    async readNativeEditorDraft() {
       requireLive();
-      // A native in-turn steer needs its own consumed-row association. Until
-      // that path is available, never turn it into a second ordinary prompt.
-      throw new TurnDispatchRejectedError('OMP 原生模式暂不支持从 GUI 插入运行中的输入；请等待完成或停止后发送。');
+      const result = record(await bridge.command('editor-draft', {}, 10_000));
+      if (result.sessionFile !== nativeId || typeof result.text !== 'string') throw new Error('OMP editor draft identity changed');
+      return result.text;
     },
-    async abort() { requireLive(); if (activeInput) activeInput.cancelled = true; await bridge.command('abort', {}, 10_000); },
+    async restoreNativeEditorDraft(text) {
+      requireLive();
+      const result = record(await bridge.command('restore-editor-draft', { text }, 10_000));
+      if (result.sessionFile !== nativeId || result.text !== text) throw new Error('OMP editor draft could not be restored');
+    },
+    async readSessionTree() {
+      requireLive();
+      const version = inputVersion, file = nativeId;
+      const data = record(await bridge.command('read-tree', {}, 10_000));
+      requireLive();
+      if (version !== inputVersion || data.sessionFile !== file) throw new Error('OMP history readback owner changed');
+      const tree = normalizeNativeJournalTree(data), usage = record(data.contextUsage);
+      return { tree, messages: activeNativeJournalHistory(data, tree, 'omp'),
+        contextTokens: typeof usage.tokens === 'number' ? usage.tokens : nativeJournalContextTokens(data, tree),
+        contextWindow: typeof usage.contextWindow === 'number' ? usage.contextWindow : translator.getUsageSnapshot().contextWindow };
+    },
+    abort: requestAbort,
+    requestGracefulStop: requestAbort,
     // Admission is held before Session reserves the turn. Reporting it as a
     // running turn would make Session reject this very native input.
     isTurnRunning: () => Boolean(gui || activeInput),
     capabilityOverrides: {
-      sameTurnSteer: { supported: false, reason: 'not-implemented', recovery: 'native-ui' },
+      sameTurnSteer: { supported: true },
       setPermissionModeMidSession: { supported: false, reason: 'not-implemented', recovery: 'idle-restart' },
       sessionTree: { supported: false, reason: 'not-implemented' },
     },
@@ -276,9 +431,17 @@ export async function createOmpNativeSession(options: OmpNativeTerminalOptions):
       requireLive();
       if (model !== options.model || (selection?.providerId != null && selection.providerId !== options.providerId))
         throw new TurnDispatchRejectedError('OMP model/source changes require the existing managed route rebuild');
-      if (selection?.effort) { await bridge.command('effort', { level: levels[selection.effort] }, 10_000); effort = selection.effort; }
+      if (selection?.effort) {
+        const result = record(await bridge.command('effort', { level: levels[selection.effort] }, 10_000));
+        if (result.level !== levels[selection.effort]) throw new Error('OMP native effort readback changed');
+        effort = selection.effort;
+      }
     },
-    async setEffort(next) { requireLive(); await bridge.command('effort', { level: levels[next] }, 10_000); effort = next; },
+    async setEffort(next) {
+      requireLive(); const result = record(await bridge.command('effort', { level: levels[next] }, 10_000));
+      if (result.level !== levels[next]) throw new Error('OMP native effort readback changed');
+      effort = next;
+    },
     getEffort: () => effort,
     async setPermissionMode(mode) {
       requireLive();

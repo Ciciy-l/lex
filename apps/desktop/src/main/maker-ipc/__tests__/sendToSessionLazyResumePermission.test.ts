@@ -29,7 +29,7 @@ function lazyResumeCreateOpts(): string {
 describe('sendToSessionInternal lazy-resume permission mode', () => {
   it('restores the stored permission mode when the host asks for it', () => {
     expect(lazyResumeCreateOpts()).toContain(
-      `permissionMode: params.resumeWithStoredPermissionMode
+      `permissionMode: params.resumeWithStoredPermissionMode || params[ORCA_NATIVE_BODY]
             ? permissionModeOrAsk(dbRow.permissionMode)
             : 'bypassPermissions',`,
     );

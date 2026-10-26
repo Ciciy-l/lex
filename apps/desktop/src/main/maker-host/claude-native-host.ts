@@ -28,7 +28,7 @@ export async function createClaudeNativeHostSession(
   })();
   try {
     return await createClaudeNativeSession({
-      model: options.model, policy: options.policy, prepareInput: options.prepareInput, onFault: options.onFault, events: options.events,
+      model: options.model, nativeModel: options.launch.model, policy: options.policy, prepareInput: options.prepareInput, onFault: options.onFault, events: options.events,
       disabledSkillPaths: options.disabledSkillPaths, usageTracker: options.usageTracker,
       runtime: {
         nativeSessionId: prepared.nativeSessionId, resumeSessionId: prepared.resumeSessionId, executable: prepared.executable, cwd: prepared.cwd,

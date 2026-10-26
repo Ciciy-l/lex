@@ -6,6 +6,7 @@ import { Session, type AgentEvent, type AgentSessionHandle } from '@cindy/maker-
 import { createSessionBindingLifecycle } from '../sessionBindingLifecycle.js';
 import { persistAndHydrateSessionProvider } from '../sessionProviderBootstrap.js';
 import { canPrepareLocalNativePresentation } from '../../../shared/agentPresentation.js';
+import { nativeHistoryConfiguration } from '../nativeHistoryJournal.js';
 import {
   clearAllSessionProviders, freezeSessionProviderAtStart, getSessionProvider, hydrateSessionProvider,
 } from '../../maker-host/session-provider-store.js';
@@ -38,7 +39,7 @@ afterEach(async () => {
   clearAllSessionRuntimeAxes();
 });
 
-function fixture(engine: 'codex' | 'pi' = 'codex') {
+function fixture(engine: 'codex' | 'pi' | 'omp' | 'claude-code' = 'codex') {
   const providerRead = deferred<void>(), axesRead = deferred<void>(), providerEntered = deferred<void>(), axesEntered = deferred<void>();
   const ended = deferred<void>();
   let generation = 1, accountDb = {}, currentSession: Session | undefined, running = false;
@@ -131,6 +132,9 @@ function fixture(engine: 'codex' | 'pi' = 'codex') {
       app: { getPath: () => '/isolated/test' }, assertModelRouteUsable: async () => undefined,
       shouldApplyExclusiveProviderRerouteLive: () => false, markProjectContextIfNeeded: async () => {},
       canPrepareLocalNativePresentation,
+      nativeHistoryConfigurationForSession: nativeHistoryConfiguration, nativeHistoryStartupConfigurations: new WeakMap(),
+      nativeHistoryStartupTarget: (_root: string, identity: { nativeId: string }) => ({ target: identity.nativeId, pending: false }),
+      ownerScopedUserDataPath: () => '/isolated/history',
       throwIpcError: (code: string, message: string) => { throw new Error(`[${code}] ${message}`); },
       wireSessionToIpc: wire, markOrcaMcpHydratedIfNeeded: noop,
       getDbClient: () => ({ drizzle: db }),
@@ -151,8 +155,9 @@ function fixture(engine: 'codex' | 'pi' = 'codex') {
 }
 
 describe('native activation at the actual Main startup boundary', () => {
-  it.each(['lead', 'worker'])('uses the same local Codex task and history for Orca %s', async orcaRole => {
-    const f = fixture(); f.providerRead.resolve(); f.axesRead.resolve();
+  it.each(['codex', 'pi', 'omp', 'claude-code'] as const)('uses the same local %s task and history for both Orca roles', async engine => {
+    for (const orcaRole of ['lead', 'worker']) {
+    const f = fixture(engine); f.providerRead.resolve(); f.axesRead.resolve();
     await f.start(true, true, { orcaRole, vendorOptions: { orcaRole, orcaWorkflowId: 'team', orcaLeadSessionId: 'lead' } });
     expect(await f.session.presentationInitialization).toEqual({ status: 'ready' });
     expect(f.create).toHaveBeenCalledOnce();
@@ -160,11 +165,13 @@ describe('native activation at the actual Main startup boundary', () => {
       resumeSessionId: nativeThreadId, permissionMode: 'ask', workingDir: '/selected/work', orcaRole }), undefined);
     expect(f.nativeInputs).toHaveLength(1);
     expect(f.nativeInputs[0]).toMatchObject({ threadId: nativeThreadId, cwd: '/selected/work', permission: 'ask', provider: 'selected-provider' });
+    }
   });
 
-  it('does not infer a dynamic Orca bridge for other native engines', async () => {
+  it('does not fall back from remote Orca to a local native host', async () => {
     const f = fixture('pi'); f.providerRead.resolve(); f.axesRead.resolve();
-    await expect(f.start(true, true, { orcaRole: 'worker' })).rejects.toThrow('native presentation');
+    expect(canPrepareLocalNativePresentation({ agentKind: 'pi', orcaRole: 'worker', remoteHostId: 'ssh' })).toBe(false);
+    await expect(f.start(true, true, { orcaRole: 'invalid-role' })).rejects.toThrow('native presentation');
     expect(f.create).not.toHaveBeenCalled();
   });
   it.each([false, true])('selects Pi native preparation for new and legacy ordinary tasks (resume=%s)', async resume => {

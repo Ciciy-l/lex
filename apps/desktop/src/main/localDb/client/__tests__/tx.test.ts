@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -9,7 +11,7 @@ import { SESSION_SOURCES } from '../../../../shared/sessionSource.js';
 import { buildDbWorkerBundle } from '../../__tests__/dbWorkerTestUtils.js';
 import { RETAINED_COMPANION_DDL } from '../../__tests__/fixtures/retiredCompanionTables';
 import { computeForkSourceMessagesDigest, type ForkSourceMessage } from '../../forkRecoverySnapshot.js';
-import type { DbClient } from '../DbClient.js';
+import type { DbClient, CreateDbClientOptions } from '../DbClient.js';
 import { createDbClient } from '../DbClient.js';
 import type { SkillUsageApplyMutationArgs } from '../tx/types.js';
 
@@ -1397,6 +1399,84 @@ describe('db worker tx handlers', () => {
       );
     },
   );
+
+  it('session.treeRehydrate commits native identity with projection and refuses an unrelated writer atomically', async () => {
+    await withClient(async client => {
+      await seedSession(client, 's1', { sdkSessionId: 'source', contextTokens: 100 });
+      const args = { sessionId: 's1', now: 1000, contextTokens: 20, contextWindow: 200,
+        nativeIdentity: { source: 'source', target: 'target' },
+        messages: [{ id: 'row', clientId: 'row', role: 'user', content: '{}', agentKind: 'omp', createdAt: 1 }] };
+      await client.tx('session.treeRehydrate', args);
+      expect(await client.queryOne('SELECT sdk_session_id, context_tokens FROM sessions WHERE id = ?', ['s1']))
+        .toEqual({ sdk_session_id: 'target', context_tokens: 20 });
+      await client.tx('session.treeRehydrate', args);
+      await expect(client.tx('session.treeRehydrate', { ...args, contextTokens: 99, messages: [],
+        nativeIdentity: { source: 'unrelated', target: 'another' } })).rejects.toThrow('identity changed');
+      expect(await client.queryOne('SELECT sdk_session_id, context_tokens FROM sessions WHERE id = ?', ['s1']))
+        .toEqual({ sdk_session_id: 'target', context_tokens: 20 });
+      expect(await client.queryOne('SELECT rewind_at FROM messages WHERE id = ?', ['row'])).toEqual({ rewind_at: null });
+    });
+  });
+
+  it.each([false, true])('refuses settings changed by another writer before native projection without hiding rows or replacing identity (inline=%s)', async useInlineWorker => {
+    await withClient(async client => {
+      await seedSession(client, 's1', { sdkSessionId: 'source' });
+      const stored = await client.queryOne<{ model: string; workingDir: string | null; providerId: string | null; effort: string; permissionMode: string; fastMode: number }>(
+        'SELECT model, working_dir AS workingDir, provider_id AS providerId, effort, permission_mode AS permissionMode, fast_mode AS fastMode FROM sessions WHERE id = ?', ['s1']);
+      const expectedConfiguration = { ...stored!, fastMode: stored!.fastMode === 1 };
+      const args = { sessionId: 's1', now: 1000, contextTokens: 20, contextWindow: 200,
+        nativeIdentity: { source: 'source', target: 'source' },
+        messages: [{ id: 'row', clientId: 'row', role: 'user', content: '{}', agentKind: 'pi', createdAt: 1 }] };
+      await client.tx('session.treeRehydrate', args);
+      for (const [column, field, changed] of [
+        ['model', 'model', 'other-model'], ['working_dir', 'workingDir', 'other-cwd'],
+        ['provider_id', 'providerId', 'other-provider'], ['effort', 'effort', 'low'],
+        ['permission_mode', 'permissionMode', 'bypassPermissions'], ['fast_mode', 'fastMode', 1],
+      ] as const) {
+        await client.exec(`UPDATE sessions SET ${column} = ? WHERE id = ?`, [changed, 's1']);
+        await expect(client.tx('session.treeRehydrate', { ...args, expectedConfiguration, messages: [],
+          nativeIdentity: { source: 'source', target: 'target' } })).rejects.toThrow('settings changed');
+        expect(await client.queryOne('SELECT sdk_session_id FROM sessions WHERE id = ?', ['s1'])).toEqual({ sdk_session_id: 'source' });
+        expect(await client.queryOne('SELECT rewind_at FROM messages WHERE id = ?', ['row'])).toEqual({ rewind_at: null });
+        await client.exec(`UPDATE sessions SET ${column} = ? WHERE id = ?`, [stored![field], 's1']);
+      }
+      await expect(client.tx('session.treeRehydrate', { ...args, expectedConfiguration })).resolves.toMatchObject({ messageCount: 1 });
+    }, { useInlineWorker });
+  });
+
+  it('recovers a native history handoff in a fresh Host process after SQLite projection failure without another mutation', async () => {
+    await withClient(async (client, config) => {
+      const root = path.dirname(config.dbPath!);
+      await seedSession(client, 's1', { sdkSessionId: path.join(root, 'source.jsonl'), contextTokens: 100 });
+      await client.exec("CREATE TRIGGER fail_history_projection BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'injected projection failure'); END");
+      await client.dispose();
+      const configPath = path.join(root, 'child-config.json');
+      fs.writeFileSync(configPath, JSON.stringify(config));
+      const run = async (mode: string) => {
+        const result = await promisify(execFile)(process.execPath, ['--import', 'tsx',
+          path.resolve('src/main/localDb/__tests__/fixtures/nativeHistoryRecoveryChild.ts'), mode, configPath],
+        { timeout: 30000, maxBuffer: 1000000 });
+        return JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1)!);
+      };
+      const failed = await run('mutate');
+      const observer = await createDbClient(config);
+      try {
+        expect(await observer.queryOne('SELECT sdk_session_id, context_tokens FROM sessions WHERE id = ?', ['s1']))
+          .toEqual({ sdk_session_id: path.join(root, 'source.jsonl'), context_tokens: 100 });
+        expect(await observer.queryOne('SELECT COUNT(*) AS count FROM messages')).toEqual({ count: 0 });
+        await observer.exec('DROP TRIGGER fail_history_projection');
+      } finally { await observer.dispose(); }
+      const recovered = await run('recover');
+      expect(recovered.pid).not.toBe(failed.pid);
+      expect(recovered).toMatchObject({ navigations: 0, reads: 1, sends: 0, editor: 'unsent TUI draft' });
+      const committed = await createDbClient(config);
+      try {
+        expect(await committed.queryOne('SELECT sdk_session_id, context_tokens FROM sessions WHERE id = ?', ['s1']))
+          .toEqual({ sdk_session_id: path.join(root, 'target.jsonl'), context_tokens: 17 });
+        expect(await committed.queryOne('SELECT COUNT(*) AS count FROM messages WHERE rewind_at IS NULL')).toEqual({ count: 1 });
+      } finally { await committed.dispose(); }
+    });
+  });
 
   it('session.treeRehydrate atomically replaces the visible projection and preserves old branches', async () => {
     await withClient(async (client) => {
@@ -3575,7 +3655,7 @@ describe('db worker tx handlers', () => {
 });
 
 async function withClient(
-  fn: (client: DbClient) => Promise<void>,
+  fn: (client: DbClient, config: CreateDbClientOptions) => Promise<void>,
   opts: { useInlineWorker?: boolean; authorityProjection?: boolean } = {},
 ): Promise<void> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xdt-db-tx-'));
@@ -3595,14 +3675,15 @@ async function withClient(
   }
   let client: DbClient | undefined;
   try {
-    client = await createDbClient({
+    const config: CreateDbClientOptions = {
       userId: 'test-user',
       dbPath,
       drizzleDir,
       betterSqliteModulePath: require.resolve('better-sqlite3'),
       ...(opts.useInlineWorker ? { useInlineWorker: true } : { workerScriptPath }),
-    });
-    await fn(client);
+    };
+    client = await createDbClient(config);
+    await fn(client, config);
   } finally {
     if (client) {
       await client.dispose();

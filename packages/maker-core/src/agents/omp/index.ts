@@ -60,6 +60,7 @@ import {
   type OmpSessionRuntimeCallbacks,
 } from './session-handle.js';
 import { OmpTranslator } from './translator.js';
+import { manageOmpNativeHistory } from './native-history-reopen.js';
 import {
   ompDisabledSkillNames,
   ompRuntimeSkillName,
@@ -333,6 +334,10 @@ export class OmpAgent extends BaseAgent {
       readonly permissionMode: PermissionMode;
       readonly resumeSessionFile?: string;
       readonly permitInitialRecovery: boolean;
+      readonly native?: boolean;
+      /** A managed fork must stay in the original history root, while launch
+       * configuration and credentials retain their new private runtime root. */
+      readonly historyDirectory?: string;
     }): Promise<OmpSessionRuntime | AgentSessionHandle> => {
       const runtimeInstanceId = runtimeNumber === 0 ? firstRuntimeInstanceId : randomUUID();
       runtimeNumber += 1;
@@ -413,6 +418,7 @@ export class OmpAgent extends BaseAgent {
           : resolveAllowedManagedSkills(await this.deps.getManagedSkills?.() ?? [],
               this.deps.getDisabledSkillPaths?.() ?? []);
         const plan = createOmpSessionLaunchPlan({
+          ...(input.historyDirectory ? { sessionDir: input.historyDirectory } : {}),
           harnessSettings,
           managedSkillDirectories: [...new Set(managedSkills.map((skill) => path.dirname(skill.path)))],
           roots: {
@@ -449,17 +455,25 @@ export class OmpAgent extends BaseAgent {
           isolatedProbe,
           harnessSettings?.subagentModel,
         );
-        if (opts.nativePresentation === true && input.permitInitialRecovery) {
+        if (opts.nativePresentation === true && (input.permitInitialRecovery || input.native)) {
           const createNative = this.deps.createLocalOmpNativeSession;
-          if (!createNative || remoteRuntime || opts.reviewMode || isolatedProbe || opts.vendorOptions?.orcaRole)
-            throw new Error('OMP native presentation requires the ordinary local interactive host');
+          if (!createNative || remoteRuntime || opts.reviewMode || isolatedProbe)
+            throw new Error('OMP native presentation requires the local interactive host');
           if (!opts.sessionId) throw new Error('OMP native presentation requires an existing product task identity');
+          const role = mutableVendorOptions.orcaRole;
+          if (role && (role !== 'lead' && role !== 'worker'
+            || typeof mutableVendorOptions.orcaLeadSessionId !== 'string'
+            || role === 'lead' && mutableVendorOptions.orcaLeadSessionId !== opts.sessionId
+            || role === 'worker' && (typeof mutableVendorOptions.orcaWorkerId !== 'string'
+              || typeof mutableVendorOptions.orcaWorkflowId !== 'string' || mutableVendorOptions.orcaWorkerSessionId !== opts.sessionId)))
+            throw new Error('OMP native collaboration requires its owned host identity');
           nativeResourcesTransferred = true;
           return await createNative({
             sessionId: opts.sessionId, model: opts.model, providerId: sourceProviderId,
             permissionMode: input.permissionMode, effort: opts.effort,
             resumeSessionId: input.resumeSessionFile, executable: this.resolveLocalBinaryPath(),
-            plan, hostTools: hostToolDefinitions, disabledSkillPaths: disabledSkillLaunch.identities, logger: this.deps.logger,
+            plan, hostTools: hostToolDefinitions, vendorOptions: mutableVendorOptions,
+            disabledSkillPaths: disabledSkillLaunch.identities, logger: this.deps.logger,
             releaseResources: async () => {
               await releaseMemory?.();
               await cleanupRuntimeFiles?.();
@@ -566,7 +580,20 @@ export class OmpAgent extends BaseAgent {
       ...(opts.resumeSessionId === undefined ? {} : { resumeSessionFile: opts.resumeSessionId }),
       permitInitialRecovery: true,
     });
-    if ('send' in initialRuntime) return initialRuntime;
+    if ('send' in initialRuntime) return manageOmpNativeHistory({ initial: initialRuntime, model: opts.model,
+      openRpc: async nativeId => {
+        const runtime = await createRuntime({ permissionMode: initialPermissionMode, resumeSessionFile: nativeId,
+          historyDirectory: path.dirname(nativeId), permitInitialRecovery: false });
+        if ('send' in runtime) { await runtime.close(); throw new Error('OMP history requires the RPC frontend'); }
+        return runtime;
+      },
+      openNative: async nativeId => {
+        const runtime = await createRuntime({ permissionMode: initialPermissionMode, resumeSessionFile: nativeId,
+          historyDirectory: path.dirname(nativeId), permitInitialRecovery: false, native: true });
+        if (!('send' in runtime)) { await runtime.stopAndDispose(); throw new Error('OMP history requires the original frontend'); }
+        return runtime;
+      },
+    });
     const restartRuntime: OmpPermissionRuntimeFactory = async ({ permissionMode, sessionFile }) => {
       const runtime = await createRuntime({
         permissionMode,

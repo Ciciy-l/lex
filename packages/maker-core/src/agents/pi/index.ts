@@ -1,5 +1,6 @@
 import { normalizeAutoReviewUserIntent, createAutoReviewActionContext, type AutoReviewUserIntent } from '../shared/auto-review-decision.js';
 import { getPiExtensionUiCapability } from './extension-ui-capabilities.js';
+import { managePiNativeHistory, PI_NATIVE_RAW_HISTORY, type PiNativeHistoryHandle } from './native-history-reopen.js';
 import { parsePiManagementArgs, parsePiManagementText } from './managed-command.js';
 import { canonicalSkillPath, snapshotDisabledSkillLaunch, currentDisabledSkillLaunchPaths, extendDisabledSkillLaunchPaths, type DisabledSkillLaunchSnapshot } from '../shared/skill-activation.js';
 /**
@@ -2545,8 +2546,8 @@ export class PiAgent extends BaseAgent {
     assertRemotePiContextProfileAvailable(opts.remoteHostId, opts.model, opts.providerId);
     const reviewMode = opts.reviewMode === true;
     const nativePresentation = opts.nativePresentation === true;
-    if (nativePresentation && (!opts.sessionId || opts.remoteHostId || reviewMode || opts.vendorOptions?.orcaRole || !this.deps.createLocalPiNativeSession))
-      throw new Error('Pi native presentation requires the ordinary local interactive host');
+    if (nativePresentation && (!opts.sessionId || opts.remoteHostId || reviewMode || !this.deps.createLocalPiNativeSession))
+      throw new Error('Pi native presentation requires the local interactive host');
     const sessionMemoryEnabled = !reviewMode
       && (opts.makerMemoryEnabled ?? this.deps.runtimeConfig.makerMemoryEnabled ?? false) === true
       && (this.memoryOverride ?? true);
@@ -5662,10 +5663,27 @@ export class PiAgent extends BaseAgent {
           args, cwd: opts.workingDir, env: terminalEnv,
           extensionPath: path.join(extensionsDir, 'lex-native-presentation.ts'),
           model: initialWireModel, provider: initialProvider, hostProviderId: mutableProviderId, resumeSessionId: opts.resumeSessionId,
+          isDelegatedInputCurrent: source => source.version === 1 && source.targetSessionId === opts.sessionId
+            && source.role === mutableVendorOptions.orcaRole && source.leadSessionId === mutableVendorOptions.orcaLeadSessionId
+            && source.teamId === mutableVendorOptions.orcaWorkflowId
+            && (source.role === 'lead'
+              ? source.targetSessionId === source.leadSessionId
+              : source.workerId === mutableVendorOptions.orcaWorkerId
+                && source.targetSessionId === mutableVendorOptions.orcaWorkerSessionId),
           registerProcess: pid => this.deps.registerLocalAgentProcess?.({ pid, kind: 'pi', role: 'task-host' }),
         });
         proc = nativeControl;
         await nativeControl.start();
+        if (mutableVendorOptions.orcaRole) {
+          const role = mutableVendorOptions.orcaRole;
+          if (role !== 'lead' && role !== 'worker'
+            || !registeredMcpServerNames.has(role === 'lead' ? 'cindy_orca' : 'orca_worker_bridge')
+            || typeof mutableVendorOptions.orcaLeadSessionId !== 'string'
+            || (role === 'worker' && (typeof mutableVendorOptions.orcaWorkerId !== 'string'
+              || typeof mutableVendorOptions.orcaWorkflowId !== 'string' || mutableVendorOptions.orcaWorkerSessionId !== opts.sessionId)))
+            throw new Error('Pi native collaboration requires its registered host identity');
+          await nativeControl.updateHostIdentity(() => {});
+        }
       } else {
         const { transport } = await this.createTransport({
           args, cwd: opts.workingDir, env: spawnEnv, sessionId: opts.sessionId,
@@ -7603,7 +7621,20 @@ export class PiAgent extends BaseAgent {
       },
 
       async setVendorOptions(patch: Record<string, unknown>): Promise<void> {
-        Object.assign(mutableVendorOptions, patch);
+        const identityKeys = ['orcaRole', 'orcaWorkflowId', 'orcaLeadSessionId', 'orcaWorkerId', 'orcaWorkerSessionId', 'initialWorker'];
+        if (nativeControl && identityKeys.some(key => Object.hasOwn(patch, key))) {
+          const next = { ...mutableVendorOptions, ...patch };
+          nativeControl.invalidateHostIdentity();
+          // Revoke at invocation; failed native readback cannot leave an old
+          // role authorized. The fixed MCP servers still check the live role.
+          Object.assign(mutableVendorOptions, { orcaRole: null, orcaWorkflowId: null, orcaLeadSessionId: null,
+            orcaWorkerId: null, orcaWorkerSessionId: null });
+          if (next.orcaRole === 'lead' && !registeredMcpServerNames.has('cindy_orca')
+            || next.orcaRole === 'worker' && !registeredMcpServerNames.has('orca_worker_bridge'))
+            throw new Error('Pi collaboration server is not registered for this task');
+          if (next.orcaRole == null) Object.assign(mutableVendorOptions, next);
+          else await nativeControl.updateHostIdentity(() => Object.assign(mutableVendorOptions, next));
+        } else Object.assign(mutableVendorOptions, patch);
         deps.logger.debug('pi setVendorOptions', {
           patchKeys: Object.keys(patch),
         });
@@ -7773,7 +7804,8 @@ export class PiAgent extends BaseAgent {
           }),
         );
         const switched = await runExclusivePiRpc(() => proc.request(
-          { type: 'prompt', message: `/cindy-branch-switch ${payload}` },
+          nativeControl ? { type: 'navigate_tree', entryId, summarize: options.summarize === true }
+            : { type: 'prompt', message: `/cindy-branch-switch ${payload}` },
           { timeoutMs: PI_BRANCH_NAVIGATION_TIMEOUT_MS },
         ));
         if (!switched.success) {
@@ -7783,7 +7815,8 @@ export class PiAgent extends BaseAgent {
         const after = await proc.request({ type: 'get_tree' });
         if (!after.success) throw new Error(`pi get_tree after navigation failed: ${after.error ?? 'unknown'}`);
         const tree = normalizePiSessionTree(after.data);
-        const draftText = userDraftTextFromPiEntry(selected);
+        const cancelled = nativeControl !== null && (switched.data as { cancelled?: boolean } | undefined)?.cancelled === true;
+        const draftText = cancelled ? undefined : userDraftTextFromPiEntry(selected);
         // get_session_stats.contextUsage 是 pi 自己用于 compaction/footer 的权威估算，
         // 比从最后一条 assistant usage 反推更准确（尤其是 compaction/branch summary 后）。
         const stats = await proc.request({ type: 'get_session_stats' });
@@ -7814,8 +7847,19 @@ export class PiAgent extends BaseAgent {
           messages: activePiHistoryFromTree(after.data, tree),
           contextTokens,
           contextWindow: usageSnapshotOf(ctx).contextWindow,
+          ...(cancelled ? { cancelled: true } : {}),
           ...(draftText ? { draftText } : {}),
         };
+      },
+      async readSessionTree(): Promise<NavigateSessionTreeResult> {
+        const after = await proc.request({ type: 'get_tree' });
+        if (!after.success) throw new Error('Pi current history could not be read');
+        const tree = normalizePiSessionTree(after.data);
+        const stats = await proc.request({ type: 'get_session_stats' });
+        const usage = (stats.data as { contextUsage?: { tokens?: number | null; contextWindow?: number | null } } | undefined)?.contextUsage;
+        ctx.contextTokens = typeof usage?.tokens === 'number' ? usage.tokens : piContextTokensFromTree(after.data, tree);
+        if (typeof usage?.contextWindow === 'number' && usage.contextWindow > 0) ctx.contextWindow = usage.contextWindow;
+        return { tree, messages: activePiHistoryFromTree(after.data, tree), contextTokens: ctx.contextTokens, contextWindow: usageSnapshotOf(ctx).contextWindow };
       },
 
       async getContextUsage() {
@@ -7865,20 +7909,41 @@ export class PiAgent extends BaseAgent {
       },
     };
 
-    const result = nativeControl ? nativeControl.bindHandle(handle, async (message, sendOptions) => {
+    const result = nativeControl ? nativeControl.bindHandle(handle, async (message, sendOptions, steering) => {
       rejectIfCancelled(sendOptions, 'send');
       handle.validateSendOptions?.(sendOptions);
       await writeRequestPrefs();
       rejectIfCancelled(sendOptions, 'send');
       if (closed || piProcessExited || proc.isClosed) throw new TurnDispatchRejectedError('Pi native task is unavailable');
-      activeTurnPermissionPolicy = sendOptions.turnPermissionPolicy ?? null;
+      if (!steering) activeTurnPermissionPolicy = sendOptions.turnPermissionPolicy ?? null;
+      else if (sendOptions.turnPermissionPolicy) {
+        const incoming = sendOptions.turnPermissionPolicy, prior = activeTurnPermissionPolicy;
+        activeTurnPermissionPolicy = prior && prior !== incoming
+          ? { ...incoming, forceConfirmToolCall: (name, input) =>
+              prior.forceConfirmToolCall(name, input) || incoming.forceConfirmToolCall(name, input) }
+          : incoming;
+      }
       setAutoReviewIntent(appendAutoReviewUserIntent(priorAutoReviewIntent(), message.content, sendOptions), { authority: autoReviewContext() });
       const { text, images } = await buildPiPrompt(message, { remote: false });
       assertImageInputSupported(images);
       return { text: composePiPromptText(text, piExtraDirsPrompt(mutableExtraDirs, mutableWritableDirs), runtimeCapabilityManifest), images };
     }) : handle;
     configHomeLifecycleTransferred = true;
-    return result;
+    if (!nativeControl) return result;
+    const raw = Object.assign(result, { revokeOrcaIdentity() {
+      nativeControl!.invalidateHostIdentity();
+      Object.assign(mutableVendorOptions, { orcaRole: null, orcaWorkflowId: null, orcaLeadSessionId: null,
+        orcaWorkerId: null, orcaWorkerSessionId: null, initialWorker: null });
+    }, forkNativeHistory: nativeControl.forkHistory.bind(nativeControl), reopenNativeHistory: async (nativeId: string) => {
+      const next = await this.startSession({ ...opts, model: mutableModel, providerId: mutableProviderId,
+        effort: mutableEffort, permissionMode: requestedPermissionSnapshot.mode, extraDirs: [...mutableExtraDirs],
+        writableDirs: [...mutableWritableDirs], vendorOptions: { ...mutableVendorOptions }, resumeSessionId: nativeId,
+        [PI_NATIVE_RAW_HISTORY]: true,
+      } as StartSessionOptions & { [PI_NATIVE_RAW_HISTORY]: true });
+      return next as PiNativeHistoryHandle;
+    } });
+    if ((opts as StartSessionOptions & { [PI_NATIVE_RAW_HISTORY]?: true })[PI_NATIVE_RAW_HISTORY]) return raw;
+    return managePiNativeHistory({ initial: raw });
     } finally {
       if (
         !remote

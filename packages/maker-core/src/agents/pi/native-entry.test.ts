@@ -32,7 +32,9 @@ describe('ordinary Pi production frontend selection', () => {
     { resume: true, state: 'starting', code: 0 },
     { resume: true, state: 'idle', code: 23 },
     { resume: true, state: 'idle', code: 0, signal: 'SIGTERM' },
-  ])('uses the prepared native factory and preserves exit semantics: %j', async ({ resume, state, code, signal }) => {
+    { resume: true, state: 'idle', code: 0, role: 'worker' },
+    { resume: true, state: 'idle', code: 0, role: 'lead' },
+  ])('uses the prepared native factory and preserves exit semantics: %j', async ({ resume, state, code, signal, role }) => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pi-native-selection-'));
     cleanup.push(() => fs.rm(root, { recursive: true, force: true }));
     mock.history = path.join(root, 'original.jsonl'); await fs.writeFile(mock.history, '{}\n');
@@ -53,10 +55,19 @@ describe('ordinary Pi production frontend selection', () => {
       resolvePiGatewayModelApi: () => 'openai-responses',
       capabilityAdditions: { availableModels: [{ id: mock.model, displayName: 'Fixture', contextWindow: 200000, efforts: [], defaultEffort: null }] } };
     const agent = new PiAgent(deps);
-    const handle = await agent.startSession({ sessionId: 'product-task', sessionInstanceId: 'product-instance',
+    const starting = agent.startSession({ sessionId: 'product-task', sessionInstanceId: 'product-instance',
       workingDir: root, model: mock.model, nativePresentation: true, permissionMode: 'ask',
+      ...(role ? { vendorOptions: { orcaRole: role, orcaWorkflowId: 'fixture-team', orcaLeadSessionId: 'fixture-lead' } } : {}),
       ...(resume ? { resumeSessionId: mock.history } : {}),
     });
+    if (role) {
+      // A role flag now reaches the native factory, but cannot bypass the real
+      // registered Host/MCP identity. The native integration suite supplies it.
+      await expect(starting).rejects.toThrow('requires its registered host identity');
+      expect(native).toHaveBeenCalledOnce(); expect(mock.rpc).not.toHaveBeenCalled();
+      return;
+    }
+    const handle = await starting;
     cleanup.push(() => handle.close({ reason: 'navigation' }));
     expect(handle.id).toBe(mock.history); expect(handle.presentation).toBeDefined();
     expect(native).toHaveBeenCalledOnce(); expect(mock.rpc).not.toHaveBeenCalled(); expect(launch).toHaveBeenCalledOnce();
@@ -90,13 +101,13 @@ describe('ordinary Pi production frontend selection', () => {
     else expect(errors).toMatchObject([{ data: { isTerminal: true, message: expect.stringContaining('pi process exited unexpectedly') } }]);
     expect(write).not.toHaveBeenCalled();
   });
-  it.each([{ remoteHostId: 'remote' }, { reviewMode: true as const }, { vendorOptions: { orcaRole: 'worker' } }])(
+  it.each([{ remoteHostId: 'remote' }, { reviewMode: true as const }])(
     'keeps nonordinary environments on their existing transport: %j', async mode => {
       const native = vi.fn<NonNullable<AgentDeps['createLocalPiNativeSession']>>();
       const agent = new PiAgent({ binaryPath: process.execPath, logger, runtimeConfig: {}, createLocalPiNativeSession: native,
         auth: { getState: async () => ({ authenticated: false }), triggerLogin: async () => ({ authenticated: false }), logout: async () => {}, getAuthEnv: async () => ({}) } });
       await expect(agent.startSession({ sessionId: 'task', workingDir: os.tmpdir(), model: mock.model, nativePresentation: true, ...mode })).rejects.toThrow(
-        'remoteHostId' in mode ? 'remoteSession' : 'ordinary local interactive host');
+        'remoteHostId' in mode ? 'remoteSession' : 'requires the local interactive host');
       expect(native).not.toHaveBeenCalled(); expect(mock.rpc).not.toHaveBeenCalled();
     },
   );
