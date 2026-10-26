@@ -122,6 +122,8 @@ export interface SessionTreeConfiguration {
 }
 export interface SessionTreeRehydrateArgs {
   sessionId: string;
+  /** Captured before navigation; a late projection cannot undo explicit clear. */
+  expectedClearedAt?: number | null;
   nativeIdentity?: { source: string; target: string };
   expectedConfiguration?: SessionTreeConfiguration;
   now: number;

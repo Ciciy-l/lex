@@ -43,6 +43,9 @@ function fixture(engine: 'codex' | 'pi' | 'omp' | 'claude-code' = 'codex') {
   const providerRead = deferred<void>(), axesRead = deferred<void>(), providerEntered = deferred<void>(), axesEntered = deferred<void>();
   const ended = deferred<void>();
   let generation = 1, accountDb = {}, currentSession: Session | undefined, running = false;
+  let clearGeneration = 0;
+  const clearInFlight = new Map<string, number>();
+  const providerModels = vi.fn(async () => {});
   const nativeInputs: Array<{ threadId: string; provider: string | null; effort: string | null; fastMode: boolean; model: string; cwd: string; permission: string | null }> = [];
   const logger = { trace: noop, debug: noop, info: noop, warn: vi.fn(), error: noop, fatal: noop, child: () => logger };
   let nativeResolver: Parameters<NonNullable<AgentSessionHandle['setNativeInputResolver']>>[0];
@@ -123,7 +126,9 @@ function fixture(engine: 'codex' | 'pi' | 'omp' | 'claude-code' = 'codex') {
       getCurrentDbClientSnapshot: () => accountDb, getActiveAppSession: () => ({ generation }),
       isAppSessionBoundaryPending: () => false,
       maker: { createSession: create, getSession: () => currentSession },
-      options: { waitForAccountProviderModelsReady: async () => {} },
+      options: { waitForAccountProviderModelsReady: providerModels },
+      agentHandoffPending: { readGeneration: () => clearGeneration }, inputClearInFlightSessions: clearInFlight,
+      finishCommittedNativeHistoryClear: async () => false, captureNativeHistoryClearDependencies: () => ({}),
       workingDirectoryRecovery: { resolve: (_id: string, directory: string) => directory, observe: async () => {}, isFallback: () => false },
       getSessionRuntimeControlSnapshot: () => ({ effectiveOverride: null }),
       applyPersistedReviewMode: async () => {}, applyOrcaInstructions: () => false, applyProjectContextInjection: async () => false,
@@ -145,6 +150,7 @@ function fixture(engine: 'codex' | 'pi' | 'omp' | 'claude-code' = 'codex') {
     },
   );
   return { session, handle, activate, nativeInputs, providerRead, axesRead, providerEntered, axesEntered, create, logger,
+    providerModels, clearInFlight, sealClear: () => { clearGeneration++; },
     start: (resume = false, native = engine === 'pi', options: Record<string, unknown> = {}) => bootstrap({ id: session.id, agentKind: engine, workingDir: session.workDir, model: session.model,
       ...options,
       providerId: 'selected-provider', permissionMode: 'ask', ...(native ? { requireNativePresentation: true } : {}), ...(resume ? { resumeSessionId: nativeThreadId } : {}) }),
@@ -162,7 +168,8 @@ describe('native activation at the actual Main startup boundary', () => {
     expect(await f.session.presentationInitialization).toEqual({ status: 'ready' });
     expect(f.create).toHaveBeenCalledOnce();
     expect(f.create).toHaveBeenCalledWith(expect.objectContaining({ id: f.session.id, nativePresentation: true,
-      resumeSessionId: nativeThreadId, permissionMode: 'ask', workingDir: '/selected/work', orcaRole }), undefined);
+      resumeSessionId: nativeThreadId, permissionMode: 'ask', workingDir: '/selected/work', orcaRole }),
+      engine === 'pi' || engine === 'omp' ? { assertCurrent: expect.any(Function) } : undefined);
     expect(f.nativeInputs).toHaveLength(1);
     expect(f.nativeInputs[0]).toMatchObject({ threadId: nativeThreadId, cwd: '/selected/work', permission: 'ask', provider: 'selected-provider' });
     }
@@ -179,13 +186,24 @@ describe('native activation at the actual Main startup boundary', () => {
     expect((await f.start(resume)).session).toBe(f.session);
     expect(await f.session.presentationInitialization).toEqual({ status: 'ready' });
     expect(f.create).toHaveBeenCalledWith(expect.objectContaining({ agentKind: 'pi', nativePresentation: true,
-      ...(resume ? { resumeSessionId: nativeThreadId } : {}) }), undefined);
+      ...(resume ? { resumeSessionId: nativeThreadId } : {}) }), { assertCurrent: expect.any(Function) });
     expect(f.nativeInputs).toHaveLength(1); expect(f.nativeInputs[0]!.threadId).toBe(nativeThreadId);
     expect(f.handle.send).not.toHaveBeenCalled();
   });
   it('keeps ordinary Pi GUI startup on its existing adapter until native presentation is explicitly requested', async () => {
     const f = fixture('pi'); f.providerRead.resolve(); f.axesRead.resolve(); await f.start(false, false);
-    expect(f.create).toHaveBeenCalledWith(expect.objectContaining({ agentKind: 'pi', nativePresentation: false }), undefined);
+    expect(f.create).toHaveBeenCalledWith(expect.objectContaining({ agentKind: 'pi', nativePresentation: false }), { assertCurrent: expect.any(Function) });
+  });
+  it.each(['pi', 'omp'] as const)('fences %s startup that overlaps an explicit clear before executor creation', async engine => {
+    const f = fixture(engine), entered = deferred<void>(), resume = deferred<void>();
+    f.providerModels.mockImplementationOnce(async () => { entered.resolve(); await resume.promise; });
+    const starting = f.start(true, true);
+    await entered.promise; f.sealClear(); resume.resolve();
+    await expect(starting).rejects.toThrow('History clear changed');
+    expect(f.create).not.toHaveBeenCalled(); expect(f.nativeInputs).toEqual([]);
+    f.clearInFlight.set(f.session.id, 1);
+    await expect(f.start(true, true)).rejects.toThrow('History clear changed');
+    expect(f.create).not.toHaveBeenCalled();
   });
   it.each([false, true])('holds first native input through provider and effort/fast hydration (resume=%s)', async resume => {
     const f = fixture();

@@ -1645,7 +1645,9 @@ function sessionTreeRehydrate(
        rewind_at = NULL`,
   );
   const transaction = db.transaction((): string[] => {
-    const session = db.prepare('SELECT id, sdk_session_id FROM sessions WHERE id = ? LIMIT 1').get(sessionId) as { id: string; sdk_session_id: string | null } | undefined;
+    const session = db.prepare('SELECT id, sdk_session_id, cleared_at FROM sessions WHERE id = ? LIMIT 1').get(sessionId) as { id: string; sdk_session_id: string | null; cleared_at: number | null } | undefined;
+    if (session && payload.expectedClearedAt !== undefined && session.cleared_at !== payload.expectedClearedAt)
+      throw Object.assign(new Error('Native history clear boundary changed'), { code: 'PRECONDITION_FAILED' });
     if (session && nativeSource && session.sdk_session_id !== nativeSource && session.sdk_session_id !== nativeTarget)
       throw Object.assign(new Error('Native history identity changed'), { code: 'PRECONDITION_FAILED' });
     if (!session) throw Object.assign(new Error(`Session 不存在: ${sessionId}`), { code: 'NOT_FOUND' });

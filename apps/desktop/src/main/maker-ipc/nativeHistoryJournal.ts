@@ -31,6 +31,8 @@ export interface NativeHistoryPending extends NativeHistoryIdentity {
   cancelled?: boolean;
   replacing?: boolean;
   targetNativeId?: string;
+  /** Written only after the exact executor has confirmed exit for explicit clear. */
+  clear?: { at: number; previousClearedAt: number | null };
 }
 
 /** Owner-scoped, one small record per task. This is an operation journal, not a
@@ -38,7 +40,7 @@ export interface NativeHistoryPending extends NativeHistoryIdentity {
 export function createNativeHistoryJournal(root: string, identity: NativeHistoryIdentity) {
   if (!path.isAbsolute(root) || !identity.sessionId || !identity.nativeId) throw new Error('Invalid native history owner');
   const file = path.join(root, createHash('sha256').update(identity.sessionId).digest('hex') + '.json');
-  const read = (): NativeHistoryPending | null => {
+  const readForClear = (): NativeHistoryPending | null => {
     const raw = readAtomicFileSync(file);
     if (raw === null) return null;
     if (raw.length > 2_100_000) throw new Error('Native history recovery record is too large');
@@ -51,9 +53,16 @@ export function createNativeHistoryJournal(root: string, identity: NativeHistory
       || [record.nativeDraft, record.draftText].some(value => value !== undefined && (typeof value !== 'string' || value.length > 1_000_000))
       || (record.cancelled !== undefined && typeof record.cancelled !== 'boolean')
       || (record.replacing !== undefined && typeof record.replacing !== 'boolean')
+      || (record.clear !== undefined && (!record.clear || !Number.isSafeInteger(record.clear.at) || record.clear.at <= 0
+        || (record.clear.previousClearedAt !== null && !Number.isSafeInteger(record.clear.previousClearedAt))))
       || (record.targetNativeId !== undefined && (typeof record.targetNativeId !== 'string' || !path.isAbsolute(record.targetNativeId)
         || record.targetNativeId.length > 32768 || path.dirname(record.targetNativeId) !== path.dirname(record.nativeId))))
       throw new Error('Native history recovery identity changed');
+    return record;
+  };
+  const read = (): NativeHistoryPending | null => {
+    const record = readForClear();
+    if (record?.clear) throw new Error('Native history clear is pending; finish the explicit clear first');
     return record;
   };
   const write = (record: NativeHistoryPending) => {
@@ -63,6 +72,21 @@ export function createNativeHistoryJournal(root: string, identity: NativeHistory
   };
   return {
     read,
+    readForClear,
+    markClearing(pending: NativeHistoryPending, at: number, previousClearedAt: number | null): NativeHistoryPending {
+      const current = readForClear();
+      if (!current || JSON.stringify(current) !== JSON.stringify(pending)) throw new Error('Native history clear operation changed');
+      if (!Number.isSafeInteger(at) || at <= 0) throw new Error('Invalid native history clear boundary');
+      const updated = { ...current, clear: current.clear ?? { at, previousClearedAt } };
+      atomicWriteFileSync(file, JSON.stringify(updated));
+      return updated;
+    },
+    completeClear(pending: NativeHistoryPending): void {
+      const current = readForClear();
+      if (!pending.clear || !current || JSON.stringify(current) !== JSON.stringify(pending))
+        throw new Error('Native history clear operation changed');
+      atomicWriteFileSync(file, 'null');
+    },
     begin(entryId: string, nativeDraft?: string): NativeHistoryPending {
       const existing = read();
       if (existing) {
@@ -99,6 +123,25 @@ export function createNativeHistoryJournal(root: string, identity: NativeHistory
       atomicWriteFileSync(file, 'null');
     },
   };
+}
+
+/** Explicit clear reads the old task record, never adopts its identity for a
+ * new executor. Ordinary startup continues to require the exact native ID. */
+export function readNativeHistoryForClear(root: string, sessionId: string): NativeHistoryPending | null {
+  if (!path.isAbsolute(root) || !sessionId) throw new Error('Invalid native history owner');
+  const file = path.join(root, createHash('sha256').update(sessionId).digest('hex') + '.json');
+  const raw = readAtomicFileSync(file);
+  if (raw === null) return null;
+  if (raw.length > 2_100_000) throw new Error('Native history recovery record is too large');
+  const value = JSON.parse(raw) as NativeHistoryPending | null;
+  if (value === null) return null;
+  if (value.sessionId !== sessionId || !['pi', 'omp'].includes(value.agentKind)
+    || typeof value.nativeId !== 'string' || !path.isAbsolute(value.nativeId)
+    || typeof value.workingDir !== 'string' || typeof value.model !== 'string')
+    throw new Error('Native history recovery identity changed');
+  return createNativeHistoryJournal(root, { sessionId, nativeId: value.nativeId, agentKind: value.agentKind,
+    workingDir: value.workingDir, model: value.model,
+    ...(value.configuration !== undefined ? { configuration: value.configuration } : {}) }).readForClear();
 }
 
 /** Before spawning anything: never reopen the source after an unknown fork. */

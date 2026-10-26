@@ -5,7 +5,17 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import Database from 'better-sqlite3';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { eq } from 'drizzle-orm';
+import { createSourceFile, forEachChild, isCallExpression, isFunctionDeclaration, ScriptTarget, transpileModule, type Node } from 'typescript';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { Session, type AgentSessionHandle } from '@cindy/maker-core';
+import { commitSessionContextClear } from '../../sessionContextClear.js';
+import { createNativeHistoryHandoff } from '../../../maker-ipc/nativeHistoryHandoff.js';
+import { createNativeHistoryJournal, readNativeHistoryForClear } from '../../../maker-ipc/nativeHistoryJournal.js';
+import { withNativeHistoryClear } from '../../../maker-ipc/nativeHistoryClear.js';
+import { withNativeHistoryOperation } from '../../../maker-ipc/nativeHistoryOperation.js';
+import * as atomic from '../../../utils/atomicWriteFile.js';
+import { sessions } from '../../schema.js';
 
 import { SESSION_SOURCES } from '../../../../shared/sessionSource.js';
 import { buildDbWorkerBundle } from '../../__tests__/dbWorkerTestUtils.js';
@@ -1399,6 +1409,125 @@ describe('db worker tx handlers', () => {
       );
     },
   );
+
+  it.each([false, true])('rejects a history projection from before explicit clear even when a native ID is reused (inline=%s)', async useInlineWorker => {
+    await withClient(async client => {
+      await seedSession(client, 's1', { sdkSessionId: 'source' });
+      const args = { sessionId: 's1', now: 1000, contextTokens: 20, contextWindow: 200,
+        expectedClearedAt: null, nativeIdentity: { source: 'source', target: 'source' },
+        messages: [{ id: 'late', clientId: 'late', role: 'user', content: '{}', agentKind: 'pi', createdAt: 1 }] };
+      await client.exec('UPDATE sessions SET cleared_at = 500 WHERE id = ?', ['s1']);
+      await expect(client.tx('session.treeRehydrate', args)).rejects.toThrow('clear boundary changed');
+      expect(await client.queryOne('SELECT cleared_at, sdk_session_id FROM sessions WHERE id = ?', ['s1']))
+        .toEqual({ cleared_at: 500, sdk_session_id: 'source' });
+      expect(await client.query('SELECT id FROM messages WHERE session_id = ?', ['s1'])).toEqual([]);
+    }, { useInlineWorker });
+  });
+
+  it.each([['pi', false], ['pi', true], ['omp', false], ['omp', true]] as const)(
+    'clears a failed %s history projection through Main persistence and permits a fresh native identity (inline=%s)', async (agentKind, useInlineWorker) => {
+    await withClient(async (client, config) => {
+      const root = path.dirname(config.dbPath!), journalRoot = path.join(root, 'clear-journal');
+      const source = path.join(root, 'source.jsonl'), target = path.join(root, 'target.jsonl');
+      await seedSession(client, 's1', { sdkSessionId: source });
+      let nativeId = source, navigations = 0, sends = 0, exits = 0;
+      const result = { tree: { roots: [], leafId: 'actual', activePathIds: [] }, messages: [], contextTokens: 17, contextWindow: 100 };
+      const handle: AgentSessionHandle = { get id() { return nativeId; }, agentKind, model: 'exact-model',
+        async send() { sends++; throw new Error('Unexpected replay'); }, async steer() { throw new Error('Unexpected steer'); },
+        async abort() {}, async close() { exits++; },
+        getUsageSnapshot: () => ({ tokenUsage: 234, contextTokens: 17, contextWindow: 100, costUsd: 0.12 }),
+        events: async function* () {}, setInteractionResolver() {}, isTurnRunning: () => false,
+        async navigateSessionTree(_entry, _options, checkpoint) {
+          navigations++; await checkpoint!.beforeReplacement(); await checkpoint!.target(target); nativeId = target; return result;
+        }, async readSessionTree() { return result; }, async readNativeEditorDraft() { return 'unsent'; },
+      };
+      const logger = { trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {}, child() { return this; } };
+      const session = new Session({ id: 's1', agentKind, workDir: root, handle, logger, turnStallMs: 0,
+        capabilities: { sessionTree: { supported: true } } as never });
+      await client.exec("CREATE TRIGGER reject_projection BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'projection unavailable'); END");
+      try {
+        const handoff = createNativeHistoryHandoff({ root: journalRoot, session, assertCurrent() {},
+          exclusive: operation => withNativeHistoryOperation(journalRoot, 's1', operation),
+          persist: async value => client.tx('session.treeRehydrate', { sessionId: 's1', now: 100,
+            contextTokens: value.contextTokens, contextWindow: value.contextWindow, nativeIdentity: value.nativeIdentity, expectedClearedAt: null,
+            messages: [{ id: 'late', clientId: 'late', role: 'user', content: '{}', agentKind, createdAt: 1 }] }),
+        });
+        await expect(handoff.navigate('chosen', {})).rejects.toThrow('projection unavailable');
+        expect(handoff.pending).toBe(true); expect(navigations).toBe(1);
+        // Exercise the actual IPC callback and its exact-executor capture, not
+        // a second implementation of Main's clear ordering. Only Electron/UI
+        // notifications are replaced; Session, journal and SQLite are real.
+        vi.spyOn(session, 'presentation', 'get').mockReturnValue({ suspendInput: () => () => {} } as never);
+        const main = productionClearFixture(client, journalRoot, session);
+        await main.clear();
+        expect(exits).toBe(1); expect(main.calls).toEqual(['gate', 'close', 'queue', 'invalidate', 'persist', 'seal', 'ungate']);
+        expect(await client.queryOne('SELECT sdk_session_id, cleared_at FROM sessions WHERE id = ?', ['s1']))
+          .toEqual({ sdk_session_id: null, cleared_at: 500 });
+        expect(createNativeHistoryJournal(journalRoot, { sessionId: 's1', nativeId: path.join(root, 'new.jsonl'),
+          agentKind, workingDir: root, model: 'exact-model' }).read()).toBeNull();
+        const nextSession = new Session({ id: 's1', agentKind, workDir: root, logger, turnStallMs: 0,
+          handle: { ...handle, id: path.join(root, 'new.jsonl') }, capabilities: { sessionTree: { supported: true } } as never });
+        try {
+          const next = createNativeHistoryHandoff({ root: journalRoot, session: nextSession, assertCurrent() {},
+            exclusive: operation => withNativeHistoryOperation(journalRoot, 's1', operation),
+            persist: async () => { throw new Error('Unexpected old projection'); } });
+          expect(await next.recover()).toBeNull(); expect(next.pending).toBe(false);
+        } finally { await nextSession.close(); }
+        expect(await client.query('SELECT id FROM messages WHERE session_id = ?', ['s1'])).toEqual([]);
+        expect(navigations).toBe(1); expect(sends).toBe(0);
+        expect(session.getUsageSnapshot().tokenUsage).toBe(234);
+        await expect(handoff.recover()).rejects.toThrow();
+      } finally { await session.close(); }
+    }, { useInlineWorker });
+  });
+
+  it.each([false, true])('finishes a committed clear after tombstone failure in a new Host process (inline=%s)', async useInlineWorker => {
+    await withClient(async (client, config) => {
+      const root = path.dirname(config.dbPath!), journalRoot = path.join(root, 'clear-journal');
+      const source = path.join(root, 'source.jsonl');
+      await seedSession(client, 's1', { sdkSessionId: source });
+      const journal = createNativeHistoryJournal(journalRoot, { sessionId: 's1', nativeId: source,
+        agentKind: 'pi', workingDir: root, model: 'exact-model' });
+      journal.recordResult(journal.begin('chosen', 'unsent'), { draftText: 'selected' });
+      const original = atomic.atomicWriteFileSync;
+      const write = vi.spyOn(atomic, 'atomicWriteFileSync').mockImplementation((file, value, ...rest) => {
+        if (value === 'null') throw new Error('tombstone unavailable');
+        return original(file, value, ...rest);
+      });
+      let exits = 0;
+      try {
+        await expect(withNativeHistoryClear({ root: journalRoot, sessionId: 's1', assertCurrent() {},
+          readState: async () => (await client.queryOne<{ nativeId: string | null; clearedAt: number | null }>(
+            'SELECT sdk_session_id AS nativeId, cleared_at AS clearedAt FROM sessions WHERE id = ?', ['s1']))!,
+          executor: { nativeId: source, agentKind: 'pi', workingDir: root, async close() { exits++; } },
+        }, 500, guard => commitSessionContextClear(client, 's1', guard!.at, guard!.expected))).rejects.toThrow('tombstone unavailable');
+      } finally { write.mockRestore(); }
+      expect(exits).toBe(1);
+      await client.dispose();
+      const configPath = path.join(root, 'clear-child-config.json');
+      fs.writeFileSync(configPath, JSON.stringify(config));
+      const child = await promisify(execFile)(process.execPath, ['--import', 'tsx',
+        path.resolve('src/main/localDb/__tests__/fixtures/nativeHistoryClearChild.ts'), configPath],
+      { timeout: 30000, maxBuffer: 1000000 });
+      expect(JSON.parse(child.stdout.trim().split(/\r?\n/).at(-1)!)).toEqual({ retired: true, newIdentityAllowed: true, executorStarts: 0 });
+    }, { useInlineWorker });
+  });
+
+  it.each([false, true])('preserves ordinary clear with no pending history and rejects a stale native clear CAS (inline=%s)', async useInlineWorker => {
+    await withClient(async (client, config) => {
+      for (const kind of ['codex', 'pi', 'omp', 'no-executor']) {
+        await seedSession(client, kind);
+        const session = kind === 'no-executor' ? undefined : { agentKind: kind, remoteHostId: null } as Session;
+        const main = productionClearFixture(client, path.join(path.dirname(config.dbPath!), 'clear-journal'), session);
+        await main.clear(500, kind);
+        expect(main.calls).toEqual(['gate', 'queue', 'invalidate', 'persist', 'seal', 'ungate']);
+        expect(await client.queryOne('SELECT sdk_session_id, cleared_at FROM sessions WHERE id = ?', [kind]))
+          .toEqual({ sdk_session_id: null, cleared_at: 500 });
+        await expect(commitSessionContextClear(client, kind, 400, { nativeId: 'old-executor', clearedAt: null }))
+          .rejects.toThrow('did not commit');
+      }
+    }, { useInlineWorker });
+  });
 
   it('session.treeRehydrate commits native identity with projection and refuses an unrelated writer atomically', async () => {
     await withClient(async client => {
@@ -3653,6 +3782,45 @@ describe('db worker tx handlers', () => {
     });
   });
 });
+
+/** Compile only the production clear entry points; importing register itself
+ * would initialize unrelated Electron/provider singletons in a SQLite test. */
+function productionClearFixture(client: DbClient, root: string, initial?: Session) {
+  const source = fs.readFileSync(path.resolve('src/main/maker-ipc/register.ts'), 'utf8');
+  const ast = createSourceFile('register.ts', source, ScriptTarget.Latest, true);
+  let capture = '', callback = '';
+  const visit = (node: Node) => {
+    if (isFunctionDeclaration(node) && node.name?.text === 'captureNativeHistoryClearDependencies') capture = node.getText(ast);
+    if (isCallExpression(node) && node.expression.getText(ast) === 'ipcMain.handle'
+      && node.arguments[0]?.getText(ast) === 'MAKER_INVOKE.INPUT_CLEAR_SESSION') callback = node.arguments[1]!.getText(ast);
+    forEachChild(node, visit);
+  };
+  visit(ast); expect(capture).not.toBe(''); expect(callback).not.toBe('');
+  let current = initial, generation = 1;
+  const calls: string[] = [];
+  const dependencies = {
+    getDbClient: () => client, getCurrentDbClientSnapshot: () => client,
+    getActiveAppSession: () => ({ generation, dataOwnerId: 'isolated-owner' }), isAppSessionBoundaryPending: () => false,
+    getMaker: () => ({ getSession: () => current, closeSessionIfCurrent: async (session: Session) => {
+      expect(session).toBe(current); calls.push('close'); await session.close(); current = undefined;
+    } }), ownerScopedUserDataPath: () => root, sessions, eq,
+    throwIpcError: (code: string, message: string) => { throw new Error(code + ': ' + message); },
+    requireSessionId: (id: string) => id, assertReviewExternalInputAllowed: async () => {}, isDeviceLinkInvoke: () => false,
+    beginRemoteInputClearGate: () => calls.push('gate'), endRemoteInputClearGate: () => calls.push('ungate'),
+    resolveClearSessionBoundary: ({ clearedAt }: { clearedAt: string }) => clearedAt,
+    inputCoordinator: { clearSession: () => { calls.push('queue'); return { cleared: true }; } },
+    workingDirectoryRecovery: { discard() {} }, resetAutomaticRecoveryForExplicitStop() {},
+    agentHandoffPending: { invalidate: () => calls.push('invalidate'), sealClearBoundary: () => calls.push('seal') },
+    getAgentIslandService: () => undefined, goalClearObserver: undefined,
+    clearSessionContextInDb: async (id: string, at: number, expected?: { nativeId: string | null; clearedAt: number | null }) => {
+      calls.push('persist'); return commitSessionContextClear(client, id, at, expected);
+    }, withNativeHistoryClear, readNativeHistoryForClear, log: { error() {} },
+  };
+  const code = transpileModule(capture + '\nreturn (' + callback + ');', { compilerOptions: { target: ScriptTarget.ES2022 } }).outputText;
+  const handler = new Function(...Object.keys(dependencies), code)(...Object.values(dependencies));
+  return { calls, changeOwner: () => { generation++; },
+    clear: (at = 500, id = 's1') => handler(undefined, id, new Date(at).toISOString()) as Promise<unknown> };
+}
 
 async function withClient(
   fn: (client: DbClient, config: CreateDbClientOptions) => Promise<void>,

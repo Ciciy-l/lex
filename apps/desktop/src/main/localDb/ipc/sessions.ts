@@ -27,6 +27,7 @@ import {
 import { DEFAULT_DRAFT_SESSION_TITLE, normalizeAutoTitle } from '@cindy/maker-shared/session-title';
 
 import { getDbClient } from '../client/current';
+import { commitSessionContextClear } from '../sessionContextClear.js';
 import * as currentDb from '../client/current';
 import type { DbClient } from '../client/DbClient';
 import { sessions, messages } from '../schema';
@@ -1204,7 +1205,8 @@ export async function persistSessionTitleIfStillDraft(
  * 远程会话的 renderer 在控制端，不能写被控端 DB，所以远程 invoke 必须在被控端 main
  * 补这一步。广播让被控端窗口和控制端镜像都收敛到同一个 clearedAt 边界。
  */
-export async function clearSessionContextInDb(sessionId: string, atMs?: number): Promise<void> {
+export async function clearSessionContextInDb(sessionId: string, atMs?: number,
+  expected?: { nativeId: string | null; clearedAt: number | null }): Promise<void> {
   const ownerScope = captureOwnerScope();
   const ts =
     typeof atMs === 'number' && Number.isFinite(atMs) && atMs > 0 ? Math.floor(atMs) : Date.now();
@@ -1212,26 +1214,7 @@ export async function clearSessionContextInDb(sessionId: string, atMs?: number):
   // the main-process background-event boundary. Advance it before the DB await
   // so persistence failure still keeps old late events behind the clear.
   noteSessionClearBoundary(sessionId, ts);
-  const db = getDbClient().drizzle;
-  await db
-    .update(sessions)
-    .set({
-      sdkSessionId: null,
-      codexPlanJson: null,
-      // Concurrent /clear calls may finish their DB awaits out of order. Keep
-      // both persisted boundaries monotonic so the older completion cannot
-      // make pre-clear history visible again or invalidate a newer input token.
-      clearedAt: sql<number>`MAX(COALESCE(${sessions.clearedAt}, 0), ${ts})`,
-      updatedAt: sql<number>`MAX(COALESCE(${sessions.updatedAt}, 0), ${ts})`,
-      listPreview: null,
-      listPreviewRole: null,
-    })
-    .where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, sessionId)));
-  const [updated] = await db
-    .select({ clearedAt: sessions.clearedAt, updatedAt: sessions.updatedAt })
-    .from(sessions)
-    .where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, sessionId)))
-    .limit(1);
+  const updated = await commitSessionContextClear(getDbClient(), sessionId, ts, expected);
   const effectiveClearedAt = updated?.clearedAt ?? ts;
   const effectiveUpdatedAt = updated?.updatedAt ?? effectiveClearedAt;
   // Concurrent clears can make SQLite return a newer monotonic boundary than

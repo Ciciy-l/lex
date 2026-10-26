@@ -1896,7 +1896,9 @@ function sessionTreeRehydrate(readyDb, args) {
     'INSERT INTO messages (id, client_id, session_id, role, content, tool_use_id, agent_meta, agent_kind, created_at, rewind_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL) ON CONFLICT(session_id, client_id) DO UPDATE SET role = excluded.role, content = excluded.content, tool_use_id = excluded.tool_use_id, agent_meta = excluded.agent_meta, agent_kind = excluded.agent_kind, created_at = excluded.created_at, rewind_at = NULL',
   );
   const hiddenClientIds = readyDb.transaction(() => {
-    const session = readyDb.prepare('SELECT id, sdk_session_id FROM sessions WHERE id = ? LIMIT 1').get(sessionId);
+    const session = readyDb.prepare('SELECT id, sdk_session_id, cleared_at FROM sessions WHERE id = ? LIMIT 1').get(sessionId);
+    if (session && payload.expectedClearedAt !== undefined && session.cleared_at !== payload.expectedClearedAt)
+      throw Object.assign(new Error('Native history clear boundary changed'), { code: 'PRECONDITION_FAILED' });
     if (session && nativeSource && session.sdk_session_id !== nativeSource && session.sdk_session_id !== nativeTarget)
       throw Object.assign(new Error('Native history identity changed'), { code: 'PRECONDITION_FAILED' });
     if (!session) throw Object.assign(new Error('Session 不存在: ' + sessionId), { code: 'NOT_FOUND' });

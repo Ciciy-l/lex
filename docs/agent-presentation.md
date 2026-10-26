@@ -45,6 +45,13 @@ reference, never credential values. SQLite rechecks model, provider, cwd, effort
 permission and fast mode inside the projection transaction; a concurrent settings
 change leaves the old projection intact and the handoff pending.
 Overlapping journal operations are refused with the existing cross-process lock.
+Explicit clear uses that same task/owner lock, confirms the exact old executor
+has exited, and records a durable clear intent before committing the context
+boundary. A failed tombstone can be completed after restart only when SQLite
+proves that clear committed; an uncommitted intent requires explicit clear again.
+Projection transactions compare the captured clear boundary so late results
+cannot restore pre-clear messages or native identity. Identity mismatches and
+unknown native operations remain fenced; clear never repeats fork or input.
 GUI history prefill never overwrites an existing composer draft or attachments.
 This does not roll back files in the working directory.
 
