@@ -1,6 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { Bot, ChevronRight, GitBranch, MessageSquare, Pi, Sparkles, UserRound, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import type { SessionTreeNode, SessionTreeSnapshot } from '@cindy/maker-core';
@@ -10,7 +10,8 @@ import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import { makerApiFor } from '@/lib/makerTransport';
 import { makerChatStore } from '@/lib/makerChatStore';
-import { plainTextToTiptapDoc, saveDraft } from '@/lib/composerDraftStore';
+import { draftHasContent, getDraft, plainTextToTiptapDoc, saveDraft } from '@/lib/composerDraftStore';
+import { getDataOwnerGeneration, isDataOwnerGenerationCurrent } from '@/contexts/dataOwnerGeneration';
 import { resolveSessionRoute } from '@/lib/orcaSessionIdentity';
 import { Spinner } from '@/components/ui/spinner';
 
@@ -67,6 +68,13 @@ export function SessionBranchTreeDialog({
   const [switchingId, setSwitchingId] = useState<string | null>(null);
   const [summarize, setSummarize] = useState(false);
   const [summaryFocus, setSummaryFocus] = useState('');
+  const [forkHistory, setForkHistory] = useState(false);
+  const view = useRef(0);
+  const switching = useRef(false);
+  useEffect(() => {
+    view.current++; switching.current = false; setSwitchingId(null); setForkHistory(false);
+    return () => { view.current++; };
+  }, [open, session.id]);
   const family = useMemo(() => sessionFamily(session, sessions), [session, sessions]);
   const childrenByParent = useMemo(() => {
     const map = new Map<string | null, Session[]>();
@@ -79,18 +87,22 @@ export function SessionBranchTreeDialog({
   }, [family]);
 
   const loadTree = useCallback(async () => {
-    if (session.agentKind !== 'pi') {
+    const version = view.current, owner = getDataOwnerGeneration();
+    const current = () => view.current === version && isDataOwnerGenerationCurrent(owner);
+    if (session.agentKind !== 'pi' && session.agentKind !== 'omp') {
       setTree(null);
       return;
     }
     setLoading(true);
     try {
-      setTree(await makerApiFor(session.id).getSessionTree(session.id));
+      const loaded = await makerApiFor(session.id).getSessionTree(session.id);
+      if (current()) setTree(loaded);
     } catch {
+      if (!current()) return;
       setTree(null);
       toast.warning(t('ccAgent.sidebar.sessionBranches.loadFailed'));
     } finally {
-      setLoading(false);
+      if (current()) setLoading(false);
     }
   }, [session.agentKind, session.id, t]);
 
@@ -100,30 +112,38 @@ export function SessionBranchTreeDialog({
   }, [loadTree, open]);
 
   const switchBranch = useCallback(async (node: SessionTreeNode) => {
-    if (switchingId || running || writeBlocked || node.id === tree?.leafId) return;
+    if (switching.current || switchingId || running || writeBlocked || node.id === tree?.leafId) return;
+    switching.current = true;
+    const version = view.current, owner = getDataOwnerGeneration();
+    const current = () => view.current === version && isDataOwnerGenerationCurrent(owner);
     setSwitchingId(node.id);
     try {
       const result = await makerApiFor(session.id).navigateSessionTree(session.id, node.id, {
-        summarize,
-        ...(summarize && summaryFocus.trim() ? { customInstructions: summaryFocus.trim() } : {}),
+        ...(tree?.navigationMode && (forkHistory || tree.navigationMode === 'fork') ? { fork: true } : {}),
+        summarize: !tree?.navigationMode && summarize,
+        ...(!tree?.navigationMode && summarize && summaryFocus.trim() ? { customInstructions: summaryFocus.trim() } : {}),
       });
-      if (!result || result.cancelled) return;
+      if (!current() || !result || result.cancelled) return;
       setTree(result.tree);
       makerChatStore.reloadMessages(session.id);
-      if (result.draftText) {
+      // A history prefill is optional; it must never replace unsent text,
+      // attachments or comments, including edits made while navigation awaited.
+      const restoreDraft = Boolean(result.draftText) && !draftHasContent(getDraft(session.id));
+      if (restoreDraft) {
         saveDraft(session.id, {
-          text: plainTextToTiptapDoc(result.draftText),
+          text: plainTextToTiptapDoc(result.draftText!),
           attachments: [],
           focusAtEnd: true,
         });
       }
       toast.success(
-        t(result.draftText
+        t(restoreDraft
           ? 'ccAgent.sidebar.sessionBranches.switchedWithDraft'
           : 'ccAgent.sidebar.sessionBranches.switched'),
       );
       onOpenChange(false);
     } catch (error) {
+      if (!current()) return;
       toast.warning(
         running
           ? t('ccAgent.sidebar.sessionBranches.runningBlocked')
@@ -132,9 +152,9 @@ export function SessionBranchTreeDialog({
           : t('ccAgent.sidebar.sessionBranches.switchFailed'),
       );
     } finally {
-      setSwitchingId(null);
+      if (current()) { switching.current = false; setSwitchingId(null); }
     }
-  }, [onOpenChange, running, session.id, summarize, summaryFocus, switchingId, t, tree?.leafId, writeBlocked]);
+  }, [onOpenChange, running, session.id, summarize, summaryFocus, switchingId, t, tree?.leafId, tree?.navigationMode, forkHistory, writeBlocked]);
 
   const openSession = useCallback(async (target: Session) => {
     if (target.id === session.id) return;
@@ -213,7 +233,7 @@ export function SessionBranchTreeDialog({
           {current && <span className="text-11 text-[var(--text-tertiary)]">{t('ccAgent.sidebar.sessionBranches.current')}</span>}
           {!current && <ChevronRight size={13} className="text-[var(--text-tertiary)]" />}
         </button>
-        {current && session.agentKind === 'pi' && (
+        {current && (session.agentKind === 'pi' || session.agentKind === 'omp') && (
           <div className="ml-4 border-l border-[var(--border-default)] pl-1">
             {loading ? (
               <div className="flex h-16 items-center justify-center"><Spinner size={16} /></div>
@@ -263,9 +283,15 @@ export function SessionBranchTreeDialog({
             {(childrenByParent.get(null) ?? []).map((root) => renderSession(root, 0))}
           </div>
 
-          {session.agentKind === 'pi' && (
+          {(session.agentKind === 'pi' || session.agentKind === 'omp') && (
             <div className="border-t px-4 py-3" style={{ borderColor: 'var(--border-default)', backgroundColor: 'var(--surface-subtle)' }}>
-              <label className="flex items-center gap-2 text-12 text-[var(--text-primary)]">
+              {tree?.navigationMode === 'tree-and-fork' && <label className="flex min-h-8 items-center gap-2 text-12 text-[var(--text-primary)]">
+                <input type="checkbox" checked={forkHistory} onChange={event => setForkHistory(event.target.checked)}
+                  disabled={switchingId !== null} className="accent-[var(--accent-cta-bg-pure)]" />
+                {t('ccAgent.sidebar.sessionBranches.forkHistory')}
+              </label>}
+              {tree?.navigationMode === 'fork' && <p className="text-12 text-[var(--text-secondary)]">{t('ccAgent.sidebar.sessionBranches.forkOnly')}</p>}
+              {!tree?.navigationMode && session.agentKind === 'pi' && <label className="flex items-center gap-2 text-12 text-[var(--text-primary)]">
                 <input
                   type="checkbox"
                   checked={summarize}
@@ -274,8 +300,8 @@ export function SessionBranchTreeDialog({
                   className="accent-[var(--accent-cta-bg-pure)]"
                 />
                 {t('ccAgent.sidebar.sessionBranches.summarize')}
-              </label>
-              {summarize && (
+              </label>}
+              {!tree?.navigationMode && summarize && session.agentKind === 'pi' && (
                 <input
                   value={summaryFocus}
                   onChange={(event) => setSummaryFocus(event.target.value.slice(0, 4000))}

@@ -13398,6 +13398,19 @@ describe('original native steering through the product coordinator', () => {
     return { controller, input: { session: h.getTurnSessionIdentity(), turnGeneration: 0, messageId: 'native-row',
       signal: controller.signal, dispatch, buildMessage: (item: AgentInputQueuedMessage) => ({ type: 'user' as const, content: item.text }) } };
   }
+  it.each(['pi', 'omp'] as const)('persists the %s adapter receipt rather than the GUI submission ID', async engine => {
+    const h = createHarness(); h.setAgentKind(engine); h.setRunning(true);
+    const source = { version: 1 as const, engine, sessionId: 'native-session', messageId: 'actual-row',
+      origin: { kind: 'plugin' as const, name: 'lex-native-bridge' },
+      bridge: { sessionId: 'native-session', messageId: 'actual-row', submissionId: 'gui-submission', pluginName: 'lex-native-bridge' } };
+    const n = native(h, vi.fn(async (_id, _message, options) => { await options?.onNativeUserMessage?.(source); }));
+    n.input.messageId = 'gui-submission';
+    await h.coordinator.acceptNativeSteer(sid, makeItem('gui-submission', 'original'), n.input);
+    expect(mocks.createMessage).toHaveBeenCalledWith(sid, expect.objectContaining({
+      clientId: 'gui-submission', agentMeta: expect.objectContaining({ uuid: 'actual-row', nativeSource: source, delivery: 'steer' }),
+    }), expect.anything());
+    expect(h.sendToAgent).not.toHaveBeenCalled();
+  });
   it('screens and persists one native message with its actual identity without sending a second prompt', async () => {
     const h = createHarness(); h.setRunning(true);
     h.setScreenUserMessage(async () => ({ action: 'rewrite', ghostId: 'guard', ghostName: 'guard', text: 'prepared' }));

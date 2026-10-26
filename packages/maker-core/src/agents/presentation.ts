@@ -57,6 +57,8 @@ export interface AgentPresentationAttachment {
 export interface AgentSessionPresentation {
   state(): AgentPresentationState;
   attach(peerId: string, notify: () => void): AgentPresentationAttachment;
+  /** Host-only history/configuration transaction; never exposed through an attachment. */
+  suspendInput?(): () => void;
 }
 
 /** Host-only, additive capability; a view cannot initiate activation. */
@@ -87,6 +89,7 @@ export class AgentPresentationRuntime implements AgentSessionPresentation {
   private readonly generation = randomUUID();
   private readonly attachments = new Map<string, { peerId: string; notify: () => void }>();
   private controller: { attachmentId: string; lease: string; inputSequence: number } | null = null;
+  private readonly inputHolds = new Set<symbol>();
   private readonly frames: AgentTerminalFrame[] = [];
   private bytes = 0;
   private sequence = 0;
@@ -127,6 +130,23 @@ export class AgentPresentationRuntime implements AgentSessionPresentation {
     return { generation: this.generation, nativeSessionId: this.nativeSessionId,
       status: this.status, controller: controller?.peerId ?? null, cols: this.cols, rows: this.rows,
       sequence: this.sequence, ...(this.exit ? { exit: { ...this.exit } } : {}) };
+  }
+
+  /**
+   * Revoke the old lease before notifying views. A transaction owns its hold
+   * through native readback and host persistence; releasing it never restores
+   * an old lease or writes/replays editor content. Output stays live.
+   */
+  suspendInput(): () => void {
+    if (this.status !== 'running') throw new Error('Native presentation is not running');
+    const hold = Symbol();
+    this.inputHolds.add(hold);
+    this.controller = null;
+    this.notify();
+    return () => {
+      if (!this.inputHolds.delete(hold) || this.status !== 'running') return;
+      if (!this.inputHolds.size) this.notify();
+    };
   }
 
   attach(peerId: string, notify: () => void): AgentPresentationAttachment {
@@ -170,7 +190,7 @@ export class AgentPresentationRuntime implements AgentSessionPresentation {
       },
       acquireControl: (takeOver = false) => {
         attached();
-        if (this.status !== 'running') return null;
+        if (this.status !== 'running' || this.inputHolds.size) return null;
         if (this.controller?.attachmentId === id) {
           return { generation: this.generation, lease: this.controller.lease };
         }
@@ -219,6 +239,7 @@ export class AgentPresentationRuntime implements AgentSessionPresentation {
     if (this.closePromise) return this.closePromise;
     this.status = 'closed';
     this.controller = null;
+    this.inputHolds.clear();
     this.stopData();
     this.stopExit();
     // Install the promise before notifications, which may reenter close().

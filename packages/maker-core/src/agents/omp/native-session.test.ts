@@ -1,3 +1,4 @@
+import { GUI_NATIVE_APPEND } from '../base-agent.js';
 import path from 'node:path';
 import os from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -25,8 +26,9 @@ async function fixture(resume = file, consumeEvents = true) {
   const driver = { write: vi.fn(), resize: vi.fn(), onData: () => vi.fn(), onExit: () => vi.fn(), close: vi.fn() };
   mock.command.mockResolvedValue({});
   const execute = vi.fn(async (_arguments: unknown, _context: unknown) => ({ content: [{ type: 'text' as const, text: 'native result' }] }));
+  const vendorOptions: Record<string, unknown> = {};
   const handle = await createOmpNativeSession({ sessionId: 'task', model: 'fixture-model', providerId: 'source', permissionMode: 'ask',
-    executable: 'owned', plan: {} as never, releaseResources: vi.fn(), logger,
+    executable: 'owned', plan: {} as never, releaseResources: vi.fn(), logger, vendorOptions,
     ...(resume ? { resumeSessionId: resume } : {}),
     hostTools: [{ name: 'fixture_tool', description: 'fixture host executor', parameters: { type: 'object' }, execute }],
     async launch() {
@@ -41,7 +43,7 @@ async function fixture(resume = file, consumeEvents = true) {
     value: { sessionFile: file, event: { type, ...extra } } });
   const message = (text: string) => ({ role: 'user', timestamp: 1000, content: [{ type: 'text', text }] });
   const prepare = (id: string, text = 'native input', commandId?: number, signal = new AbortController().signal) => mock.options!.onRequest({ requestId: id, kind: 'prepare-input',
-    input: { sessionFile: file, submissionId: 'submission:' + id, message: message(text),
+    input: { sessionFile: file, submissionId: 'submission:' + id, message: message(text), turnRowId: handle.getCurrentTurnId?.() ?? undefined,
       ...(commandId === undefined ? {} : { commandId }) } }, signal);
   const receipt = (id: string, text = 'native input', rowId = id) => mock.options!.onRequest({ requestId: 'receipt:' + id, kind: 'input-receipt',
     input: { sessionFile: file, submissionId: 'submission:' + id, row: { id: rowId, type: 'message', message: message(text) } } }, new AbortController().signal);
@@ -50,9 +52,82 @@ async function fixture(resume = file, consumeEvents = true) {
     if (answer && typeof answer === 'object' && 'accepted' in answer && answer.accepted === true) await receipt(id, text);
     return answer;
   };
-  return { handle, output, event, input, prepare, receipt, execute, driver };
+  return { handle, output, event, input, prepare, receipt, execute, driver, vendorOptions };
 }
 describe('OMP original interactive task adapter', () => {
+  it('fences provider admission before the graceful abort reply and does not classify pending input as unconsumed', async () => {
+    const f = await fixture();
+    const received: import('../native-input.js').AgentNativeInputRequest[] = [];
+    f.handle.setNativeInputResolver!(async input => { received.push(input); await input.accept(input.message, {}); });
+    await f.input('root'); await f.prepare('pending');
+    let ack!: () => void;
+    mock.command.mockImplementationOnce(() => new Promise(resolve => { ack = () => resolve({}); }));
+    const stopped = f.handle.requestGracefulStop!();
+    await expect(mock.options!.onRequest({ requestId: 'late-provider', kind: 'provider-admission',
+      input: { sessionFile: file, turnRowId: 'root' } }, new AbortController().signal)).rejects.toThrow('current task input');
+    expect(received[1]!.consumption!.read().status).toBe('pending');
+    ack(); await stopped;
+    expect(received[1]!.consumption!.read().status).toBe('pending');
+    expect(f.driver.close).not.toHaveBeenCalled();
+  });
+  it('waits for the actual GUI steering row, not the earlier context-preparation receipt', async () => {
+    const f = await fixture(), linked = vi.fn();
+    f.handle.setNativeInputResolver!(async input => { await input.accept(input.message, {}); });
+    await f.input('root');
+    let finish!: () => void;
+    mock.enqueue.mockReturnValue({ id: 17, result: new Promise(resolve => { finish = () => resolve({ messageId: 'steer-row' }); }) });
+    const sent = f.handle.steer({ type: 'user', content: 'additional' }, { [GUI_NATIVE_APPEND]: true, messageUuid: 'owned-steer', onNativeUserMessage: linked }); void sent.catch(() => {});
+    await vi.waitFor(() => expect(mock.enqueue).toHaveBeenCalledOnce());
+    expect(await f.prepare('independent', 'additional', 17)).toEqual({ accepted: false });
+    const message = { role: 'custom', customType: 'lex-gui-append', content: 'additional', timestamp: 1000, attribution: 'user', details: { submissionId: 'owned-steer' } };
+    expect(await mock.options!.onRequest({ requestId: 'steer-prepare', kind: 'prepare-input', input: {
+      sessionFile: file, submissionId: 'owned-steer', turnRowId: 'root', commandId: 17, message,
+    } }, new AbortController().signal)).toMatchObject({ accepted: true });
+    expect(linked).not.toHaveBeenCalled();
+    expect(await mock.options!.onRequest({ requestId: 'steer-receipt', kind: 'input-receipt', input: {
+      sessionFile: file, submissionId: 'owned-steer', row: { ...message, id: 'steer-row', type: 'custom_message' },
+    } }, new AbortController().signal)).toEqual({ accepted: true });
+    finish(); await sent;
+    expect(linked).toHaveBeenCalledOnce(); expect(f.handle.getCurrentTurnId!()).toBe('root');
+    expect(f.driver.write).not.toHaveBeenCalled();
+  });
+  it('keeps native steering pending until its separate journal gate and never replays on lost receipts', async () => {
+    const f = await fixture();
+    const received: import('../native-input.js').AgentNativeInputRequest[] = [];
+    f.handle.setNativeInputResolver!(async input => { received.push(input); await input.accept(input.message, {}); });
+    await f.input('root');
+    await f.prepare('steer', 'additional');
+    expect(received[1]).toMatchObject({ nativeTurnId: 'root', submissionId: 'submission:steer' });
+    expect(received[1]!.consumption!.read().status).toBe('pending');
+    await f.receipt('steer', 'additional', 'native-row');
+    expect(await received[1]!.consumption!.settled).toMatchObject({ status: 'consumed', itemId: 'native-row' });
+    expect(mock.enqueue).not.toHaveBeenCalled();
+  });
+  it('prepares a bounded same-turn batch and settles each independent receipt once', async () => {
+    const f = await fixture(), received: import('../native-input.js').AgentNativeInputRequest[] = [];
+    f.handle.setNativeInputResolver!(async input => { received.push(input); await input.accept(input.message, {}); });
+    await f.input('root');
+    await f.prepare('a', 'same'); await f.prepare('b', 'same');
+    expect(received.slice(1).map(input => input.consumption!.read().status)).toEqual(['pending', 'pending']);
+    await f.receipt('a', 'same', 'row-a'); await f.receipt('b', 'same', 'row-b');
+    expect(received.slice(1).map(input => input.consumption!.read())).toMatchObject([
+      { status: 'consumed', itemId: 'row-a', turnId: 'root' }, { status: 'consumed', itemId: 'row-b', turnId: 'root' },
+    ]);
+    await expect(f.receipt('a', 'same', 'row-a')).rejects.toThrow();
+    expect(mock.enqueue).not.toHaveBeenCalled();
+  });
+  it.each(['abort', 'owner', 'close'] as const)('does not settle an unconfirmed batch as unconsumed after %s', async reason => {
+    const f = await fixture(), received: import('../native-input.js').AgentNativeInputRequest[] = [];
+    f.handle.setNativeInputResolver!(async input => { received.push(input); await input.accept(input.message, {}); });
+    await f.input('root'); await f.prepare('a'); await f.prepare('b');
+    if (reason === 'abort') await f.handle.abort();
+    if (reason === 'owner') f.handle.setNativeInputResolver!(async () => {});
+    if (reason === 'close') await f.handle.close();
+    await expect(f.receipt('a')).rejects.toThrow(); await expect(f.receipt('b')).rejects.toThrow();
+    await f.handle.close();
+    expect(received.slice(1).map(input => input.consumption!.read().status)).toEqual(['unknown', 'unknown']);
+    expect(mock.enqueue).not.toHaveBeenCalled();
+  });
   it('uses the actual session file and refuses a changed resume identity', async () => {
     const f = await fixture();
     expect(f.handle.id).toBe(file); expect(f.handle.presentation!.state().nativeSessionId).toBe(file);
@@ -191,6 +266,7 @@ describe('OMP original interactive task adapter', () => {
     expect(f.handle.requiresModelSwitchRebuild!('fixture-model', { providerId: 'other-source' })).toBe(true);
     expect(f.handle.requiresModelSwitchRebuild!('fixture-model', { providerId: 'source' })).toBe(false);
     await expect(f.handle.setModel!('different-model')).rejects.toThrow('route rebuild');
+    mock.command.mockResolvedValue({ level: 'high' });
     await f.handle.setModel!('fixture-model', { providerId: 'source', effort: 'high' });
     expect(mock.command).toHaveBeenLastCalledWith('effort', { level: 'high' }, 10_000);
     expect(f.handle.getEffort!()).toBe('high');
@@ -212,11 +288,81 @@ describe('OMP original interactive task adapter', () => {
     f.handle.setNativeInputResolver!(async input => { await input.accept(input.message, {}); });
     await f.input('journal-tool-owner');
     f.handle.setInteractionResolver(async () => ({ kind: 'permission', behavior: 'allow' }));
-    const request = { requestId: '19', kind: 'host-tool', input: { sessionFile: file, toolCallId: 'native-call-33', toolName: 'fixture_tool', arguments: { value: 1 } } };
+    const request = { requestId: '19', kind: 'host-tool', input: { sessionFile: file, contextGeneration: 0, toolCallId: 'native-call-33', toolName: 'fixture_tool', arguments: { value: 1 } } };
     expect(await mock.options!.onRequest(request, new AbortController().signal)).toMatchObject({ content: [{ text: 'native result' }] });
     expect(f.execute).toHaveBeenCalledOnce();
     expect(f.execute.mock.calls[0]![0]).toEqual({ value: 1 });
     await expect(mock.options!.onRequest({ ...request, requestId: '20', input: { ...request.input, sessionFile: 'another-owner' } }, new AbortController().signal)).rejects.toThrow('current task');
+    expect(f.execute).toHaveBeenCalledOnce();
+  });
+
+  it('publishes a role only after native catalog readback and rejects callbacks from an older role', async () => {
+    const f = await fixture();
+    f.handle.setNativeInputResolver!(async input => { await input.accept(input.message, {}); });
+    await f.input('tool-owner');
+    const request = (generation: number) => mock.options!.onRequest({ requestId: 'role-' + generation, kind: 'host-tool',
+      input: { sessionFile: file, contextGeneration: generation, toolCallId: 'call', toolName: 'fixture_tool', arguments: {} } }, new AbortController().signal);
+    let resolve!: (value: unknown) => void;
+    mock.command.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    const promote = f.handle.setVendorOptions!({ orcaRole: 'lead', orcaWorkflowId: 'team' });
+    await vi.waitFor(() => expect(f.vendorOptions.orcaRole).toBeNull());
+    await expect(request(0)).rejects.toThrow('context changed');
+    expect(f.handle.presentation!.attach('test', () => {}).acquireControl()).toBeNull();
+    resolve({ generation: 1, catalog: ['fixture_tool'] }); await promote;
+    expect(f.vendorOptions).toMatchObject({ orcaRole: 'lead', orcaWorkflowId: 'team' });
+    await expect(request(0)).rejects.toThrow('context changed');
+    expect(await request(1)).toMatchObject({ content: [{ text: 'native result' }] });
+    mock.command.mockResolvedValueOnce({ generation: 2, catalog: ['fixture_tool'] });
+    await f.handle.setVendorOptions!({ orcaRole: null, orcaWorkflowId: null });
+    await expect(request(1)).rejects.toThrow('context changed');
+    expect(f.vendorOptions.orcaRole).toBeNull();
+    mock.command.mockResolvedValueOnce({ generation: 3, catalog: [] });
+    await expect(f.handle.setVendorOptions!({ orcaRole: 'lead', orcaWorkflowId: 'team' })).rejects.toThrow('catalog');
+    expect(f.vendorOptions.orcaRole).toBeNull();
+    expect(f.execute).toHaveBeenCalledOnce();
+    expect(f.driver.write).not.toHaveBeenCalled();
+  });
+  it('revokes synchronously and cancels an old handler before a queued context change can run', async () => {
+    const f = await fixture();
+    f.handle.setNativeInputResolver!(async input => { await input.accept(input.message, {}); });
+    await f.input('tool-owner');
+    mock.command.mockResolvedValueOnce({ generation: 1, catalog: ['fixture_tool'] });
+    await f.handle.setVendorOptions!({ orcaRole: 'lead', orcaWorkflowId: 'old-team' });
+    let signal!: AbortSignal, finish!: () => void;
+    f.execute.mockImplementationOnce(async (_args, ctx) => {
+      signal = (ctx as { signal: AbortSignal }).signal;
+      await new Promise<void>(resolve => { finish = resolve; });
+      return { content: [{ type: 'text', text: 'late old result' }] };
+    });
+    const old = mock.options!.onRequest({ requestId: 'old', kind: 'host-tool', input: { sessionFile: file,
+      contextGeneration: 1, toolCallId: 'call-old', toolName: 'fixture_tool', arguments: {} } }, new AbortController().signal);
+    void old.catch(() => {});
+    await vi.waitFor(() => expect(signal).toBeDefined());
+    let readback!: (value: unknown) => void;
+    mock.command.mockImplementationOnce(() => new Promise(resolve => { readback = resolve; }));
+    const changed = f.handle.setVendorOptions!({ orcaRole: null, orcaWorkflowId: null });
+    expect(f.vendorOptions.orcaRole).toBeNull();
+    expect(signal.aborted).toBe(true);
+    await expect(old).rejects.toThrow('cancelled');
+    await vi.waitFor(() => expect(readback).toBeDefined());
+    finish();
+    readback({ generation: 2, catalog: ['fixture_tool'] }); await changed;
+    expect(f.vendorOptions.orcaRole).toBeNull();
+  });
+  it('returns the result of the exact host tool that changes its own role after native readback', async () => {
+    const f = await fixture();
+    f.handle.setNativeInputResolver!(async input => { await input.accept(input.message, {}); });
+    await f.input('tool-owner');
+    mock.command.mockResolvedValueOnce({ generation: 1, catalog: ['fixture_tool'] });
+    f.execute.mockImplementationOnce(async (_args, ctx) => {
+      await f.handle.setVendorOptions!({ orcaRole: 'lead', orcaWorkflowId: 'new-team' });
+      expect((ctx as { signal: AbortSignal }).signal.aborted).toBe(false);
+      return { content: [{ type: 'text', text: 'team created once' }] };
+    });
+    const result = await mock.options!.onRequest({ requestId: 'self-promote', kind: 'host-tool', input: { sessionFile: file,
+      contextGeneration: 0, toolCallId: 'start-team-call', toolName: 'fixture_tool', arguments: {} } }, new AbortController().signal);
+    expect(result).toMatchObject({ content: [{ text: 'team created once' }] });
+    expect(f.vendorOptions.orcaRole).toBe('lead');
     expect(f.execute).toHaveBeenCalledOnce();
   });
 });

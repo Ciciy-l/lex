@@ -371,7 +371,17 @@ export function normalizeAgentInputClearBoundaryMs(value: unknown): number | nul
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
+/** Local Main clear acknowledgement. Missing on older hosts and remote projections.
+ * Only a committed native receipt transfers close/identity ownership to Main. */
+export interface AgentInputClearReceipt {
+  requestAt: string;
+  status: 'pending' | 'committed' | 'failed' | 'unknown';
+  native?: boolean;
+  boundaryMs?: number;
+}
+
 export interface AgentInputProjection {
+  clearReceipt?: AgentInputClearReceipt;
   sessionId: string;
   pendingQueue: AgentInputQueuedMessage[];
   /**

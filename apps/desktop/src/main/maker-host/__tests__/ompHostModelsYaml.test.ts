@@ -14,6 +14,7 @@ const env = vi.hoisted(() => ({
   catalogModels: ['claude-sonnet-4-6', 'gpt-5.4'] as string[],
   subagentModel: null as string | null,
   routes: {} as Record<string, string>,
+  efforts: {} as Record<string, string[] | undefined>,
 }));
 
 vi.mock('electron', () => ({
@@ -38,7 +39,7 @@ vi.mock('../active-catalog.js', () => ({
       {
         id: 'xd',
         routing: {},
-        models: { omp: env.catalogModels.map((id) => ({ id, route: { wireProtocol: env.routes[id] } })) },
+        models: { omp: env.catalogModels.map((id) => ({ id, efforts: env.efforts[id], route: { wireProtocol: env.routes[id] } })) },
       },
       { id: 'other', routing: {}, models: { omp: env.catalogModels.length ? [{ id: 'other-only' }] : [] } },
     ],
@@ -83,6 +84,7 @@ const SECRET = 'omp-tok-sess-1';
 describe('collectOmpCatalogModels', () => {
   beforeEach(() => {
     env.catalogModels = ['claude-sonnet-4-6', 'gpt-5.4'];
+    env.efforts = {};
   });
 
   it('puts the requested model first so a cold catalog cannot block startup', () => {
@@ -96,6 +98,15 @@ describe('collectOmpCatalogModels', () => {
   it('merges catalog models without duplicates', () => {
     const ids = collectOmpCatalogModels('claude-sonnet-4-6').map((model) => model.id);
     expect(ids).toEqual(['claude-sonnet-4-6', 'gpt-5.4', 'other-only']);
+  });
+
+  it('preserves the selected source reasoning declaration for native effort initialization', () => {
+    env.efforts['claude-sonnet-4-6'] = ['low', 'high'];
+    env.efforts['gpt-5.4'] = [];
+    expect(collectOmpCatalogModels('claude-sonnet-4-6', 'xd')[0]).toMatchObject({ reasoning: true });
+    expect(collectOmpCatalogModels('gpt-5.4', 'xd')[0]).toMatchObject({ reasoning: false });
+    expect(collectOmpCatalogModels('claude-sonnet-4-6', 'other')[0]).not.toHaveProperty('reasoning');
+    expect(collectOmpCatalogModels('unknown', 'xd')[0]).not.toHaveProperty('reasoning');
   });
 
   it('caps the list so a runaway catalog cannot blow up the YAML', () => {

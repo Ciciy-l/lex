@@ -1125,6 +1125,12 @@ const remoteOptimisticRetryTimers = new Map<string, ReturnType<typeof setTimeout
 /** Last remote presence state observed by this renderer, used to detect real reconnect edges. */
 const remotePresenceOnlineByDevice = new Map<string, boolean>();
 const remoteClearInFlight = new Set<string>();
+// Uncertain local deliveries survive another click. That click only reads the
+// original result; it must never dispatch a second mutation to guess success.
+const localClearRequests = new Map<string, {
+  at: string; operation: InputProjectionOperation; generation: number;
+  result?: AgentInputProjection;
+}>();
 /**
  * A remote clear is a content fence, not just a renderer-side reset.  When the
  * controlled device is offline the local UI may still accept new messages, but
@@ -2007,6 +2013,7 @@ function clearRemoteOptimisticSendsForSession(sessionId: string): void {
 export function cancelRemoteOptimisticSendsForDataOwnerBoundary(
   options: { finalizeSessions?: boolean } = {},
 ): void {
+  localClearRequests.clear();
   invalidateLiveIngressForDataOwnerBoundary();
   if (options.finalizeSessions !== false) finalizeSessionsForDataOwnerBoundary();
   // Invalidate standalone projection reads/operations before restoring drafts
@@ -3414,6 +3421,7 @@ function isBeforeOrAtRendererClearBoundary(sessionId: string, createdAt: string)
  * explicitly free a specific session.
  */
 function _purgeSession(sessionId: string): void {
+  localClearRequests.delete(sessionId);
   // session 删除/归档/驱逐：清掉该 session 的「正在识别图片中」toast，防残留。
   dismissVisionBridgeToast(sessionId);
   discardPendingTextDelta(sessionId);
@@ -9318,6 +9326,7 @@ function __teardownGlobalListeners(): void {
   remoteOptimisticPumps.clear();
   remoteOptimisticLocallyRemoved.clear();
   remoteClearInFlight.clear();
+  localClearRequests.clear();
   remoteInputProjectionRequests.clear();
   remoteInputProjectionProbeStateBySession.clear();
   // A test/HMR teardown starts a fresh renderer epoch. Session LRU/view
@@ -13804,7 +13813,7 @@ function sendMessage(
   // A remote clear is allowed to seal in the background. Register the local
   // optimistic item and let its pump wait on the clear fence; local sessions
   // retain the historical synchronous guard.
-  if (remoteClearInFlight.has(sessionId) && !remoteScopeAtStart) return Promise.resolve(false);
+  if ((remoteClearInFlight.has(sessionId) || localClearRequests.has(sessionId)) && !remoteScopeAtStart) return Promise.resolve(false);
   if (remoteScopeAtStart && !isRemoteOptimisticSendScopeActive(sessionId, remoteScopeAtStart)) {
     return Promise.resolve(false);
   }
@@ -13947,7 +13956,7 @@ async function sendMessageCore(
   materializationPending = false,
 ): Promise<boolean> {
   if (
-    (remoteClearInFlight.has(sessionId) && !remoteScopeAtStart) ||
+    ((remoteClearInFlight.has(sessionId) || localClearRequests.has(sessionId)) && !remoteScopeAtStart) ||
     (remoteScopeAtStart
       ? !isRemoteOptimisticSendScopeActive(sessionId, remoteScopeAtStart)
       : (rendererClearGenerationBySession.get(sessionId) ?? 0) !== clearGenerationAtStart)
@@ -14215,7 +14224,7 @@ function steerMessage(
     sessionId,
     opts?.onRemoteOptimisticFailure,
   );
-  if (remoteClearInFlight.has(sessionId) && !remoteScopeAtStart) return Promise.resolve(false);
+  if ((remoteClearInFlight.has(sessionId) || localClearRequests.has(sessionId)) && !remoteScopeAtStart) return Promise.resolve(false);
   if (remoteScopeAtStart && !isRemoteOptimisticSendScopeActive(sessionId, remoteScopeAtStart)) {
     return Promise.resolve(false);
   }
@@ -14359,7 +14368,7 @@ async function steerMessageCore(
   materializationPending = false,
 ): Promise<boolean> {
   if (
-    (remoteClearInFlight.has(sessionId) && !remoteScopeAtStart) ||
+    ((remoteClearInFlight.has(sessionId) || localClearRequests.has(sessionId)) && !remoteScopeAtStart) ||
     (remoteScopeAtStart
       ? !isRemoteOptimisticSendScopeActive(sessionId, remoteScopeAtStart)
       : (rendererClearGenerationBySession.get(sessionId) ?? 0) !== clearGenerationAtStart)
@@ -15064,7 +15073,89 @@ async function clearSessionAfterGuard(sessionId: string, clearedAt: string): Pro
   }
 }
 
+/** Local clear never falls back to a second mutation after rejection or lost
+ * delivery. Main decides whether it owns native retirement; the old successful
+ * response shape retains the explicit legacy close/update path. */
+async function clearLocalSessionAfterGuard(sessionId: string, clearedAt: string): Promise<void> {
+  let request = localClearRequests.get(sessionId);
+  if (!request) {
+    request = { at: clearedAt, operation: beginInputProjectionOperation(sessionId),
+      generation: rendererClearGenerationBySession.get(sessionId) ?? 0 };
+    localClearRequests.set(sessionId, request);
+    const captured = request;
+    const delivery = Promise.resolve().then(() => captured.operation.api.input.clearSession(sessionId, captured.at)).then(
+      result => { captured.result = result; },
+      error => { log.warn('Local clear delivery failed', error); },
+    ).then(() => {
+      // A delayed acknowledgement may finish the same request, never create
+      // another one. Purge/account changes invalidate this exact object.
+      if (localClearRequests.get(sessionId) === captured && !remoteClearInFlight.has(sessionId))
+        void clearSessionAfterGuard(sessionId, captured.at);
+    });
+    await awaitRemoteClearOperation(delivery);
+  }
+  const current = () => localClearRequests.get(sessionId) === request
+    && isDataOwnerGenerationCurrent(request.operation.dataOwner)
+    && isCurrentInputProjectionOrigin(sessionId, request.operation.origin)
+    && ((rendererClearGenerationBySession.get(sessionId) ?? 0) === request.generation
+      // Main's own successful projection can advance the shared clear epoch
+      // before the invoke reply. A newer clear still invalidates this request.
+      || rendererClearBoundaryBySession.get(sessionId) === Date.parse(request.at));
+  if (!current()) return;
+  let projection = request.result;
+  if (!projection || projection.clearReceipt?.native) {
+    // A delayed reply must not clear a replacement executor opened in another
+    // window since Main committed. Validate its present identity, without writes.
+    projection = undefined;
+    const read = await awaitRemoteClearOperation(
+      Promise.resolve().then(() => request.operation.api.input.getProjection(sessionId, { clearRequestAt: request.at })),
+    );
+    if (!current()) return;
+    if (read.kind === 'value' && read.value.clearReceipt?.requestAt === request.at) projection = read.value;
+  }
+  const receipt = projection?.clearReceipt;
+  const committed = receipt?.requestAt === request.at && receipt.status === 'committed';
+  const legacyAcknowledged = !!request.result && !request.result.clearReceipt;
+  if (!committed && !legacyAcknowledged) {
+    if (receipt?.requestAt === request.at && receipt.status === 'failed') {
+      localClearRequests.delete(sessionId);
+      toast.error(i18n.t('ccAgent.clear.failed'));
+    } else {
+      // Keep the request/send fence. Another click performs only the read above.
+      toast.warning(i18n.t('ccAgent.clear.unconfirmed'));
+    }
+    return;
+  }
+  const authoritativeAt = typeof receipt?.boundaryMs === 'number'
+    ? new Date(receipt.boundaryMs).toISOString() : request.at;
+  if (!receipt?.native) {
+    try {
+      await request.operation.api.closeSession(sessionId, { preserveWorkspace: true });
+      if (!current()) return;
+      await sessionService.update(sessionId, { sdkSessionId: null, clearedAt: authoritativeAt });
+      if (!current()) return;
+    } catch (error) {
+      log.warn('Legacy clear completion failed', error);
+      toast.error(i18n.t('ccAgent.clear.failed'));
+      return;
+    }
+  }
+  if (!current()) return;
+  localClearRequests.delete(sessionId);
+  dismissVisionBridgeToast(sessionId);
+  noteRendererClearBoundary(sessionId, authoritativeAt);
+  invalidateMessageHistoryWindow(sessionId);
+  bumpInteractionReconcileEpoch(sessionId);
+  supersedeInputProjectionRequests(sessionId, { supersedeOperations: true });
+  _lastViewedAt.delete(sessionId);
+  discardPendingTextDelta(sessionId);
+  resetClearedSessionView(sessionId);
+  emitPatch(sessionId, { sdkSessionId: null, clearedAt: authoritativeAt,
+    ...(!receipt?.native ? { updatedAt: authoritativeAt } : {}) });
+}
+
 async function clearSessionAfterGuardImpl(sessionId: string, clearedAt: string): Promise<void> {
+  if (!getStickySessionDeviceId(sessionId)) return clearLocalSessionAfterGuard(sessionId, clearedAt);
   // /clear 清空会话：清掉该 session 的「正在识别图片中」toast，防残留。
   dismissVisionBridgeToast(sessionId);
   // Pin the clear lifecycle to the last known device before any await. The
@@ -15155,6 +15246,13 @@ async function clearSessionAfterGuardImpl(sessionId: string, clearedAt: string):
     .closeSession(sessionId, { preserveWorkspace: true })
     .catch((err) => log.warn('maker.closeSession failed:', err));
 
+  resetClearedSessionView(sessionId);
+
+  // The controlled host owns persistence; never write the controller DB.
+  await closePromise;
+}
+
+function resetClearedSessionView(sessionId: string): void {
   // The remote guard may have been waiting while the user composed another
   // message. Those records belong to the post-clear generation: clear the old
   // transcript, but keep their local optimistic rows until the host accepts
@@ -15244,22 +15342,6 @@ async function clearSessionAfterGuardImpl(sessionId: string, clearedAt: string):
     };
   });
 
-  // Persist: null out sdkSessionId (fresh conversation) + set clearedAt
-  // device-link 远程会话由被控端 maker:input:clear-session handler 权威落库并广播
-  // sessions:patched；控制端本地 DB 没有该 row，不能在这里写。
-  if (remoteDeviceId) {
-    await closePromise;
-    return;
-  }
-  sessionService
-    .update(sessionId, { sdkSessionId: null, clearedAt })
-    .then(() => {
-      // clearSession 不改变列表成员、也不改变 _count.messages（物理 row 还在）
-      // 只 patch 这两个字段同步到 sidebar，别再全量 refresh。
-      emitPatch(sessionId, { sdkSessionId: null, clearedAt, updatedAt: clearedAt });
-    })
-    .catch((err) => log.error('clearSession failed:', err));
-  await closePromise;
 }
 
 /** F-CMD: Insert a local system card into the message stream. */

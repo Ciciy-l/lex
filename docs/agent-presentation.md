@@ -1,9 +1,86 @@
 # Lex GUI / native TUI implementation contract
 
 Status: implementation contract with dated historical evidence. The current
-`0.1.10` scope is recorded below; older acceptance and pending notes describe
+`0.1.11` scope is recorded below; older acceptance and pending notes describe
 their dated candidates, not the current support matrix. No local result implies
 all engines, real providers, packaged builds or remote transports passed.
+
+## Native integration for 0.1.11
+
+The following applies to local, TUI-backed tasks. Ordinary RPC tasks retain
+their existing paths. Capabilities are projected from the current executor;
+engine names alone do not authorize an operation.
+
+| Engine | GUI input | History and settings | Local collaboration |
+| --- | --- | --- | --- |
+| Pi | GUI body text uses official custom messages, both idle and while responding; actual custom journal identity acknowledges consumption | Native tree navigation or an explicit separate history file; replacement uses `withSession`. Model/effort keep their existing native controls | Confirmed Lead/Worker catalog and Host identity. Authorized idle Orca body text uses a distinct custom channel; busy messages queue or use explicit interrupt |
+| OMP | Initial GUI send keeps the original native path; GUI additions while responding use custom messages with user attribution | Native history selection saves a separate branch through the official RPC handoff, after retiring TUI. Existing model/effort controls remain; native permission mode is frozen | Confirmed Lead/Worker registration and role generation. Native Ask approval remains required in addition to Host authorization |
+| Claude Code | Official prompt submission starts a turn; it is not same-turn steering | Idle exact-model changes reopen the same native history with preserved editor text and usage. Unsupported live effort/permission changes remain unavailable | Fixed native MCP catalog with current Host identity; changed registration sets require idle reopen. Revocation survives a failed catalog confirmation and later settings reopen |
+| Codex | Existing native thread input/steering | Existing thread history and settings | Existing local Lead/Worker flow |
+
+Pi GUI body text and OMP responding-time additions do not execute native input
+transform, slash-command or template extensions. Use TUI for those features.
+Lex's existing Host-preprocessed commands stay available. Pi's delegated idle
+Orca channel is authorized and marked only by the Host, after persistence and
+caller/team/role checks; renderer-supplied origin metadata cannot select it.
+Pi/OMP delegated same-turn steering remains unavailable. Explicit steering
+reports its capability/fallback result rather than silently starting a turn.
+Pi installation, updates and extension loading are unchanged.
+
+Consumption is correlated with adapter-owned submission and native row/turn
+identities, never text equality, timestamp proximity or object identity across
+events. Queue acceptance is not consumption. Stop fences provider admission
+before abort; an abort acknowledgement alone does not prove an input was
+unconsumed. Recovery never automatically replays an unknown input. Both native
+and GUI drafts remain separate from queues.
+
+History handoff freezes semantic input and all terminal leases, saves the native
+editor, performs one native operation, reads the actual state, and then commits
+the Host projection/native ID transaction. A failed projection stays frozen;
+retry and process restart reconcile the recorded target rather than repeating
+fork. Unknown replacement targets block source reopening. Owner-scoped durable
+journals bind task, native history, cwd, model and configuration references.
+The configuration fingerprint includes the selected route and credential-slot
+reference, never credential values. SQLite rechecks model, provider, cwd, effort,
+permission and fast mode inside the projection transaction; a concurrent settings
+change leaves the old projection intact and the handoff pending.
+Overlapping journal operations are refused with the existing cross-process lock.
+Explicit clear uses that same task/owner lock, confirms the exact old executor
+has exited, and records a durable clear intent before committing the context
+boundary. A failed tombstone can be completed after restart only when SQLite
+proves that clear committed; an uncommitted intent requires explicit clear again.
+Projection transactions compare the captured clear boundary so late results
+cannot restore pre-clear messages or native identity. Identity mismatches and
+unknown native operations remain fenced; clear never repeats fork or input.
+The local Renderer keeps its view and drafts until Main confirms completion.
+Native clear has no independent Renderer close or generic identity write. Lost
+or delayed replies reconcile an owner/generation-bound receipt through a read-only
+projection query; another click checks that request rather than repeating clear.
+Unknown results keep the local send fence. A confirmed rejection permits an
+explicit retry; successful legacy responses retain the ordinary close path.
+Missing receipts never prove native success. Remote clear retains its existing
+host-boundary/outbox compatibility flow.
+GUI history prefill never overwrites an existing composer draft or attachments.
+This does not roll back files in the working directory.
+
+Role updates revoke old handler identity before asynchronous catalog work.
+Late generations cannot restore it, and a failed change is not a successful
+no-op on retry. Settings replacement confirms the exact native history/model/cwd
+and editor after the old executor exits; it neither sends a prompt nor inherits
+a revoked MCP token. The existing Main database and handler authorization remain
+authoritative.
+OMP's managed model definition retains the selected connection's declared
+reasoning capability so native effort readback can confirm the GUI selection.
+Missing declarations stay unknown rather than borrowing another connection.
+
+Regression sources include the pinned native fixtures in
+`apps/desktop/src/main/maker-host/__tests__/*native*.integration.test.ts`,
+maker-core input/history/lifecycle tests and `localDb/client/__tests__/tx.test.ts`.
+Native fixtures use temporary homes and loopback fake providers. The SQLite
+restart fixture uses a synthetic native executor; native fork fixtures test the
+other boundary separately. These are not real-provider, packaged, macOS/Linux,
+physical-IME or performance claims. SSH TUI and shared-task guest terminal access
+remain outside this local capability expansion.
 
 ## Terminal view refinements after 0.1.10
 
@@ -36,7 +113,7 @@ hard limit still applies. Existing Worker views and their drafts stay mounted.
 See `AgentNativeTerminal.tsx` and its behavioral regressions. This changes local
 presentation only, not engine support, task/history identity or host permissions.
 
-## Current source scope for 0.1.10
+## Released baseline scope for 0.1.10
 
 - The shared footer stays mounted across GUI/TUI switches and wraps its directory
   and usage groups in narrow panels. First preparation exposes a busy state; a
@@ -107,8 +184,9 @@ binary version, process/session identity, actual hooks/events, accepted messages
 and outcomes separately from assumptions. A successful PTY start alone is not a
 successful adapter.
 
-All four must pass before this feature is exposed or the RC is published. A
-missing interface keeps the PR in draft and existing GUI behavior intact. Do not
+The original all-engine feasibility gate preceded the released 0.1.10 local
+presentation baseline. New operations use the per-executor matrix above and
+remain unavailable until their own native contract is verified. Do not
 substitute automatic restart, a replica TUI, silent engine exclusion, or blind
 paste-and-Enter for a failed gate. Hooks and transcript evidence must actually
 support the existing GUI semantics, including streaming and permissions.

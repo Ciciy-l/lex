@@ -44,13 +44,14 @@ describe('/clear:墓碑 → cleared_at 落库 → 封 clear 边界', () => {
     expect(persistAt).toBeLessThan(epochAt);
   });
 
-  it('落库失败不跳过纪元推进:catch 掉而不是让 handler 抛出', () => {
-    // 抛出的话 sealClearBoundary 不会执行,在途那批按过期历史算出的交接
-    // 就能顺利写回。失败时宁可一并丢弃。
+  it('普通 clear 保留原失败语义，native clear 报错仍在 finally 封住纪元', () => {
     const persistAt = handler.indexOf('await clearSessionContextInDb(sid, clearBoundaryMs)');
     const epochAt = handler.indexOf('agentHandoffPending.sealClearBoundary(sid)');
     const between = handler.slice(persistAt, epochAt);
     expect(between).toContain('} catch (err) {');
-    expect(between).not.toContain('throw');
+    expect(between).toContain("if (receipt) receipt.status = 'failed'");
+    expect(between).toContain('throw error');
+    expect(between).toContain('finally {');
+    expect(handler).toContain('withNativeHistoryClear(nativeClear, at, async guard =>');
   });
 });

@@ -1658,10 +1658,10 @@ describe('readPriorUserRoundCost', () => {
 });
 
 describe('native input consumption history', () => {
-  function fixture() {
+  function fixture(engine: 'codex' | 'omp' = 'codex') {
     const sqlite = createDb();
     sqlite.prepare('INSERT INTO sessions (id, cleared_at) VALUES (?, NULL)').run('s1');
-    const state = { version: 1 as const, engine: 'codex' as const, sessionId: 'native-session',
+    const state = { version: 1 as const, engine, sessionId: 'native-session',
       turnId: 'native-turn', messageId: 'native-row', status: 'pending' as const };
     insertCostMessage(sqlite, { id: 'native-row', role: 'user', createdAt: 100,
       agentMeta: { uuid: 'native-row', sdkSessionId: 'native-session', delivery: 'steer', nativeConsumption: state } });
@@ -1671,6 +1671,19 @@ describe('native input consumption history', () => {
     const read = () => sqlite.prepare('SELECT * FROM messages WHERE client_id = ?').get('native-row') as { agent_meta: string };
     return { sqlite, state, patch, read, retire: () => { current = false; } };
   }
+  it('atomically binds an OMP provisional row once and preserves its client identity', async () => {
+    const f = fixture('omp');
+    try {
+      const state = { ...f.state, status: 'consumed' as const, itemId: 'real-omp-row' };
+      expect(await f.patch(state, null)).toBe(true);
+      expect(JSON.parse(f.read().agent_meta)).toMatchObject({ uuid: 'real-omp-row', nativeConsumption: state,
+        nativeSource: { version: 1, engine: 'omp', sessionId: 'native-session', messageId: 'real-omp-row', origin: { kind: 'native' } } });
+      expect(await f.patch(state, null)).toBe(true);
+      expect(await f.patch({ ...state, itemId: 'other-row' }, null)).toBe(false);
+      expect(await f.patch({ ...state, status: 'unconsumed' }, null)).toBe(false);
+      f.retire(); expect(await f.patch(state, null)).toBe(false);
+    } finally { f.sqlite.close(); }
+  });
   it.each(['consumed', 'unconsumed', 'unknown'] as const)('atomically records %s without erasing concurrent metadata', async status => {
     const f = fixture();
     try {

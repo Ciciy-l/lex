@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { createInstance } from 'i18next';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, expect, it, vi } from 'vitest';
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
 import { AgentPresentationSwitch, AgentPresentationUnavailable } from '../AgentPresentationSwitch';
 import { hasLocalNativePresentation } from '../../../../shared/agentPresentation';
 import en from '../../../i18n/locales/en/common.json';
@@ -11,8 +12,29 @@ import ko from '../../../i18n/locales/ko/common.json';
 import zhCN from '../../../i18n/locales/zh-CN/common.json';
 import zhTW from '../../../i18n/locales/zh-TW/common.json';
 import { useDisableTab } from '../../../hooks/useDisableTab';
+import { i18n as appI18n } from '../../../i18n';
 
 afterEach(cleanup);
+
+it.each([['en', en], ['ja', ja], ['ko', ko], ['zh-CN', zhCN], ['zh-TW', zhTW]] as const)(
+  'describes only the active native GUI text semantics in %s without changing switch behavior', (language, locale) => {
+    // Use production resources and defaultVariables, not a test-only brand injection.
+    const i18n = appI18n.cloneInstance({ lng: language, fallbackLng: false });
+    const change = vi.fn();
+    const { rerender } = render(<I18nextProvider i18n={i18n}><AgentPresentationSwitch mode="gui" onChange={change} guiInputMode="plain-text" /></I18nextProvider>);
+    const gui = screen.getByRole('button', { name: locale.ccAgent.presentation.guiDescription });
+    expect(gui.title).toBe(locale.ccAgent.presentation.guiBodyText.replace('{{appName}}', BRAND_NAME));
+    expect(gui.title).toContain(BRAND_NAME);
+    expect(gui.title).not.toContain('{{appName}}');
+    expect(gui.getAttribute('aria-description')).toBe(gui.title);
+    fireEvent.click(gui); expect(change).toHaveBeenCalledExactlyOnceWith('gui');
+    rerender(<I18nextProvider i18n={i18n}><AgentPresentationSwitch mode="tui" onChange={change} guiInputMode="append-plain-text" /></I18nextProvider>);
+    expect(gui.title).toBe(locale.ccAgent.presentation.guiAppendText);
+    rerender(<I18nextProvider i18n={i18n}><AgentPresentationSwitch mode="gui" onChange={change} /></I18nextProvider>);
+    expect(gui.getAttribute('title')).toBeNull();
+    expect(gui.getAttribute('aria-description')).toBeNull();
+  },
+);
 
 it('keeps local Tab and arrow navigation available under the desktop Tab gate without changing the selected view', async () => {
   const i18n = createInstance();

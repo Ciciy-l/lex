@@ -70,6 +70,7 @@ function productionSteer(session: FakeSession, deliver: () => Promise<void>, rej
       if (rejectBeforeDelivery) throw new Error('stale input generation');
     },
     MAIN_OWNED_SEND_CONTEXT: Symbol(), AUTO_REVIEW_SOURCE_CONTENT: Symbol(),
+    trustedDesktopSteerText: { getStore: () => undefined }, GUI_NATIVE_APPEND: Symbol(),
     AUTO_REVIEW_DELEGATED_CONTINUATION: Symbol(), AUTO_REVIEW_USER_INTENT: Symbol(),
     publishUiSessionIntervention,
     summarizeIpcUserMessage: () => ({}),

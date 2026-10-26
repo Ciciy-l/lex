@@ -1596,6 +1596,11 @@ function sessionTreeRehydrate(
 ): { messageCount: number; hiddenClientIds: string[] } {
   const payload = asRecord(args, 'session.treeRehydrate args');
   const sessionId = expectString(payload.sessionId, 'sessionId');
+  const nativeIdentity = payload.nativeIdentity === undefined ? undefined : asRecord(payload.nativeIdentity, 'nativeIdentity');
+  const nativeSource = nativeIdentity && expectString(nativeIdentity.source, 'nativeIdentity.source');
+  const nativeTarget = nativeIdentity && expectString(nativeIdentity.target, 'nativeIdentity.target');
+  const expectedConfiguration = payload.expectedConfiguration === undefined ? undefined
+    : asRecord(payload.expectedConfiguration, 'expectedConfiguration');
   const now = expectNumber(payload.now, 'now');
   const contextTokens = expectNumber(payload.contextTokens, 'contextTokens');
   if (contextTokens < 0) throw new TypeError('contextTokens must be non-negative');
@@ -1640,8 +1645,19 @@ function sessionTreeRehydrate(
        rewind_at = NULL`,
   );
   const transaction = db.transaction((): string[] => {
-    const session = db.prepare('SELECT id FROM sessions WHERE id = ? LIMIT 1').get(sessionId);
+    const session = db.prepare('SELECT id, sdk_session_id, cleared_at FROM sessions WHERE id = ? LIMIT 1').get(sessionId) as { id: string; sdk_session_id: string | null; cleared_at: number | null } | undefined;
+    if (session && payload.expectedClearedAt !== undefined && session.cleared_at !== payload.expectedClearedAt)
+      throw Object.assign(new Error('Native history clear boundary changed'), { code: 'PRECONDITION_FAILED' });
+    if (session && nativeSource && session.sdk_session_id !== nativeSource && session.sdk_session_id !== nativeTarget)
+      throw Object.assign(new Error('Native history identity changed'), { code: 'PRECONDITION_FAILED' });
     if (!session) throw Object.assign(new Error(`Session 不存在: ${sessionId}`), { code: 'NOT_FOUND' });
+    if (expectedConfiguration) {
+      const current = db.prepare(`SELECT model, working_dir AS workingDir, provider_id AS providerId, effort,
+        permission_mode AS permissionMode, fast_mode AS fastMode FROM sessions WHERE id = ?`).get(sessionId) as Record<string, unknown>;
+      current.fastMode = current.fastMode === 1;
+      if (Object.keys(current).some(key => current[key] !== expectedConfiguration[key]))
+        throw Object.assign(new Error('Native history settings changed'), { code: 'PRECONDITION_FAILED' });
+    }
     // 在隐藏前冻结附件来源。历史投影行(含已 rewind 的其它分支)按稳定 clientId / Pi
     // entry uuid 精确复用；首次导航按发送时持久化的 piEntryId 关联。旧 live 行没有关联时，
     // 只允许“可见公共前缀中
@@ -1708,6 +1724,7 @@ function sessionTreeRehydrate(
               list_preview = NULL, list_preview_role = NULL, list_message_count = NULL
         WHERE id = ?`,
     ).run(contextTokens, contextWindow, now, sessionId);
+    if (nativeTarget) db.prepare('UPDATE sessions SET sdk_session_id = ? WHERE id = ?').run(nativeTarget, sessionId);
     return hiddenClientIds;
   });
   const hiddenClientIds = transaction();

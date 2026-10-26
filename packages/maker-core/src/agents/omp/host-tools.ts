@@ -175,7 +175,10 @@ export class OmpHostToolBridge {
     const controller = new AbortController();
     this.pending.set(call.id, controller);
     void Promise.resolve()
-      .then(() => tool.execute(call.arguments_, { signal: controller.signal }))
+      .then(() => {
+        if (controller.signal.aborted || this.closed) throw new Error('OMP host tool cancelled before execution');
+        return tool.execute(call.arguments_, { signal: controller.signal });
+      })
       .then((result) => {
         const normalized = normalizeResult(result);
         this.settle(call.id, normalized ?? failure('OMP host tool returned an invalid result'));

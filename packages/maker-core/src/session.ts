@@ -450,6 +450,7 @@ export class Session {
   readonly remoteHostId: string | null;
 
   private readonly handle: AgentSessionHandle;
+  private historyHandoff?: { entryId: string; nativeId: string; targetNativeId?: string; busy: boolean; release: () => void; draftText?: string; cancelled?: boolean };
 
   /** Views share the live task's native runtime; they do not own its lifecycle. */
   get presentation(): AgentSessionPresentation | undefined {
@@ -754,8 +755,11 @@ export class Session {
     assertCurrent();
     const pendingReceipt = input.submissionId !== undefined;
     if (pendingReceipt ? (this.agentKind !== 'omp' || !input.submissionId || input.submissionId.length > 256
-      || input.nativeMessageId !== undefined || input.source !== undefined || input.nativeTurnId !== undefined
-      || input.consumption !== undefined) : (!input.nativeMessageId || (input.source &&
+      || input.nativeMessageId !== undefined || input.source !== undefined
+      || (input.nativeTurnId !== undefined && (!input.nativeTurnId || !input.consumption
+        || input.consumption.read().engine !== 'omp' || input.consumption.read().messageId !== input.submissionId
+        || input.consumption.read().sessionId !== nativeSessionId || input.consumption.read().turnId !== input.nativeTurnId))
+      || (input.consumption !== undefined && input.nativeTurnId === undefined)) : (!input.nativeMessageId || (input.source &&
         (input.source.sessionId !== nativeSessionId || input.source.messageId !== input.nativeMessageId)))) {
       throw new TurnDispatchRejectedError('Native input message identity changed');
     }
@@ -2029,14 +2033,26 @@ export class Session {
 
   // ── 运行时切换 ─────────────────────────────────────────────────────────────
 
+  private assertHistoryConfigurationReady(): void {
+    if (this.historyHandoff) throw new Error('HISTORY_RECOVERY_PENDING: Finish native history reconciliation before changing task settings');
+  }
+
+  private historyConfigurationChanges = 0;
+  private async trackHistoryConfiguration(change: () => Promise<void>): Promise<void> {
+    this.assertHistoryConfigurationReady();
+    this.historyConfigurationChanges++;
+    try { await change(); } finally { this.historyConfigurationChanges--; }
+  }
+
   async setModel(model: string, opts?: { providerId?: string | null; effort?: Effort }): Promise<void> {
+    this.assertHistoryConfigurationReady();
     if (!this.capabilities.switchModel.supported) {
       throw new NotSupportedError('switchModel', this.capabilities.switchModel);
     }
     if (!this.handle.setModel) {
       throw new NotSupportedError('switchModel', { supported: false, reason: 'not-implemented' });
     }
-    await this.handle.setModel(model, opts);
+    await this.trackHistoryConfiguration(() => this.handle.setModel!(model, opts));
   }
 
   async previewModelSwitch(
@@ -2056,19 +2072,21 @@ export class Session {
   canClearEffort(): boolean { return typeof this.handle.clearEffort === 'function'; }
 
   async clearEffort(): Promise<void> {
+    this.assertHistoryConfigurationReady();
     this.ensureActive();
     if (!this.handle.clearEffort) throw new NotSupportedError('effort', { supported: false, reason: 'not-implemented' });
-    await this.handle.clearEffort();
+    await this.trackHistoryConfiguration(() => this.handle.clearEffort!());
   }
 
   async setEffort(effort: Effort): Promise<void> {
+    this.assertHistoryConfigurationReady();
     if (!this.capabilities.effort.supported) {
       throw new NotSupportedError('effort', this.capabilities.effort);
     }
     if (!this.handle.setEffort) {
       throw new NotSupportedError('effort', { supported: false, reason: 'not-implemented' });
     }
-    await this.handle.setEffort(effort);
+    await this.trackHistoryConfiguration(() => this.handle.setEffort!(effort));
   }
 
   async setPermissionMode(mode: PermissionMode): Promise<void> {
@@ -2098,6 +2116,7 @@ export class Session {
   }
 
   async setPermissionModeTracked(mode: PermissionMode): Promise<PermissionModeState> {
+    this.assertHistoryConfigurationReady();
     this.assertPermissionModeSupported(mode);
     this.permissionModeChangesInFlight += 1;
     const operation = this.permissionModeChangeChain.catch(() => undefined).then(async () => {
@@ -2105,6 +2124,7 @@ export class Session {
       // shutdown started. Re-check at the serialized side-effect boundary.
       this.ensureActive();
       const fromMode = this.permissionModeStateValue.mode;
+      this.assertHistoryConfigurationReady();
       await this.handle.setPermissionMode!(mode);
       this.permissionModeStateValue = {
         mode,
@@ -2190,21 +2210,24 @@ export class Session {
   }
 
   async setFastMode(enabled: boolean): Promise<void> {
+    this.assertHistoryConfigurationReady();
     this.ensureActive();
     if (!this.handle.setFastMode) {
       throw new NotSupportedError('fastMode', { supported: false, reason: 'not-implemented' });
     }
-    await this.handle.setFastMode(enabled);
+    await this.trackHistoryConfiguration(() => this.handle.setFastMode!(enabled));
   }
 
   async setThinkingEnabled(enabled: boolean): Promise<void> {
+    this.assertHistoryConfigurationReady();
     this.ensureActive();
     if (!this.handle.setThinkingEnabled) return;
-    await this.handle.setThinkingEnabled(enabled);
+    await this.trackHistoryConfiguration(() => this.handle.setThinkingEnabled!(enabled));
   }
 
   /** 运行时开关计划模式（capability 见 Capabilities.planMode）。 */
   async setPlanMode(enabled: boolean): Promise<void> {
+    this.assertHistoryConfigurationReady();
     this.ensureActive();
     if (!this.capabilities.planMode?.supported) {
       throw new NotSupportedError('planMode', this.capabilities.planMode ?? { supported: false, reason: 'not-implemented' });
@@ -2286,6 +2309,90 @@ export class Session {
     return this.handle.navigateSessionTree(entryId, options);
   }
 
+  /** Keep semantic input and every terminal lease frozen until Host history is
+   * committed. A retry reads the current branch; it never repeats navigation. */
+  async navigateSessionTreeAndPersist<T>(entryId: string, options: NavigateSessionTreeOptions,
+    persist: (result: NavigateSessionTreeResult) => Promise<T>, checkpoint?: {
+      beforeNavigate(): Promise<void>;
+      afterNavigate(result: NavigateSessionTreeResult): Promise<void>;
+      beforeReplacement?(): Promise<void>;
+      target?(nativeId: string): Promise<void>;
+    }): Promise<{ result: NavigateSessionTreeResult; persisted: T }> {
+    this.ensureActive();
+    if (!this.capabilities.sessionTree?.supported || !this.handle.navigateSessionTree || !this.handle.readSessionTree)
+      throw new NotSupportedError('sessionTree', { supported: false, reason: 'not-implemented' });
+    const prior = this.historyHandoff;
+    if (prior && (prior.busy || prior.entryId !== entryId)) throw new Error('HISTORY_RECOVERY_PENDING: Retry the current history handoff first');
+    if (!prior && (this.isTurnRunning() || this.historyConfigurationChanges > 0 || this.planModeChangesInFlight > 0)) throw this.createSessionRunningError();
+    const handoff: NonNullable<Session['historyHandoff']> = prior ?? { entryId, nativeId: this.sdkSessionId, busy: false, release: this.presentation?.suspendInput?.() ?? (() => {}) };
+    handoff.busy = true; this.historyHandoff = handoff;
+    const current = () => {
+      this.ensureActive();
+      if (this.historyHandoff !== handoff || (this.sdkSessionId !== handoff.nativeId && this.sdkSessionId !== handoff.targetNativeId)) throw new Error('History handoff owner changed');
+    };
+    let nativeFailure: unknown;
+    try {
+      let result: NavigateSessionTreeResult;
+      if (prior) result = await this.handle.readSessionTree();
+      else {
+        try { await checkpoint?.beforeNavigate(); current(); }
+        catch (error) { this.historyHandoff = undefined; handoff.release(); throw error; }
+        try {
+          result = await this.handle.navigateSessionTree(entryId, options, {
+            async beforeReplacement() {
+              current();
+              if (!checkpoint?.beforeReplacement || !checkpoint.target) throw new Error('Durable native replacement checkpoint is unavailable');
+              await checkpoint.beforeReplacement(); current();
+            },
+            async target(nativeId) {
+              current();
+              if (handoff.targetNativeId && handoff.targetNativeId !== nativeId) throw new Error('Native history target changed');
+              await checkpoint!.target!(nativeId); current(); handoff.targetNativeId = nativeId;
+            },
+            holdInput(release) { const oldRelease = handoff.release; handoff.release = () => { oldRelease(); release(); }; },
+          });
+          handoff.cancelled = result.cancelled === true;
+          handoff.draftText = handoff.cancelled ? undefined : result.draftText;
+        }
+        catch (error) {
+          nativeFailure = error;
+          try { result = await this.handle.readSessionTree(); }
+          catch { throw error; } // Preserve the failed operation; recovery stays frozen.
+        }
+      }
+      current();
+      if (handoff.targetNativeId) result = { ...result, nativeIdentity: { source: handoff.nativeId, target: handoff.targetNativeId } };
+      if (handoff.cancelled) result = { ...result, cancelled: true, draftText: undefined };
+      if (handoff.draftText) result = { ...result, draftText: handoff.draftText };
+      await checkpoint?.afterNavigate(result);
+      current();
+      const persisted = await persist(result);
+      current(); this.historyHandoff = undefined; handoff.release();
+      if (nativeFailure) throw nativeFailure;
+      return { result, persisted };
+    } finally { handoff.busy = false; }
+  }
+
+  /** Host restores its durable unfinished history operation before any input
+   * owner is activated. The next call reconciles read-only; it never navigates. */
+  restoreSessionTreeHandoff(record: { entryId: string; nativeId: string; targetNativeId?: string; draftText?: string; cancelled?: boolean }): void {
+    this.ensureActive();
+    if ((record.targetNativeId ?? record.nativeId) !== this.sdkSessionId || this.historyHandoff || this.isTurnRunning())
+      throw new Error('History recovery does not belong to this idle native task');
+    this.historyHandoff = { ...record, busy: false, release: this.presentation?.suspendInput?.() ?? (() => {}) };
+  }
+
+  readNativeEditorDraft(): Promise<string | undefined> {
+    this.ensureActive();
+    return this.handle.readNativeEditorDraft?.() ?? Promise.resolve(undefined);
+  }
+
+  async restoreNativeEditorDraft(text: string): Promise<void> {
+    this.ensureActive();
+    if (!this.historyHandoff || !this.handle.restoreNativeEditorDraft) throw new Error('Native draft recovery is unavailable');
+    await this.handle.restoreNativeEditorDraft(text);
+  }
+
   getFastMode(): boolean | null {
     return this.handle.getFastMode?.() ?? null;
   }
@@ -2318,6 +2425,7 @@ export class Session {
    * 跟 setModel/setEffort 双 IPC 协调先例一致。
    */
   async setExtraDirs(dirs: string[]): Promise<void> {
+    this.assertHistoryConfigurationReady();
     this.ensureActive();
     if (!this.capabilities.extraDirs.supported) {
       throw new NotSupportedError('extraDirs', this.capabilities.extraDirs);
@@ -2325,13 +2433,14 @@ export class Session {
     if (!this.handle.setExtraDirs) {
       throw new NotSupportedError('extraDirs', { supported: false, reason: 'not-implemented' });
     }
-    await this.handle.setExtraDirs(dirs);
+    await this.trackHistoryConfiguration(() => this.handle.setExtraDirs!(dirs));
   }
 
   /**
    * 运行时覆盖附加可读写目录。不写 DB；持久化由 host 与 setExtraDirs 相同地协调。
    */
   async setWritableDirs(dirs: string[]): Promise<void> {
+    this.assertHistoryConfigurationReady();
     this.ensureActive();
     const capability = this.capabilities.writableDirs;
     if (!capability?.supported) {
@@ -2343,7 +2452,7 @@ export class Session {
     if (!this.handle.setWritableDirs) {
       throw new NotSupportedError('writableDirs', { supported: false, reason: 'not-implemented' });
     }
-    await this.handle.setWritableDirs(dirs);
+    await this.trackHistoryConfiguration(() => this.handle.setWritableDirs!(dirs));
   }
 
   // ── Rewind (Stage 2 C2) ────────────────────────────────────────────────────
@@ -2356,6 +2465,7 @@ export class Session {
    */
   isTurnRunning(): boolean {
     return (
+      this.historyHandoff !== undefined ||
       this.sendReservation !== null ||
       this.hostTurnLeases.size > 0 ||
       this.permissionModeChangesInFlight > 0 ||

@@ -34,6 +34,7 @@ function fixture() {
     assertCurrentInputGeneration: vi.fn(), readExpectedInputGeneration: () => 1,
     publishUiSessionIntervention: vi.fn(), throwIpcError: (_code: string, text: string) => { throw new Error(text); },
     MAIN_OWNED_SEND_CONTEXT: Symbol('context'), AUTO_REVIEW_SOURCE_CONTENT: Symbol('source'),
+    trustedDesktopSteerText: { getStore: () => undefined }, GUI_NATIVE_APPEND: Symbol('gui-append'),
     AUTO_REVIEW_DELEGATED_CONTINUATION: Symbol('delegated'), AUTO_REVIEW_USER_INTENT: Symbol('intent'),
   };
   const run = new Function(...Object.keys(deps), code)(...Object.values(deps));

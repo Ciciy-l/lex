@@ -272,9 +272,9 @@ describe('Claude native Maker handle', () => {
     expect(f.runtime.submit).not.toHaveBeenCalled();
   });
 
-  it('stops only the current native turn and keeps its process usable afterwards', async () => {
+  it.each(['abort', 'requestGracefulStop'] as const)('%s stops only the current native turn and keeps its process usable afterwards', async method => {
     const f = await fixture(); f.runtime.submit.mockImplementation(async input => { await f.start(f.row('actual', input.messageId)); return { nativeMessageId: 'actual' }; });
-    await f.handle.send({ type: 'user', content: 'input' }); await f.handle.abort();
+    await f.handle.send({ type: 'user', content: 'input' }); await f.handle[method]!();
     expect(f.runtime.command).toHaveBeenCalledExactlyOnceWith('abort', { turnId: 'turn' });
     expect(f.runtime.close).not.toHaveBeenCalled(); f.finish();
     expect(f.handle.isTurnRunning?.()).toBe(false);

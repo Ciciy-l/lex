@@ -6,6 +6,9 @@ import {
   AUTO_REVIEW_USER_INTENT,
   INHERITED_CAPABILITY_SELECTION,
   MAIN_OWNED_SEND_CONTEXT,
+  GUI_NATIVE_BODY,
+  ORCA_NATIVE_BODY,
+  type OrcaNativeBodySource,
   PINNED_SKILL_INVOCATION,
   type AgentKind,
   type MainOwnedSendContext,
@@ -44,6 +47,7 @@ import {
 import type { MakerSessionCreateOpts } from './sessionRequest.js';
 import { AUTO_REVIEW_DELEGATED_CONTINUATION, currentAutoReviewResourceIntent, readAutoReviewUserText, restoreAutoReviewUserIntent, type AutoReviewHistoryMessage } from './autoReviewUserIntent.js';
 import type { CindyLearnInvocationGrant } from '../learn-host/invocationGrant.js';
+import { stripOrcaNativeBody } from './orcaNativeInput.js';
 
 type CreateOpts = MakerSessionCreateOpts;
 
@@ -100,6 +104,9 @@ type IpcUserMessage =
 
 export const TRUSTED_DESKTOP_QUEUE_ORIGIN = Symbol('trusted-desktop-queue-origin');
 export const TRUSTED_DESKTOP_PI_COMMAND_SNAPSHOT = 'trustedDesktopPiCommandAuthorization';
+/** Main-owned source receipt, not command/resource authorization. Only the
+ * owner-scoped queue restore path may interpret its persisted representation. */
+const DESKTOP_GUI_BODY_SNAPSHOT = 'desktopGuiBodySource';
 interface TrustedDesktopQueueOriginReceipt {
   clientId: string;
   persistedContent: string;
@@ -110,7 +117,15 @@ interface TrustedDesktopPiCommandSnapshot extends TrustedDesktopQueueOriginRecei
 }
 type QueuedMessageWithDesktopAuthorization = AgentInputQueuedMessage & {
   [TRUSTED_DESKTOP_PI_COMMAND_SNAPSHOT]?: TrustedDesktopPiCommandSnapshot;
+  [DESKTOP_GUI_BODY_SNAPSHOT]?: { version: 1; clientId: string };
+  [GUI_NATIVE_BODY]?: true;
 };
+
+function isOrdinaryDesktopBody(item: AgentInputQueuedMessage): boolean {
+  return item.autoResume !== true && item.originalSyntheticTrigger === undefined
+    && item.fromMobileClient !== true && item.fromDeviceLinkClient !== true
+    && (!item.origin || (item.origin as { kind: string }).kind === 'desktop');
+}
 
 function isExactPiPackageCommand(text: string): boolean {
   const original = text.trim();
@@ -138,6 +153,8 @@ function withoutDesktopAuthorization(
   preserveSemanticOrigin = false,
 ): QueuedMessageWithDesktopAuthorization {
   const explicitUserItem = { ...item } as QueuedMessageWithDesktopAuthorization;
+  delete (explicitUserItem as unknown as Record<symbol, unknown>)[GUI_NATIVE_BODY];
+  delete explicitUserItem[DESKTOP_GUI_BODY_SNAPSHOT];
   if (!preserveSemanticOrigin
     || (item.origin as { kind?: unknown } | undefined)?.kind === 'desktop') delete explicitUserItem.origin;
   delete explicitUserItem[TRUSTED_DESKTOP_PI_COMMAND_SNAPSHOT];
@@ -149,7 +166,7 @@ export function stampTrustedDesktopQueuedOrigin(
   deviceLinkInvoke: boolean,
   preserveSemanticOrigin = false,
 ): AgentInputQueuedMessage {
-  const explicitUserItem = withoutDesktopAuthorization(item, preserveSemanticOrigin);
+  const explicitUserItem = withoutDesktopAuthorization(stripOrcaNativeBody(item), preserveSemanticOrigin);
   // This function is called only after trusted input IPC validation, including queue edits.
   // Preserve the user's text independently of any later plugin rewrite, without granting
   // mobile inputs the separate Pi desktop-command privilege.
@@ -160,6 +177,10 @@ export function stampTrustedDesktopQueuedOrigin(
   // Pre-compacting a revocation would leave older grants beside an omission marker.
   if (ordinary) explicitUserItem.autoReviewUserText =
     readAutoReviewUserText(item.persistedContent) ?? currentAutoReviewResourceIntent(item.persistedContent, item.text);
+  if (!deviceLinkInvoke && isOrdinaryDesktopBody(item)) {
+    explicitUserItem[GUI_NATIVE_BODY] = true;
+    explicitUserItem[DESKTOP_GUI_BODY_SNAPSHOT] = { version: 1, clientId: item.clientId };
+  }
   if (deviceLinkInvoke || !canTrustDesktopPiCommand(item)) return explicitUserItem;
   const receipt: TrustedDesktopPiCommandSnapshot = {
     version: 1,
@@ -194,14 +215,21 @@ export function stampTrustedDeviceLinkQueuedOrigin(
 
 export function restoreTrustedDesktopQueuedOrigin(item: AgentInputQueuedMessage): AgentInputQueuedMessage {
   const queued = item as QueuedMessageWithDesktopAuthorization;
+  const body = queued[DESKTOP_GUI_BODY_SNAPSHOT];
+  const restored = withoutDesktopAuthorization(item, true);
+  if (body?.version === 1 && body.clientId === item.clientId && isOrdinaryDesktopBody(item)) {
+    restored[GUI_NATIVE_BODY] = true;
+    restored[DESKTOP_GUI_BODY_SNAPSHOT] = body;
+  }
   const receipt = queued[TRUSTED_DESKTOP_PI_COMMAND_SNAPSHOT];
   if (receipt?.version !== 1
     || receipt.clientId !== item.clientId
     || receipt.persistedContent !== item.persistedContent
     || receipt.text !== item.text
-    || !canTrustDesktopPiCommand(item)) return withoutDesktopAuthorization(item, true);
+    || !canTrustDesktopPiCommand(item)) return restored;
   return {
-    ...item,
+    ...restored,
+    [TRUSTED_DESKTOP_PI_COMMAND_SNAPSHOT]: receipt,
     origin: {
       kind: 'desktop',
       [TRUSTED_DESKTOP_QUEUE_ORIGIN]: receipt,
@@ -216,6 +244,8 @@ export function revokeTrustedDesktopQueuedOrigin(item: AgentInputQueuedMessage):
 }
 
 type MakerSendOptions = {
+  readonly [ORCA_NATIVE_BODY]?: OrcaNativeBodySource;
+  readonly [GUI_NATIVE_BODY]?: true;
   readonly [AUTO_REVIEW_DELEGATED_CONTINUATION]?: true;
   readonly [AUTO_REVIEW_SOURCE_CONTENT]?: UserMessage['content'];
   /** Main-only continuation: a restored intent is not an authored user turn. */
@@ -425,6 +455,7 @@ export interface MakerSendTransactionDeps {
     expectedClearBoundaryMs?: number | null;
     origin?: 'native';
   }): (source: NativeMessageSource) => Promise<boolean>;
+  assertOrcaNativeBody?(source: OrcaNativeBodySource): Promise<void>;
   beforeDispatchDirectUserTurn?: (sessionId: string) => void | Promise<void>;
   /** Synchronous final fence immediately before Session.send enters vendor code. */
   assertBeforeVendorDispatch?: (sessionId: string, sendOpts: unknown) => void;
@@ -1398,8 +1429,17 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
           ? Math.max(0, Date.now() - 1)
           : null;
         assertNativeCurrent();
+        const assertDelegation = async () => {
+          const source = so[ORCA_NATIVE_BODY];
+          if (!source) return;
+          if (source.targetSessionId !== sessionId || source.clientId !== so.messageUuid || !deps.assertOrcaNativeBody)
+            throw new Error('Orca native input owner is unavailable');
+          await deps.assertOrcaNativeBody(source);
+          assertNativeCurrent();
+        };
+        await assertDelegation();
         const deferredNativeReceipt = native && !native.source && sess.agentKind === 'omp';
-        const nativeMessageLink = ((!native && ['claude-code', 'omp'].includes(sess.agentKind ?? '')) || deferredNativeReceipt) && persistUserMessage
+        const nativeMessageLink = ((!native && ['claude-code', 'pi', 'omp'].includes(sess.agentKind ?? '')) || deferredNativeReceipt) && persistUserMessage
           && typeof so.messageUuid === 'string' && so.messageUuid
           ? deps.captureNativeUserMessageLink?.({ session: sess, clientId: persistUserMessage.clientId,
               expectedUuid: so.messageUuid, expectedClearBoundaryMs: persistUserMessage.expectedClearBoundaryMs,
@@ -1433,6 +1473,8 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
           ...(restoredAutoReviewIntent !== undefined
             ? { [AUTO_REVIEW_USER_INTENT]: restoredAutoReviewIntent }
             : {}),
+          ...(so[GUI_NATIVE_BODY] || mainOwnedSendContext?.origin.kind === 'desktop' ? { [GUI_NATIVE_BODY]: true as const } : {}),
+          ...(so[ORCA_NATIVE_BODY] ? { [ORCA_NATIVE_BODY]: so[ORCA_NATIVE_BODY] } : {}),
           logTitle: meta?.title,
           messageUuid: so.messageUuid,
           ...(nativeMessageLink ? { onNativeUserMessage: async (source: NativeMessageSource) => {
@@ -1568,6 +1610,7 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
                 // onPersisted 里可能挂着排队 orca 消息的 accepted 副作用(置 running /
                 // autoBridgePending), 必须 await 完再放行 turn(同直发路径语义)。
                 await persistUserMessage.onPersisted?.();
+                await assertDelegation();
               }
             : undefined,
           onDispatching: () => {

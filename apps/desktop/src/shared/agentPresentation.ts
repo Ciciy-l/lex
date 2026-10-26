@@ -9,14 +9,20 @@ export function hasLocalNativePresentation(agentKind: string | undefined): boole
   const kind = agentKind === 'cc' ? dbToMakerAgentKind(agentKind) : agentKind;
   return kind === 'codex' || kind === 'claude-code' || kind === 'omp' || kind === 'pi';
 }
-/** Role changes are live-bound only by the local Codex host. */
+/** Local native adapters confirm role/catalog identity before exposing control.
+ * SSH and Review still require their own transports and policy boundaries. */
 export function canPrepareLocalNativePresentation(options: { agentKind?: string; remoteHostId?: string | null; reviewMode?: boolean; orcaRole?: string | null }): boolean {
   return hasLocalNativePresentation(options.agentKind) && !options.remoteHostId && !options.reviewMode
-    && (!options.orcaRole || options.agentKind === 'codex');
+    && (!options.orcaRole || options.orcaRole === 'lead' || options.orcaRole === 'worker');
 }
 export type AgentRuntimeCapabilities = Pick<Capabilities,
   'switchModel' | 'effort' | 'setPermissionModeMidSession' | 'planMode' | 'sameTurnSteer' | 'sessionTree' | 'fork' | 'rewind' | 'manualCompact'>;
-export interface AgentRuntimeSnapshot { agentKind: string; capabilities: AgentRuntimeCapabilities }
+export interface AgentRuntimeSnapshot {
+  agentKind: string;
+  capabilities: AgentRuntimeCapabilities;
+  /** Descriptive only: Host still decides and authorizes the input route. */
+  guiInputMode?: 'plain-text' | 'append-plain-text';
+}
 export type AgentPresentationRequest = { sessionId: string } & (
   | { action: 'status' }
   | { action: 'attach' }

@@ -56,6 +56,20 @@ const treeData = {
 };
 
 describe('pi session tree adapter', () => {
+  it('restores dedicated GUI append rows with their original custom provenance across branches', () => {
+    const entry = { type: 'custom_message', id: 'native-custom', parentId: null,
+      timestamp: '2026-10-26T00:00:00Z', customType: 'lex-gui-append', content: 'same text', details: { submissionId: 'gui-submission' } };
+    const data = { sessionFile: '/owned/session.jsonl', leafId: entry.id, tree: [{ entry, children: [] }] };
+    const original = structuredClone(data);
+    expect(normalizePiSessionTree(data).roots[0]).toMatchObject({ role: 'user', preview: 'same text' });
+    expect(activePiHistoryFromTree(data)).toEqual([expect.objectContaining({ role: 'user', content: { text: 'same text' },
+      agentMeta: { uuid: 'native-custom', nativeEntryType: 'custom_message', nativeSource: { version: 1, engine: 'pi',
+        sessionId: '/owned/session.jsonl', messageId: 'native-custom', origin: { kind: 'plugin', name: 'lex-pi-native-bridge' },
+        bridge: { sessionId: '/owned/session.jsonl', messageId: 'native-custom', submissionId: 'gui-submission', pluginName: 'lex-pi-native-bridge' } } } })]);
+    expect(userDraftTextFromPiEntry(entry)).toBe('same text');
+    expect(data).toEqual(original);
+    expect(activePiHistoryFromTree({ ...data, leafId: null })).toEqual([]);
+  });
   it('restores gateway calls using the same tool contract as live events', () => {
     const data = structuredClone(treeData);
     const block = data.tree[0].children[0].entry.message.content[2];

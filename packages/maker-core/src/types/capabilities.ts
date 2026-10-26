@@ -165,6 +165,8 @@ export interface SessionTreeNode {
 
 /** 当前 SDK 会话的完整树；activePathIds 从根到当前活动 leaf。 */
 export interface SessionTreeSnapshot {
+  /** Absent on older/RPC hosts; new actions require this explicit readback. */
+  navigationMode?: 'tree-and-fork' | 'fork';
   roots: SessionTreeNode[];
   leafId: string | null;
   activePathIds: string[];
@@ -181,12 +183,16 @@ export interface SessionTreeHistoryMessage {
 }
 
 export interface NavigateSessionTreeOptions {
+  /** Explicitly create a separate native history file, retaining this GUI task. */
+  fork?: boolean;
   summarize?: boolean;
   customInstructions?: string;
   label?: string;
 }
 
 export interface NavigateSessionTreeResult {
+  /** A native replacement is committed with the projected history by Host. */
+  nativeIdentity?: { source: string; target: string };
   tree: SessionTreeSnapshot;
   messages: SessionTreeHistoryMessage[];
   /** 当前活动分支最后一次模型调用占用的上下文(input + cache read/write)。 */

@@ -1,0 +1,71 @@
+{
+  "version": "0.1.11",
+  "date": "2026-10-26",
+  "contentByLocale": {
+    "zh-CN": {
+      "intro": "Lex 0.1.11 完善本机 GUI/TUI 输入、历史分支与协同体验。",
+      "topics": [
+        {"id": "input", "title": "更可靠的追加输入", "text": "Pi、OMP 响应期间可从 GUI 追加正文，更准确地跟踪排队、消费和停止状态。Pi 原生任务的 GUI 正文按文本发送；原生命令、模板与输入扩展请在 TUI 中使用，Lex 已有命令保持可用。"},
+        {"id": "history", "title": "衔接历史分支", "text": "Pi 可切换或另存历史分支；OMP 可另存所选历史分支后继续当前任务。切换保留未发送内容，中断恢复不会自动重发结果未知的输入。"},
+        {"id": "collaboration", "title": "更多本机协同终端", "text": "Pi、OMP、Claude Code 的 Lead/Worker 可使用原生终端，完善派单、排队、中断和回报衔接。原有权限审批保持有效。"},
+        {"id": "settings", "title": "保留任务的模型切换", "text": "Claude Code 空闲任务切换模型时保留原历史、未发送内容和用量，并修复退出协同后旧身份可能在设置重开时残留的问题。"},
+        {"id": "terminal", "title": "更顺手的终端操作", "text": "改善大段粘贴、搜索键盘操作和焦点恢复；隐藏 Worker 面板后，不再迟到弹出创建窗口。"},
+        {"id": "mac", "title": "Lex 安装背景", "text": "Mac DMG 拖拽安装窗口改用 Lex 品牌背景。此更新不改变签名或公证状态。"},
+        {"id": "availability", "title": "能力差异", "text": "设置与追加能力以当前任务可用操作为准。Claude Code 不提供同轮追加；Pi/OMP 协同消息在忙时采用排队或显式中断。SSH 任务暂不提供 TUI 切换。"},
+        {"id": "upgrade", "title": "升级须知", "text": "Android 请使用完整 APK 覆盖安装，请勿先卸载。桌面安装包的实际签名状态以发行页为准；暂不提供 iOS 安装包。"}
+      ]
+    },
+    "zh-TW": {
+      "intro": "Lex 0.1.11 完善本機 GUI/TUI 輸入、歷史分支與協同體驗。",
+      "topics": [
+        {"id": "input", "title": "更可靠的追加輸入", "text": "Pi、OMP 回應期間可從 GUI 追加正文，更準確地追蹤排隊、消費與停止狀態。Pi 原生任務的 GUI 正文按文字傳送；原生命令、範本與輸入擴充功能請在 TUI 中使用，Lex 既有命令仍可使用。"},
+        {"id": "history", "title": "銜接歷史分支", "text": "Pi 可切換或另存歷史分支；OMP 可另存所選歷史分支後繼續目前任務。切換保留未傳送內容，中斷恢復不會自動重送結果未知的輸入。"},
+        {"id": "collaboration", "title": "更多本機協同終端機", "text": "Pi、OMP、Claude Code 的 Lead/Worker 可使用原生終端機，完善派單、排隊、中斷與回報銜接。既有權限核准仍然有效。"},
+        {"id": "settings", "title": "保留任務的模型切換", "text": "Claude Code 閒置任務切換模型時保留原歷史、未傳送內容與用量，並修正退出協同後舊身分可能在設定重開時殘留的問題。"},
+        {"id": "terminal", "title": "更順手的終端機操作", "text": "改善大段貼上、搜尋鍵盤操作與焦點恢復；隱藏 Worker 面板後，不再延遲彈出建立視窗。"},
+        {"id": "mac", "title": "Lex 安裝背景", "text": "Mac DMG 拖曳安裝視窗改用 Lex 品牌背景。此更新不改變簽章或公證狀態。"},
+        {"id": "availability", "title": "能力差異", "text": "設定與追加能力以目前任務可用操作為準。Claude Code 不提供同輪追加；Pi/OMP 協同訊息在忙碌時採用排隊或明確中斷。SSH 任務暫不提供 TUI 切換。"},
+        {"id": "upgrade", "title": "升級須知", "text": "Android 請使用完整 APK 覆蓋安裝，請勿先解除安裝。桌面安裝套件的實際簽章狀態以發行頁為準；暫不提供 iOS 安裝套件。"}
+      ]
+    },
+    "en": {
+      "intro": "Lex 0.1.11 improves local GUI/TUI input, history branches, and collaboration.",
+      "topics": [
+        {"id": "input", "title": "More reliable additional input", "text": "Add text from GUI while Pi or OMP is responding, with clearer queue, consumption, and stop tracking. GUI body text in native Pi tasks is sent as text. Use TUI for native commands, templates, and input extensions; existing Lex commands remain available."},
+        {"id": "history", "title": "Continue from history branches", "text": "Pi can switch history or save a separate branch. OMP can save the selected history as a separate branch and continue the same task. Unsent input is preserved, and recovery does not automatically resend input with an unknown outcome."},
+        {"id": "collaboration", "title": "More local collaboration terminals", "text": "Pi, OMP, and Claude Code Lead/Worker tasks can use native terminals, with improved dispatch, queue, interrupt, and report handling. Existing permission approvals remain in effect."},
+        {"id": "settings", "title": "Keep your task when changing models", "text": "Changing models in an idle Claude Code task preserves history, unsent input, and usage. Fixed an old collaboration identity potentially returning when settings reopened a task after leaving collaboration."},
+        {"id": "terminal", "title": "Smoother terminal controls", "text": "Improved large pastes, search keyboard navigation, and focus recovery. Hiding a Worker panel no longer lets a delayed creation dialog appear later."},
+        {"id": "mac", "title": "Lex installation background", "text": "The Mac DMG drag-to-install window now uses Lex branding. This update does not change signing or notarization status."},
+        {"id": "availability", "title": "Capability differences", "text": "Settings and additional input depend on the available actions in each task. Claude Code does not offer same-turn steering. Busy Pi/OMP collaboration messages use queuing or explicit interrupts. SSH tasks do not currently offer TUI switching."},
+        {"id": "upgrade", "title": "Upgrading", "text": "On Android, install the full APK over the existing app without uninstalling first. See the release page for the actual desktop signing status. An iOS installer is not currently provided."}
+      ]
+    },
+    "ja": {
+      "intro": "Lex 0.1.11 では、ローカル GUI/TUI の入力、履歴の分岐、協同作業を改善しました。",
+      "topics": [
+        {"id": "input", "title": "追加入力の信頼性を向上", "text": "Pi・OMP の応答中に GUI から本文を追加でき、待機・消費・停止状態をより正確に追跡します。ネイティブ Pi タスクの GUI 本文はテキストとして送信します。ネイティブコマンド、テンプレート、入力拡張機能は TUI で使用してください。既存の Lex コマンドは引き続き利用できます。"},
+        {"id": "history", "title": "履歴の分岐から続行", "text": "Pi では履歴の切り替えや別の分岐への保存ができます。OMP では選択した履歴を別の分岐として保存し、同じタスクを続行できます。未送信入力を保持し、結果が不明な入力を復旧時に自動再送しません。"},
+        {"id": "collaboration", "title": "ローカル協同ターミナルを拡充", "text": "Pi・OMP・Claude Code の Lead/Worker でネイティブターミナルを利用でき、割り当て、待機列、割り込み、報告の連携を改善しました。従来の権限承認は引き続き有効です。"},
+        {"id": "settings", "title": "タスクを保持してモデルを変更", "text": "待機中の Claude Code タスクでモデルを変更しても、履歴、未送信入力、使用量を保持します。協同作業の終了後、設定による再起動で古い役割が残る可能性があった問題を修正しました。"},
+        {"id": "terminal", "title": "より快適なターミナル操作", "text": "長文の貼り付け、検索のキーボード操作、フォーカス復帰を改善しました。Worker パネルを非表示にした後、作成ダイアログが遅れて表示される問題も修正しました。"},
+        {"id": "mac", "title": "Lex のインストール背景", "text": "Mac DMG のドラッグ式インストール画面を Lex の背景に変更しました。署名や公証の状態は変更していません。"},
+        {"id": "availability", "title": "機能の違い", "text": "設定や追加入力は各タスクで利用できる操作に従います。Claude Code は同じターンへの追加に対応していません。Pi/OMP の協同メッセージは処理中の場合、待機列または明示的な割り込みを使用します。SSH タスクの TUI 切り替えには現在対応していません。"},
+        {"id": "upgrade", "title": "アップグレードについて", "text": "Android はアンインストールせず、完全版 APK を上書きインストールしてください。デスクトップ版の実際の署名状況はリリースページをご確認ください。iOS インストーラーは現在提供していません。"}
+      ]
+    },
+    "ko": {
+      "intro": "Lex 0.1.11은 로컬 GUI/TUI 입력, 기록 분기, 협업 환경을 개선합니다.",
+      "topics": [
+        {"id": "input", "title": "더 안정적인 추가 입력", "text": "Pi와 OMP가 응답하는 동안 GUI에서 본문을 추가하고 대기, 소비, 중지 상태를 더 정확하게 추적합니다. 네이티브 Pi 작업의 GUI 본문은 텍스트로 전송됩니다. 네이티브 명령, 템플릿, 입력 확장 기능은 TUI에서 사용하세요. 기존 Lex 명령은 계속 사용할 수 있습니다."},
+        {"id": "history", "title": "기록 분기에서 이어가기", "text": "Pi는 기록을 전환하거나 별도 분기로 저장할 수 있습니다. OMP는 선택한 기록을 별도 분기로 저장하고 같은 작업을 이어갈 수 있습니다. 미전송 입력을 보존하며, 복구 시 결과를 알 수 없는 입력을 자동으로 다시 보내지 않습니다."},
+        {"id": "collaboration", "title": "더 많은 로컬 협업 터미널", "text": "Pi, OMP, Claude Code의 Lead/Worker에서 네이티브 터미널을 사용할 수 있으며, 작업 전달, 대기열, 중단, 보고 연결을 개선했습니다. 기존 권한 승인은 계속 적용됩니다."},
+        {"id": "settings", "title": "작업을 유지하며 모델 변경", "text": "유휴 상태인 Claude Code 작업에서 모델을 변경해도 기록, 미전송 입력, 사용량을 보존합니다. 협업 종료 후 설정 변경으로 작업을 다시 열 때 이전 역할이 남을 수 있던 문제를 수정했습니다."},
+        {"id": "terminal", "title": "더 편리한 터미널 조작", "text": "긴 내용 붙여넣기, 검색 키보드 조작, 포커스 복원을 개선했습니다. Worker 패널을 숨긴 뒤 생성 창이 늦게 나타나는 문제도 수정했습니다."},
+        {"id": "mac", "title": "Lex 설치 배경", "text": "Mac DMG의 드래그 설치 창에 Lex 배경을 적용했습니다. 서명 또는 공증 상태는 변경하지 않습니다."},
+        {"id": "availability", "title": "기능 차이", "text": "설정과 추가 입력은 각 작업에서 사용할 수 있는 동작을 따릅니다. Claude Code는 같은 턴에 추가 입력을 제공하지 않습니다. Pi/OMP 협업 메시지는 처리 중일 때 대기열 또는 명시적 중단을 사용합니다. SSH 작업은 현재 TUI 전환을 제공하지 않습니다."},
+        {"id": "upgrade", "title": "업그레이드 안내", "text": "Android는 기존 앱을 삭제하지 말고 전체 APK를 덮어 설치하세요. 데스크톱 설치 파일의 실제 서명 상태는 릴리스 페이지를 확인하세요. iOS 설치 파일은 현재 제공하지 않습니다."}
+      ]
+    }
+  }
+}

@@ -9621,7 +9621,13 @@
     "sessionLoading": "載入任務中"
   },
   "ccAgent": {
+    "clear": {
+      "failed": "清空未完成，已保留目前畫面和草稿。請重試清空",
+      "unconfirmed": "尚未確認清空結果，已保留目前畫面和草稿。再次選擇清空可檢查結果"
+    },
     "presentation": {
+      "guiBodyText": "Pi 原生任務中，GUI 訊息按正文傳送；原生命令和輸入擴充請在 TUI 中使用。{{appName}} 既有命令仍可使用。",
+      "guiAppendText": "OMP 回應期間，GUI 追加按正文傳送；原生命令和輸入擴充請在 TUI 中使用。",
       "inputRejected": "本次輸入未傳送：內容過長或仍有輸入等待傳送。請稍後分段貼上（每次最多 1 MiB）。",
       "guiSteerInTui": "執行中補充輸入請在 TUI 中操作。",
       "guiSteerQueued": "GUI 輸入會排到下一輪。",
@@ -10140,9 +10146,11 @@
       "sessionBranches": {
         "title": "任務分支",
         "close": "關閉任務分支",
-        "description": "{{appName}} 任務分叉與 Pi 任務內分支統一顯示在這裡。",
+        "description": "檢視任務分叉及引擎儲存的歷史分支。",
         "current": "當前",
-        "empty": "當前任務還沒有可切換的 Pi 分支。",
+        "empty": "目前任務還沒有可切換的歷史分支。",
+        "forkHistory": "在所選位置另存歷史分支，繼續目前任務",
+        "forkOnly": "OMP 會在所選位置另存歷史分支，並在目前任務中繼續。",
         "emptyEntry": "無可見內容",
         "loadFailed": "讀取任務分支失敗",
         "switchFailed": "切換分支失敗",

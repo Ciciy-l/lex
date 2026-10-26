@@ -2,7 +2,9 @@ import {
   formatAgentMessage,
   formatOrcaCommunicationMessage,
 } from '@cindy/orca-workflow';
-import { AUTO_REVIEW_DELEGATED_CONTINUATION, AUTO_REVIEW_SOURCE_CONTENT, AUTO_REVIEW_USER_INTENT } from '@cindy/maker-core';
+import { AUTO_REVIEW_DELEGATED_CONTINUATION, AUTO_REVIEW_SOURCE_CONTENT, AUTO_REVIEW_USER_INTENT, ORCA_NATIVE_BODY, type OrcaNativeBodySource } from '@cindy/maker-core';
+import type { NativeMessageSource } from '@cindy/maker-shared/message-presentation';
+import { stampOrcaNativeBody } from './orcaNativeInput.js';
 import { restoreAutoReviewUserIntent, type AutoReviewHistoryMessage } from './autoReviewUserIntent.js';
 import type { AgentKind, SessionSendOptions, SessionSendResult, UserMessage } from '@cindy/maker-core';
 
@@ -81,6 +83,7 @@ interface PersistedUserMessageSession {
   getTurnGeneration?: () => number;
   capabilities?: { sameTurnSteer: { supported: boolean } };
   remoteHostId?: string | null;
+  presentation?: unknown;
   send: (
     message: UserMessage,
     opts?: SessionSendOptions,
@@ -128,6 +131,7 @@ export type OrcaInterAgentSendToSessionInternalResult =
 
 /** 通过既有 sendToSessionInternal 重建或排队目标 session 时传入的最小参数。 */
 export interface OrcaInterAgentSendToSessionInternalParams {
+  [ORCA_NATIVE_BODY]?: OrcaNativeBodySource;
   autoReviewUserText: { kind: 'delegated-continuation' };
   targetSessionId: string;
   message: string;
@@ -147,6 +151,9 @@ export interface OrcaInterAgentDispatcherLogger {
 
 /** Orca dispatcher 的 I/O 边界，register.ts 只负责注入 DB、Maker、queue 和 role 解析能力。 */
 export interface OrcaInterAgentDispatcherDeps<TSessionMeta> {
+  captureOrcaNativeBody?(sessionId: string, clientId: string): Promise<OrcaNativeBodySource | undefined>;
+  assertOrcaNativeBody?(source: OrcaNativeBodySource): Promise<void>;
+  captureNativeUserMessageLink?(sessionId: string, clientId: string): (source: NativeMessageSource) => Promise<boolean>;
   readAutoReviewHistory?: (sessionId: string) => Promise<AutoReviewHistoryMessage[]>;
   createId: () => string;
   getSessionMeta: (sessionId: string) => Promise<TSessionMeta | null>;
@@ -333,6 +340,7 @@ export function createOrcaInterAgentDispatcher<TSessionMeta>(
     }
 
     const clientId = deps.createId();
+    const nativeBody = await deps.captureOrcaNativeBody?.(params.targetSessionId, clientId);
     const agentMessageText = formatAgentMessage(params.source, params.rawContent, params.workerId);
     const persistedContent = formatOrcaCommunicationMessage(params.source, params.rawContent);
     let acceptedDidRun = false;
@@ -381,6 +389,7 @@ export function createOrcaInterAgentDispatcher<TSessionMeta>(
       const createOpts = await deps.buildCreateOptsForQueuedSession(params.targetSessionId, meta);
       const queued = buildQueuedOrcaInterAgentMessage({
         clientId,
+        nativeBody,
         agentMessageText,
         persistedContent,
         rawContent: params.rawContent,
@@ -419,6 +428,7 @@ export function createOrcaInterAgentDispatcher<TSessionMeta>(
       if (
         !deps.steerControlInput || !liveTurn.capabilities?.sameTurnSteer.supported ||
         !liveTurn.getTurnGeneration || liveTurn.remoteHostId
+        || (liveTurn.presentation && (liveTurn.agentKind === 'pi' || liveTurn.agentKind === 'omp'))
       ) {
         steerFallbackReason = 'STEER_UNSUPPORTED';
       } else if (!deps.hasSendToSessionLock(params.targetSessionId)) {
@@ -491,6 +501,7 @@ export function createOrcaInterAgentDispatcher<TSessionMeta>(
     try {
       const sendToInternal = async (): Promise<DispatchOrcaInterAgentMessageResult> => {
         const result = await deps.sendToSessionInternal({
+          ...(nativeBody ? { [ORCA_NATIVE_BODY]: nativeBody } : {}),
           autoReviewUserText: { kind: 'delegated-continuation' },
           targetSessionId: params.targetSessionId,
           message: agentMessageText,
@@ -547,6 +558,7 @@ export function createOrcaInterAgentDispatcher<TSessionMeta>(
         if (!live) return null;
         const senderLabel = await resolveSenderLabel();
         const result = await sendPersistedUserMessageToSession(deps, {
+          nativeBody,
           session: live,
           dbContent: persistedContent,
           agentMessage: { type: 'user', content: agentMessageText },
@@ -623,6 +635,7 @@ export function createOrcaInterAgentDispatcher<TSessionMeta>(
     }
 
     const clientId = deps.createId();
+    const nativeBody = await deps.captureOrcaNativeBody?.(params.targetSessionId, clientId);
     const createOpts = await deps.buildCreateOptsForQueuedSession(params.targetSessionId, meta);
     let senderLabel = params.senderLabel;
     if (params.source === 'worker' && params.workerId) {
@@ -634,6 +647,7 @@ export function createOrcaInterAgentDispatcher<TSessionMeta>(
     }
     const queued = buildQueuedOrcaInterAgentMessage({
       clientId,
+      nativeBody,
       agentMessageText: formatAgentMessage(params.source, params.rawContent, params.workerId),
       persistedContent: formatOrcaCommunicationMessage(params.source, params.rawContent),
       rawContent: params.rawContent,
@@ -723,15 +737,33 @@ async function sendPersistedUserMessageToSession<TSessionMeta>(
     context: string;
     origin?: AgentInputQueuedMessage['origin'];
     onAccepted?: () => void | Promise<void>;
+    nativeBody?: OrcaNativeBodySource;
   },
 ): Promise<CollabDirectDispatchResult> {
   const { session, dbContent, agentMessage, clientId = deps.createId(), source, context, origin, onAccepted } = params;
   let turnChangeSetStarted = false;
   const humanIntent = restoreAutoReviewUserIntent(await deps.readAutoReviewHistory?.(session.id) ?? []);
+  const link = deps.captureNativeUserMessageLink?.(session.id, clientId);
+  const assertDelegation = async () => {
+    if (!params.nativeBody) return;
+    if (!deps.assertOrcaNativeBody) throw new Error('Orca input owner is unavailable');
+    await deps.assertOrcaNativeBody(params.nativeBody);
+  };
+  await assertDelegation();
   const result = await resolveCollabDispatchResult(
     () => session.send(agentMessage, {
       planMode: false,
       throwOnStartFailure: true,
+      messageUuid: clientId,
+      ...(params.nativeBody ? { [ORCA_NATIVE_BODY]: params.nativeBody } : {}),
+      ...(link ? { onNativeUserMessage: async (source: NativeMessageSource) => {
+        try {
+          if (!await link(source)) (deps.log ?? defaultLog).warn('Orca native receipt no longer matches its task', { sessionId: session.id, clientId });
+        } catch {
+          // The native effect already happened. A DB patch failure must not replay it.
+          (deps.log ?? defaultLog).warn('Orca native receipt persistence failed', { sessionId: session.id, clientId });
+        }
+      } } : {}),
       [AUTO_REVIEW_SOURCE_CONTENT]: '',
       [AUTO_REVIEW_USER_INTENT]: humanIntent,
       [AUTO_REVIEW_DELEGATED_CONTINUATION]: true,
@@ -741,11 +773,12 @@ async function sendPersistedUserMessageToSession<TSessionMeta>(
           clientId,
           role: 'user',
           content: dbContent,
-          agentMeta: { ...(origin ? { origin } : {}), autoReviewUserText: { kind: 'delegated-continuation' }, delivery: 'turn' },
+          agentMeta: { uuid: clientId, ...(origin ? { origin } : {}), autoReviewUserText: { kind: 'delegated-continuation' }, delivery: 'turn' },
         });
         await deps.beginDirectTurnChangeSet(session.id, clientId);
         turnChangeSetStarted = true;
         await runAcceptedCallback(onAccepted, session.id, clientId, deps.log ?? defaultLog);
+        await assertDelegation();
       },
     }),
     { source, context },
@@ -794,6 +827,7 @@ export function rebuildQueuedOrcaLeadMessage(
 }
 
 function buildQueuedOrcaInterAgentMessage(params: {
+  nativeBody?: OrcaNativeBodySource;
   clientId: string;
   agentMessageText: string;
   persistedContent: string;
@@ -802,7 +836,7 @@ function buildQueuedOrcaInterAgentMessage(params: {
   createOpts: AgentInputCreateOpts;
 }): AgentInputQueuedMessage {
   const createdAt = new Date().toISOString();
-  return {
+  return stampOrcaNativeBody({
     clientId: params.clientId,
     text: params.agentMessageText,
     autoReviewUserText: { kind: 'delegated-continuation' },
@@ -824,5 +858,5 @@ function buildQueuedOrcaInterAgentMessage(params: {
       senderLabel: params.senderLabel,
       displayText: params.rawContent,
     },
-  };
+  }, params.nativeBody);
 }

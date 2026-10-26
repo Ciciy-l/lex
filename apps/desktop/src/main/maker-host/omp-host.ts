@@ -150,26 +150,29 @@ export function buildDesktopOmpExecutableEnvironment(
 /**
  * 该会话可用的模型清单(catalog 里对 omp 投影的模型 + 当前选中的模型保底)。
  *
- * 只提供 id:上下文窗口由 OMP 自己的 `get_state` 给(`OmpTranslator` 会读),
- * 在 models.yml 里重复声明反而会和真机值分叉。
+ * 上下文窗口仍由 OMP 自己的 get_state 给。思考能力必须保留选定连接的
+ * 明确声明，否则原生自定义模型默认为不支持思考，已选 effort 无法读回。
  */
 export function collectOmpCatalogModels(model: string, providerId?: string | null, preferredModel?: string): OmpModelsModel[] {
   // The native managed provider ID is not a catalog source. Preserve the legacy
   // unscoped roster for callers that have no concrete parent source.
   const sourceId = providerId === OMP_CINDY_PROVIDER_ID ? undefined : providerId;
+  const providers = getActiveCatalog().providers.filter(provider => (!sourceId || provider.id === sourceId)
+    && provider.routing.omp?.disabled !== true);
   const seen = new Set<string>();
   const out: OmpModelsModel[] = [];
   const push = (id: string): void => {
     if (!id || seen.has(id) || out.length >= MAX_OMP_MODELS) return;
     seen.add(id);
-    out.push({ id, name: id, input: ['text'] });
+    const entry = providers.flatMap(provider => provider.models.omp ?? []).find(entry => entry.id === id);
+    const reasoning = entry?.reasoning ?? (entry && entry.effortsUnknown !== true && Array.isArray(entry.efforts)
+      ? entry.efforts.length > 0 : undefined);
+    out.push({ id, name: id, input: ['text'], ...(reasoning !== undefined ? { reasoning } : {}) });
   };
   // 当前选中的模型先占位:即使目录这一轮还没投影到 omp(首启竞态),会话也能起。
   push(model);
   if (preferredModel) push(preferredModel);
-  for (const provider of getActiveCatalog().providers) {
-    if (sourceId && provider.id !== sourceId) continue;
-    if (provider.routing.omp?.disabled === true) continue;
+  for (const provider of providers) {
     for (const entry of provider.models.omp ?? []) {
       push(entry.id);
     }

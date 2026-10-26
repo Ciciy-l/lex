@@ -112,8 +112,20 @@ export interface RewindCommitArgs {
   now: number;
 }
 
+export interface SessionTreeConfiguration {
+  model: string;
+  workingDir: string | null;
+  providerId: string | null;
+  effort: string;
+  permissionMode: string;
+  fastMode: boolean;
+}
 export interface SessionTreeRehydrateArgs {
   sessionId: string;
+  /** Captured before navigation; a late projection cannot undo explicit clear. */
+  expectedClearedAt?: number | null;
+  nativeIdentity?: { source: string; target: string };
+  expectedConfiguration?: SessionTreeConfiguration;
   now: number;
   contextTokens: number;
   contextWindow: number;

@@ -2353,10 +2353,11 @@ describe('makerChatStore text delta batching', () => {
   it('discards pending text when clearing or reloading the session', async () => {
     emitTextDelta('a');
 
-    makerChatStore.clearSession(SESSION_ID);
+    const clear = makerChatStore.clearSession(SESSION_ID);
     await flushPromises();
     vi.advanceTimersByTime(32);
 
+    await clear;
     expect(makerChatStore.getSnapshot(SESSION_ID).messages).toEqual([]);
 
     emitTextDelta('b');
@@ -2378,7 +2379,7 @@ describe('makerChatStore text delta batching', () => {
     vi.advanceTimersByTime(32);
     expect(makerChatStore.getSnapshot(SESSION_ID).messages).toHaveLength(1);
 
-    makerChatStore.clearSession(SESSION_ID);
+    const clear = makerChatStore.clearSession(SESSION_ID);
     await flushPromises();
 
     expect(input.clearSession).toHaveBeenCalledWith(SESSION_ID, expect.any(String));
@@ -2388,70 +2389,114 @@ describe('makerChatStore text delta batching', () => {
     resolveClear?.(projection(SESSION_ID));
     await flushPromises();
 
+    await clear;
     expect(makerChatStore.getSnapshot(SESSION_ID).messages).toEqual([]);
   });
 
-  it('continues clearing local state when the clear guard hangs', async () => {
+  it('keeps local history and does not replay an unconfirmed clear', async () => {
     input.clearSession.mockReturnValueOnce(new Promise<AgentInputProjection>(() => {}));
-
-    emitTextDelta('a');
-    vi.advanceTimersByTime(32);
+    emitTextDelta('unsaved context'); vi.advanceTimersByTime(32);
+    const clear = makerChatStore.clearSession(SESSION_ID);
+    await flushPromises(); vi.advanceTimersByTime(500); await flushPromises(); await clear;
     expect(makerChatStore.getSnapshot(SESSION_ID).messages).toHaveLength(1);
-
-    makerChatStore.clearSession(SESSION_ID);
-    await flushPromises();
-
-    expect(input.clearSession).toHaveBeenCalledWith(SESSION_ID, expect.any(String));
-    expect(makerChatStore.getSnapshot(SESSION_ID).messages).toHaveLength(1);
-
-    vi.advanceTimersByTime(500);
-    await flushPromises();
-
-    expect(makerChatStore.getSnapshot(SESSION_ID).messages).toEqual([]);
-    expect(sessionService.update).toHaveBeenCalledWith(SESSION_ID, {
-      sdkSessionId: null,
-      clearedAt: expect.any(String),
+    expect(sessionService.update).not.toHaveBeenCalled();
+    expect(window.electronAPI.maker.closeSession).not.toHaveBeenCalled();
+    await makerChatStore.clearSession(SESSION_ID);
+    expect(input.clearSession).toHaveBeenCalledTimes(1);
+    expect(input.getProjection).toHaveBeenLastCalledWith(SESSION_ID, {
+      clearRequestAt: input.clearSession.mock.calls[0]![1],
     });
   });
 
-  it('does not reinsert pre-clear DB messages when the clear guard times out', async () => {
+  it.each(['committed', 'failed', 'pending'] as const)(
+    'uses a read-only %s receipt after clear delivery times out', async status => {
+      input.clearSession.mockReturnValueOnce(new Promise<AgentInputProjection>(() => {}));
+      emitTextDelta('keep until confirmed'); vi.advanceTimersByTime(32);
+      const clear = makerChatStore.clearSession(SESSION_ID);
+      await flushPromises();
+      const requestAt = input.clearSession.mock.calls[0]![1]!;
+      input.getProjection.mockResolvedValueOnce({ ...projection(SESSION_ID), clearReceipt: {
+        requestAt, status, native: true, boundaryMs: Date.parse(requestAt),
+      } });
+      vi.advanceTimersByTime(500); await flushPromises(); await clear;
+      expect(makerChatStore.getSnapshot(SESSION_ID).messages).toHaveLength(status === 'committed' ? 0 : 1);
+      expect(sessionService.update).not.toHaveBeenCalled();
+      expect(window.electronAPI.maker.closeSession).not.toHaveBeenCalled();
+      expect(input.clearSession).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('accepts a late native acknowledgement once, without independent close or identity write', async () => {
+    let resolve!: (value: AgentInputProjection) => void;
+    input.clearSession.mockReturnValueOnce(new Promise<AgentInputProjection>(r => { resolve = r; }));
+    emitTextDelta('old context'); vi.advanceTimersByTime(32);
+    const clear = makerChatStore.clearSession(SESSION_ID);
+    await flushPromises(); vi.advanceTimersByTime(500); await flushPromises(); await clear;
+    const requestAt = input.clearSession.mock.calls[0]![1]!;
+    input.getProjection.mockResolvedValueOnce({ ...projection(SESSION_ID), clearReceipt: { requestAt, status: 'committed', native: true,
+      boundaryMs: Date.parse(requestAt) } });
+    resolve({ ...projection(SESSION_ID), clearReceipt: { requestAt, status: 'committed', native: true,
+      boundaryMs: Date.parse(requestAt) } });
+    await vi.waitFor(() => expect(makerChatStore.getSnapshot(SESSION_ID).messages).toEqual([]));
+    expect(input.clearSession).toHaveBeenCalledTimes(1);
+    expect(sessionService.update).not.toHaveBeenCalled();
+    expect(window.electronAPI.maker.closeSession).not.toHaveBeenCalled();
+  });
+
+  it('keeps a replacement view when an old native acknowledgement fails current identity readback', async () => {
+    emitTextDelta('replacement context'); vi.advanceTimersByTime(32);
+    input.clearSession.mockImplementationOnce(async (_id, requestAt) => ({ ...projection(SESSION_ID),
+      clearReceipt: { requestAt: requestAt!, status: 'committed', native: true, boundaryMs: Date.parse(requestAt!) } }));
+    input.getProjection.mockImplementationOnce(async () => ({ ...projection(SESSION_ID), clearReceipt: {
+      requestAt: input.clearSession.mock.calls[0]![1]!, status: 'unknown', native: true,
+    } }));
+    await makerChatStore.clearSession(SESSION_ID);
+    expect(makerChatStore.getSnapshot(SESSION_ID).messages).toHaveLength(1);
+    expect(sessionService.update).not.toHaveBeenCalled();
+    expect(window.electronAPI.maker.closeSession).not.toHaveBeenCalled();
+    await makerChatStore.clearSession(SESSION_ID);
+    expect(input.clearSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('permits a new explicit clear only after Main confirms the previous failure', async () => {
+    input.clearSession.mockRejectedValueOnce(new Error('intent unavailable'));
+    input.getProjection.mockImplementationOnce(async () => ({ ...projection(SESSION_ID), clearReceipt: {
+      requestAt: input.clearSession.mock.calls[0]![1]!, status: 'failed', native: true,
+    } }));
+    await makerChatStore.clearSession(SESSION_ID);
+    expect(window.electronAPI.maker.closeSession).not.toHaveBeenCalled();
+    expect(sessionService.update).not.toHaveBeenCalled();
+    await makerChatStore.clearSession(SESSION_ID);
+    expect(input.clearSession).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['owner', 'purge'] as const)('ignores a late clear after %s replacement', async boundary => {
+    let resolve!: (value: AgentInputProjection) => void;
+    input.clearSession.mockReturnValueOnce(new Promise<AgentInputProjection>(r => { resolve = r; }));
+    const clear = makerChatStore.clearSession(SESSION_ID); await flushPromises();
+    const requestAt = input.clearSession.mock.calls[0]![1]!;
+    if (boundary === 'purge') makerChatStore.purgeSession(SESSION_ID);
+    else setDataOwnerGeneration('replacement-owner', 99);
+    emitTextDelta('replacement context'); vi.advanceTimersByTime(32);
+    resolve({ ...projection(SESSION_ID), clearReceipt: { requestAt, status: 'committed', native: true,
+      boundaryMs: Date.parse(requestAt) } });
+    await flushPromises(); await clear;
+    expect(sessionService.update).not.toHaveBeenCalled();
+    expect(window.electronAPI.maker.closeSession).not.toHaveBeenCalled();
+    expect(makerChatStore.getSnapshot(SESSION_ID).messages.map(row => row.content)).toContain('replacement context');
+  });
+
+  it('releases old-owner delivery bookkeeping at the real account boundary', async () => {
     input.clearSession.mockReturnValueOnce(new Promise<AgentInputProjection>(() => {}));
-
-    emitTextDelta('a');
-    vi.advanceTimersByTime(32);
-    expect(makerChatStore.getSnapshot(SESSION_ID).messages).toHaveLength(1);
-
-    makerChatStore.clearSession(SESSION_ID);
-    await flushPromises();
-
-    const clearedAt = input.clearSession.mock.calls[0]?.[1];
-    expect(typeof clearedAt).toBe('string');
-
-    vi.advanceTimersByTime(500);
-    await flushPromises();
-    expect(makerChatStore.getSnapshot(SESSION_ID).messages).toEqual([]);
-
-    const boundaryMs = new Date(clearedAt as string).getTime();
-    emitDbMessageCreated({
-      clientId: 'old-assistant-row',
-      role: 'assistant',
-      content: 'old',
-      createdAt: new Date(boundaryMs).toISOString(),
-    });
-
-    expect(makerChatStore.getSnapshot(SESSION_ID).messages).toEqual([]);
-
-    emitDbMessageCreated({
-      clientId: 'new-assistant-row',
-      role: 'assistant',
-      content: 'new',
-      createdAt: new Date(boundaryMs + 1).toISOString(),
-    });
-
-    expect(makerChatStore.getSnapshot(SESSION_ID).messages.map((m) => m.content)).toEqual(['new']);
+    const oldClear = makerChatStore.clearSession(SESSION_ID);
+    await flushPromises(); vi.advanceTimersByTime(500); await flushPromises(); await oldClear;
+    makerChatStore.cancelRemoteOptimisticSendsForDataOwnerBoundary();
+    setDataOwnerGeneration('new-owner');
+    await makerChatStore.clearSession(SESSION_ID);
+    expect(input.clearSession).toHaveBeenCalledTimes(2);
   });
 
-  it('continues clearing local state when the clear guard fails', async () => {
+  it('preserves local history and identity when Main refuses clear', async () => {
     input.clearSession.mockRejectedValueOnce(new Error('ipc failed'));
 
     emitTextDelta('a');
@@ -2462,11 +2507,9 @@ describe('makerChatStore text delta batching', () => {
     await flushPromises();
 
     expect(input.clearSession).toHaveBeenCalledWith(SESSION_ID, expect.any(String));
-    expect(makerChatStore.getSnapshot(SESSION_ID).messages).toEqual([]);
-    expect(sessionService.update).toHaveBeenCalledWith(SESSION_ID, {
-      sdkSessionId: null,
-      clearedAt: expect.any(String),
-    });
+    expect(makerChatStore.getSnapshot(SESSION_ID).messages).toHaveLength(1);
+    expect(sessionService.update).not.toHaveBeenCalled();
+    expect(window.electronAPI.maker.closeSession).not.toHaveBeenCalled();
   });
 
   it('keeps recoverable errors busy without treating them as terminal failures', async () => {

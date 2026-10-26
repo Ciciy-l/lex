@@ -21,6 +21,7 @@ import {
   AgentNotAuthenticatedError,
   AgentStartupCleanupPendingError,
   AgentStartupStoppedError,
+  NATIVE_HISTORY_RESUME,
   TurnPermissionPolicyUnsupportedError,
   type AgentSessionHandle,
   BaseAgent,
@@ -284,6 +285,29 @@ function createDeferred<T = void>(): {
 }
 
 describe('Maker local Pi package generation fence', () => {
+  it.each(['source', 'target', 'unrelated'])('holds native recovery identity until projection commits (stored=%s)', async stored => {
+    const storage = createStorage();
+    await storage.create({ id: 'history-task', agentKind: 'pi', workDir: '/repo', title: 'preserve me', model: 'm', sdkSessionId: stored });
+    const queue = createAsyncQueue<AgentEvent>();
+    const handle = createHandle({ id: 'target', agentKind: 'pi' });
+    handle.events = () => queue;
+    handle.close = vi.fn(async () => { queue.end(); });
+    const maker = new Maker({ storage, agents: { pi: createAgent(async () => handle, 'pi') }, logger: createLogger() });
+    try {
+      const starting = maker.createSession({ id: 'history-task', agentKind: 'pi', workingDir: '/repo', model: 'm',
+        resumeSessionId: 'target', [NATIVE_HISTORY_RESUME]: { source: 'source', target: 'target' } });
+      if (stored === 'unrelated') {
+        await expect(starting).rejects.toThrow('recovery identity changed');
+        expect(handle.close).toHaveBeenCalledOnce();
+      } else {
+        const session = await starting;
+        queue.push({ type: 'session_id', source: 'pi', data: 'target' });
+        await new Promise(resolve => setImmediate(resolve));
+        expect(await storage.get('history-task')).toMatchObject({ sdkSessionId: stored, title: 'preserve me' });
+        await session.close();
+      }
+    } finally { await maker.shutdown(); }
+  });
   it.each(['disable', 'remove', 'update'])(
     'closes an in-flight local Pi startup before publish after %s',
     async () => {

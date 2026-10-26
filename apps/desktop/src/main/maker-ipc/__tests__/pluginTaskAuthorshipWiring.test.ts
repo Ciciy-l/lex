@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import ts from 'typescript';
 import { expect, it, vi } from 'vitest';
-import { appendAutoReviewUserIntent, AUTO_REVIEW_DELEGATED_CONTINUATION, AUTO_REVIEW_SOURCE_CONTENT, AUTO_REVIEW_USER_INTENT, MAIN_OWNED_SEND_CONTEXT, type SendOptions } from '@cindy/maker-core';
+import { appendAutoReviewUserIntent, AUTO_REVIEW_DELEGATED_CONTINUATION, AUTO_REVIEW_SOURCE_CONTENT, AUTO_REVIEW_USER_INTENT, MAIN_OWNED_SEND_CONTEXT, GUI_NATIVE_APPEND, type SendOptions } from '@cindy/maker-core';
 
 const source = readFileSync(resolve(__dirname, '..', 'register.ts'), 'utf8');
 const compile = (code: string) => ts.transpileModule(code, {
@@ -15,6 +15,7 @@ it.each(['Do not publish.', '', undefined])('keeps live authority through both f
   const end = source.indexOf('\n      });', start) + '\n      });'.length;
   const deliver = new Function('sess', 'native', 'steerPayload', 'so', 'meta', 'restoredSteerIntent',
     'MAIN_OWNED_SEND_CONTEXT', 'AUTO_REVIEW_SOURCE_CONTENT', 'AUTO_REVIEW_USER_INTENT', 'AUTO_REVIEW_DELEGATED_CONTINUATION',
+    'trustedDesktopSteerText', 'GUI_NATIVE_APPEND',
     compile('return (async () => { ' + source.slice(start, end) + ' })();'));
   const invoke = async (delegated: boolean, isNative: boolean) => {
     let result;
@@ -33,8 +34,10 @@ it.each(['Do not publish.', '', undefined])('keeps live authority through both f
     const options = { messageUuid: 'receipt', userName: 'User', signal, [MAIN_OWNED_SEND_CONTEXT]: context,
       [AUTO_REVIEW_SOURCE_CONTENT]: '', ...(delegated ? { [AUTO_REVIEW_DELEGATED_CONTINUATION]: true } : {}) };
     await deliver(session, isNative ? { input: nativeInput } : undefined, 'Publish now', options, { title: 'Task' }, 'Old persisted permission',
-      MAIN_OWNED_SEND_CONTEXT, AUTO_REVIEW_SOURCE_CONTENT, AUTO_REVIEW_USER_INTENT, AUTO_REVIEW_DELEGATED_CONTINUATION);
+      MAIN_OWNED_SEND_CONTEXT, AUTO_REVIEW_SOURCE_CONTENT, AUTO_REVIEW_USER_INTENT, AUTO_REVIEW_DELEGATED_CONTINUATION,
+      { getStore: () => undefined }, GUI_NATIVE_APPEND);
     const expectedOptions = { logTitle: 'Task', messageUuid: 'receipt', userName: 'User', signal,
+      ...(!isNative && !delegated ? { [GUI_NATIVE_APPEND]: true } : {}),
       [MAIN_OWNED_SEND_CONTEXT]: context, [AUTO_REVIEW_SOURCE_CONTENT]: '',
       [AUTO_REVIEW_DELEGATED_CONTINUATION]: delegated ? true : undefined,
       [AUTO_REVIEW_USER_INTENT]: 'Old persisted permission' };
@@ -87,7 +90,8 @@ it('marks plugin dispatch and every queue fallback with the host-only receipt', 
   expect(queues).toHaveLength(4);
   for (const call of queues) expect(call[1]).toContain('autoReviewUserText: params.autoReviewUserText');
   // Both newly created and resumed direct tasks persist the same authored metadata.
-  expect(dispatch.match(/agentMeta: inputAgentMeta/g)).toHaveLength(2);
+  expect(dispatch).toContain('agentMeta: inputAgentMeta');
+  expect(dispatch).toContain('agentMeta: { ...inputAgentMeta, uuid: clientId }');
 });
 
 it('keeps empty receipts distinct from missing authorship on direct persistence', () => {

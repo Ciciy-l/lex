@@ -15,7 +15,7 @@ async function fixture(accepted = true) {
   };
   const api = { on: (name: string, handler: (event: unknown, ctx: unknown) => unknown) => {
     handlers.set(name, [...handlers.get(name) ?? [], handler]);
-  }, registerTool: vi.fn(), sendUserMessage: vi.fn(), setThinkingLevel: vi.fn() };
+  }, registerTool: vi.fn(), registerMessageRenderer: vi.fn(), sendUserMessage: vi.fn(), setThinkingLevel: vi.fn() };
   const fetch = vi.fn(async (url: string, options: { body: string }) => {
     const body = JSON.parse(options.body);
     if (url.endsWith('/exchange')) return { ok: true, json: async () => ({ acknowledged: body.events.at(-1)?.sequence ?? 0, commands: [] }) };
@@ -23,6 +23,7 @@ async function fixture(accepted = true) {
     return { ok: true, json: async () => ({ result: { accepted, text: 'product prepared' } }) };
   });
   const source = OMP_NATIVE_EXTENSION_SOURCE.replace("import { readFileSync } from 'node:fs';", '')
+    .replace("import { Text } from '@oh-my-pi/pi-tui';", '')
     .replace("import { randomUUID } from 'node:crypto';", '').replace('export default function', 'return function');
   let submission = 0;
   const activate = new Function('process', 'readFileSync', 'fetch', 'randomUUID', source)({ env: { LEX_OMP_BRIDGE_URL: 'http://127.0.0.1:1',
@@ -71,7 +72,9 @@ describe('OMP official extension native input gate', () => {
     expect(f.requests[1].request).toMatchObject({ kind: 'input-receipt',
       input: { submissionId: 'submission-1', row: { id: 'real-journal-row' } } });
     expect(f.ctx.abort).not.toHaveBeenCalled();
-    await f.emit('context', event); await f.emit('before_provider_request'); expect(f.requests).toHaveLength(2);
+    await f.emit('context', event); await f.emit('before_provider_request');
+    expect(f.requests.map(item => item.request.kind)).toEqual(['prepare-input', 'input-receipt', 'provider-admission']);
+    expect(f.requests[2].request.input.turnRowId).toBe('real-journal-row');
   });
   it('aborts before provider execution when a user row has not been persisted', async () => {
     const f = await fixture();
@@ -112,6 +115,41 @@ describe('OMP official extension native input gate', () => {
     const f = await fixture(), row = f.row('real-row');
     await f.emit('context', { messages: [row.message, structuredClone(row.message)] });
     expect(f.ctx.abort).toHaveBeenCalled(); expect(f.requests).toHaveLength(0);
+  });
+  it('admits separate same-text and same-timestamp occurrences instead of deduplicating an appended input', async () => {
+    const f = await fixture(), first = f.row('first-row');
+    await f.emit('context', { messages: [structuredClone(first.message)] });
+    f.rows.push(first); await f.emit('before_provider_request');
+    const second = f.row('second-row');
+    await f.emit('context', { messages: [structuredClone(first.message), structuredClone(second.message)] });
+    expect(f.requests.filter(item => item.request.kind === 'prepare-input')).toHaveLength(2);
+    f.rows.push(second); await f.emit('before_provider_request');
+    expect(f.requests.filter(item => item.request.kind === 'input-receipt').map(item => item.request.input.row.id))
+      .toEqual(['first-row', 'second-row']);
+    expect(f.ctx.abort).not.toHaveBeenCalled();
+  });
+  it('binds a same-turn batch of equal native messages by complete journal order', async () => {
+    const f = await fixture(), root = f.row('root');
+    await f.emit('context', { messages: [root.message] });
+    f.rows.push(root); await f.emit('before_provider_request');
+    const a = f.row('native-a', 'same'), b = { ...f.row('native-b', 'same'), parentId: 'native-a' };
+    const result = await f.emit('context', { messages: [root.message, a.message, b.message] });
+    expect(result).toMatchObject({ messages: [{}, { content: [{ text: 'product prepared' }] }, { content: [{ text: 'product prepared' }] }] });
+    expect(f.requests.filter(item => item.request.kind === 'prepare-input')).toHaveLength(3);
+    f.rows.push(a, b); await f.emit('before_provider_request');
+    expect(f.requests.filter(item => item.request.kind === 'input-receipt').map(item => [item.request.input.submissionId, item.request.input.row.id]))
+      .toEqual([['submission-1', 'root'], ['submission-2', 'native-a'], ['submission-3', 'native-b']]);
+    expect(f.ctx.abort).not.toHaveBeenCalled();
+  });
+  it('does not issue any batch receipt when the journal tail contains an extra occurrence', async () => {
+    const f = await fixture(), root = f.row('root');
+    await f.emit('context', { messages: [root.message] });
+    f.rows.push(root); await f.emit('before_provider_request');
+    const a = f.row('native-a', 'same'), b = f.row('native-b', 'same');
+    await f.emit('context', { messages: [root.message, a.message, b.message] });
+    f.rows.push(a, b, f.row('extra', 'same')); await f.emit('before_provider_request');
+    expect(f.requests.filter(item => item.request.kind === 'input-receipt')).toHaveLength(1);
+    expect(f.ctx.abort).toHaveBeenCalled();
   });
   it('aborts on owner refusal and never resubmits the rejected row on a continuation', async () => {
     const f = await fixture(false), row = f.row('refused-row');

@@ -656,6 +656,10 @@ async function resolveWorkerLink(
     return { ok: false, error: { error: 'orca workflow store unavailable' } };
   }
   const runtimeCtx = resolveRuntimeMcpContext(ctx);
+  // Copy the identity before store IO: native role contexts are intentionally
+  // mutable, so retaining the object would also retain any later revocation.
+  const instance = runtimeCtx.sessionInstanceId;
+  const roleSnapshot = { ...runtimeCtx.vendorOptions };
   const identity = readWorkerIdentity(runtimeCtx.vendorOptions, workerIdParam);
   const callerSessionId = readWorkerCallerSessionId(runtimeCtx);
   if (runtimeCtx.vendorOptions?.orcaRole !== 'worker' || !callerSessionId) {
@@ -672,6 +676,12 @@ async function resolveWorkerLink(
     workerId: identity.workerId,
     workerSessionId: identity.workerSessionId ?? callerSessionId,
   });
+  const current = resolveRuntimeMcpContext(ctx);
+  if (current.sessionInstanceId !== instance || readWorkerCallerSessionId(current) !== callerSessionId
+    || ['orcaRole', 'orcaWorkflowId', 'orcaLeadSessionId', 'orcaWorkerId', 'orcaWorkerSessionId']
+      .some(key => current.vendorOptions?.[key] !== roleSnapshot[key])) {
+    return { ok: false, error: { error: 'worker identity changed during lookup' } };
+  }
   if (!link) {
     return {
       ok: false,
@@ -702,6 +712,12 @@ async function resolveWorkerLink(
         resolved_worker_session_id: link.workerSessionId,
       },
     };
+  }
+  // Old hosts may omit these optional fields. When supplied, both must match
+  // the owning store record; a stale native catalog cannot retarget a report.
+  if ((roleSnapshot.orcaWorkflowId != null && roleSnapshot.orcaWorkflowId !== link.workflowId)
+    || (roleSnapshot.orcaLeadSessionId != null && roleSnapshot.orcaLeadSessionId !== link.leadSessionId)) {
+    return { ok: false, error: { error: 'worker team identity mismatch' } };
   }
   return { ok: true, link };
 }

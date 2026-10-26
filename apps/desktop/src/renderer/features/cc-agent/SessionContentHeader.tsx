@@ -92,10 +92,12 @@ const log = createLogger('SessionContentHeader');
  */
 export function SessionContentHeaderRegistration({
   session,
+  nativeHistoryAvailable = false,
   remoteSessionUnavailable = false,
   readOnly = false,
 }: {
   session: Session;
+  nativeHistoryAvailable?: boolean;
   remoteSessionUnavailable?: boolean;
   readOnly?: boolean;
 }) {
@@ -104,11 +106,12 @@ export function SessionContentHeaderRegistration({
       () => (
         <SessionContentHeader
           session={session}
+          nativeHistoryAvailable={nativeHistoryAvailable}
           remoteSessionUnavailable={remoteSessionUnavailable}
           readOnly={readOnly}
         />
       ),
-      [readOnly, session, remoteSessionUnavailable],
+      [readOnly, session, remoteSessionUnavailable, nativeHistoryAvailable],
     ),
   );
   return null;
@@ -116,12 +119,14 @@ export function SessionContentHeaderRegistration({
 
 interface SessionContentHeaderProps {
   session: Session;
+  nativeHistoryAvailable?: boolean;
   remoteSessionUnavailable?: boolean;
   readOnly?: boolean;
 }
 
 export function SessionContentHeader({
   session: sessionProp,
+  nativeHistoryAvailable = false,
   remoteSessionUnavailable = false,
   readOnly = false,
 }: SessionContentHeaderProps) {
@@ -402,10 +407,10 @@ export function SessionContentHeader({
       ),
     [allKnownSessions, session.id, session.parentSessionId],
   );
-  // 只给 Cindy 任务分叉家族保留入口。Pi 原生 branch tree 不再单凭 agentKind=pi 露出,
-  // 避免普通 Pi 任务把 overflow 撑长。当前任务带 parentSessionId,或 all 桶里能扫到
-  // 父/子(含归档),都算家族成员。
-  const canShowBranchTree = !isEmpty && hasSessionFamily;
+  // The active native handle may now expose history without a separate GUI
+  // task family. Engine name alone still does not opt an ordinary task in.
+  const canShowBranchTree = !isEmpty && (hasSessionFamily || (nativeHistoryAvailable
+    && !session.remoteHostId && !session.deviceLinkDeviceId && !readOnly));
 
   /* ---- Archive / Delete / Unarchive ----
    * 执行序列共用 useSessionLifecycleActions（与 CCAgentSidebarUpper 同一实现）；

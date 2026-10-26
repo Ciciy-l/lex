@@ -6602,7 +6602,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     navigateSessionTree: (
       sessionId: string,
       entryId: string,
-      options?: { summarize?: boolean; customInstructions?: string },
+      options?: { fork?: boolean; summarize?: boolean; customInstructions?: string },
     ) => ipcRenderer.invoke('maker:navigate-session-tree', sessionId, entryId, options),
     // 返回主进程校验、冲突过滤后真正应用的子集，renderer 以它持久化；session 不在或
     // capability=false 时返回 undefined，兼容旧 no-op 语义。
@@ -6995,8 +6995,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     input: {
       getProjection: (
         sessionId: string,
+        options?: { clearRequestAt: string },
       ): Promise<import('../shared/agentInputQueue').AgentInputProjection> =>
-        ipcRenderer.invoke('maker:input:get-projection', sessionId),
+        ipcRenderer.invoke('maker:input:get-projection', sessionId, ...(options ? [options] : [])),
       enqueue: (
         sessionId: string,
         item: import('../shared/agentInputQueue').AgentInputQueuedMessage,

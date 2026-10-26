@@ -5780,6 +5780,7 @@ interface ElectronAPI {
     input: {
       getProjection: (
         sessionId: string,
+        options?: { clearRequestAt: string },
       ) => Promise<import('../shared/agentInputQueue').AgentInputProjection>;
       enqueue: (
         sessionId: string,
@@ -5956,7 +5957,7 @@ interface ElectronAPI {
     navigateSessionTree: (
       sessionId: string,
       entryId: string,
-      options?: { summarize?: boolean; customInstructions?: string },
+      options?: { fork?: boolean; summarize?: boolean; customInstructions?: string },
     ) => Promise<{
       tree: MakerSessionTreeSnapshot;
       draftText?: string;
