@@ -58,6 +58,13 @@ or delayed replies reconcile an owner/generation-bound receipt through a read-on
 projection query; another click checks that request rather than repeating clear.
 Unknown results keep the local send fence. A confirmed rejection permits an
 explicit retry; successful legacy responses retain the ordinary close path.
+When Main confirms the exact native clear completed and a newer authority has
+replaced it, Renderer retires only that old request and its send fence. The
+current view and drafts survive, and explicit send, steer and a new clear can
+continue. A view advancing during confirmed readback also keeps its content;
+late results never release a different request. Production store/Main callbacks
+and worker/inline SQLite regressions cover this in
+`makerChatStoreTextDeltaBatching.test.ts` and `tx.test.ts`.
 Missing receipts never prove native success. Remote clear retains its existing
 host-boundary/outbox compatibility flow.
 GUI history prefill never overwrites an existing composer draft or attachments.

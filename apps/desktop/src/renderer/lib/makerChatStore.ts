@@ -15094,15 +15094,20 @@ async function clearLocalSessionAfterGuard(sessionId: string, clearedAt: string)
     });
     await awaitRemoteClearOperation(delivery);
   }
-  const current = () => localClearRequests.get(sessionId) === request
+  const owned = () => localClearRequests.get(sessionId) === request
     && isDataOwnerGenerationCurrent(request.operation.dataOwner)
-    && isCurrentInputProjectionOrigin(sessionId, request.operation.origin)
+    && isCurrentInputProjectionOrigin(sessionId, request.operation.origin);
+  const current = () => owned()
     && ((rendererClearGenerationBySession.get(sessionId) ?? 0) === request.generation
       // Main's own successful projection can advance the shared clear epoch
       // before the invoke reply. A newer clear still invalidates this request.
       || rendererClearBoundaryBySession.get(sessionId) === Date.parse(request.at));
-  if (!current()) return;
+  // A newer view prevents applying the old empty projection, but must not
+  // prevent a read-only check of the still-owned delivery result.
+  if (!owned()) return;
   let projection = request.result;
+  const viewBeforeRead = captureActiveTurnBoundaryMarker(sessionId, getOrCreateState(sessionId));
+  const generationBeforeRead = rendererClearGenerationBySession.get(sessionId) ?? 0;
   if (!projection || projection.clearReceipt?.native) {
     // A delayed reply must not clear a replacement executor opened in another
     // window since Main committed. Validate its present identity, without writes.
@@ -15110,22 +15115,36 @@ async function clearLocalSessionAfterGuard(sessionId: string, clearedAt: string)
     const read = await awaitRemoteClearOperation(
       Promise.resolve().then(() => request.operation.api.input.getProjection(sessionId, { clearRequestAt: request.at })),
     );
-    if (!current()) return;
-    if (read.kind === 'value' && read.value.clearReceipt?.requestAt === request.at) projection = read.value;
+    if (!owned()) return;
+    if (read.kind === 'value' && read.value.sessionId === sessionId
+      && read.value.clearReceipt?.requestAt === request.at) projection = read.value;
   }
   const receipt = projection?.clearReceipt;
   const committed = receipt?.requestAt === request.at && receipt.status === 'committed';
+  const superseded = receipt?.requestAt === request.at && receipt.status === 'superseded'
+    && receipt.native === true && typeof receipt.boundaryMs === 'number' && Number.isFinite(receipt.boundaryMs);
+  if (superseded || (committed && receipt.native && (!current()
+    || generationBeforeRead !== (rendererClearGenerationBySession.get(sessionId) ?? 0)
+    || !sameActiveTurnBoundaryMarker(sessionId, getOrCreateState(sessionId), viewBeforeRead)))) {
+    // Host confirmed this exact old operation. A replacement view/turn never
+    // inherits its reset, close, identity write or another implicit clear.
+    // owned() compares the request object, so a newer local clear stays fenced.
+    if (owned()) localClearRequests.delete(sessionId);
+    return;
+  }
   const legacyAcknowledged = !!request.result && !request.result.clearReceipt;
   if (!committed && !legacyAcknowledged) {
     if (receipt?.requestAt === request.at && receipt.status === 'failed') {
+      const showFailure = current();
       localClearRequests.delete(sessionId);
-      toast.error(i18n.t('ccAgent.clear.failed'));
+      if (showFailure) toast.error(i18n.t('ccAgent.clear.failed'));
     } else {
       // Keep the request/send fence. Another click performs only the read above.
       toast.warning(i18n.t('ccAgent.clear.unconfirmed'));
     }
     return;
   }
+  if (!current()) return;
   const authoritativeAt = typeof receipt?.boundaryMs === 'number'
     ? new Date(receipt.boundaryMs).toISOString() : request.at;
   if (!receipt?.native) {

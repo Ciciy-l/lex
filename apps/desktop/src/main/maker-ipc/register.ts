@@ -15658,13 +15658,29 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         throwIpcError('INVALID_PARAMS', 'Invalid clearRequestAt');
       const owner = getCurrentDbClientSnapshot();
       if (!owner) throwIpcError('PRECONDITION_FAILED', 'Clear owner unavailable');
+      const executor = getMaker().getSession(sid);
       const scope = captureNativeHistoryClearDependencies(sid);
-      const receipt = inputClearReceipts.read(owner, getActiveAppSession().generation, sid, requestAt);
       const state = await scope.readState();
       scope.assertCurrent();
-      if (receipt.status === 'committed' && receipt.native && (scope.executor || state.nativeId !== null
-        || state.clearedAt !== receipt.boundaryMs || readNativeHistoryForClear(scope.root, sid))) {
+      // Read the receipt after the DB await too: another window may have begun
+      // a different clear. A missing receipt is not proof of supersession.
+      const receipt = inputClearReceipts.read(owner, getActiveAppSession().generation, sid, requestAt);
+      if (getMaker().getSession(sid) !== executor) {
         receipt.status = 'unknown';
+      } else if (receipt.status === 'committed' && receipt.native) {
+        const boundary = receipt.boundaryMs;
+        const changed = executor || state.nativeId !== null || state.clearedAt !== boundary;
+        if (changed) {
+          // A confirmed old commit and current Host-owned state, not a renderer
+          // native ID, establish that this local request no longer fences input.
+          // Same native ID in a new Session is still a replacement executor.
+          const advanced = typeof boundary === 'number' && Number.isFinite(boundary)
+            && ((state.clearedAt !== null && state.clearedAt >= boundary)
+              || (executor && state.nativeId !== null && executor.sdkSessionId === state.nativeId));
+          receipt.status = advanced ? 'superseded' : 'unknown';
+        } else if (readNativeHistoryForClear(scope.root, sid)) {
+          receipt.status = 'unknown';
+        }
       }
       return { ...inputCoordinator.getProjection(sid), clearReceipt: receipt };
     }
