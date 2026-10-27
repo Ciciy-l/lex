@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BRAND_NAME } from '../branding.js';
+import { collectInlineMessageReferenceBodies, agentInputMessageReferenceKey } from '../agentInputProjection.js';
 
 import { AGENT_MESSAGE_REFERENCE_MAX_CHARS, CODEX_RESUME_NOT_READY_MARKER, CODEX_RESUME_NOT_READY_WIRE_MESSAGE, buildPluginResourceReferenceHref, isCodexResumeNotReadyProjectionError, parsePluginResourceReferenceHref, projectAgentFacingText, projectPersistedAgentFacingUserText, readAgentInputReferences, type AgentInputReference } from '../agentInputProjection.js';
 
@@ -35,6 +36,42 @@ function rangeFor<T extends Omit<AgentInputReference, 'start' | 'end'>>(
 }
 
 describe('agent-facing Composer projection', () => {
+  it.each(['complete', 'stale', 'truncated', 'over-cap', 'empty', 'invalid-device'])(
+    'only deduplicates a complete projected body: %s', (variant) => {
+      const href = 'cindy://session/s?message=m' + (variant === 'invalid-device' ? '&device=%ZZ' : '');
+      const body = variant === 'over-cap' ? 'x'.repeat(AGENT_MESSAGE_REFERENCE_MAX_CHARS + 1)
+        : variant === 'empty' ? '  ' : '中\ncode 🙂';
+      const source = { text: href, agentReferences: [{ kind: 'message' as const, href,
+        start: variant === 'stale' ? 1 : 0, end: href.length, sessionId: 's',
+        messageClientId: 'm', text: body, truncated: variant === 'truncated' }] };
+      const bodies = collectInlineMessageReferenceBodies(source, () => 'host-device');
+      expect([...bodies.keys()]).toEqual(variant === 'complete'
+        ? [agentInputMessageReferenceKey('s', 'm', 'host-device')] : []);
+      if (variant === 'complete') expect(projectAgentFacingText(source)).toContain(body);
+      expect(collectInlineMessageReferenceBodies({ text: '' }).size).toBe(0);
+    },
+  );
+
+  it('delivers a repeated message body once without conflating other anchors or devices', () => {
+    const hrefs = ['cindy://session/s?message=m&device=a', 'cindy://session/s?message=m&device=a',
+      'cindy://session/s?message=m&device=b', 'cindy://session/s?message=other&device=a'];
+    const text = hrefs.join('\n') + '\nPlease compare these messages.';
+    let start = 0;
+    const agentReferences: AgentInputReference[] = hrefs.map(href => {
+      const ref = { kind: 'message' as const, href, start, end: start + href.length,
+        sessionId: 's', messageClientId: href.includes('other') ? 'other' : 'm', text: '唯一正文 🙂' };
+      start += href.length + 1;
+      return ref;
+    });
+    const source = { text, agentReferences };
+    const original = JSON.stringify(source);
+    const output = projectAgentFacingText(source);
+    expect(output.split('唯一正文 🙂')).toHaveLength(4);
+    expect(output.match(/Message ID:/g)).toHaveLength(4);
+    expect(output).toContain('Please compare these messages.');
+    expect(JSON.stringify(source)).toBe(original);
+  });
+
   it('removes exact quote marker lines only when quotesEncoded is true without mutating input', () => {
     const text = `${QUOTE_MARKER}\n> selected\n\nreply`;
     const source = { text, quotesEncoded: true };

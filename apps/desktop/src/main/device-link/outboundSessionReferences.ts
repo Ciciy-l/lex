@@ -4,7 +4,9 @@
  * queued item 中的 deviceId 是相对控制端 renderer 的地址，不能交给被控端
  * 再解释。这里在越过 device-link 前由控制端 main 读取权威历史并固化快照。
  */
+import { collectInlineMessageReferenceBodies } from '@cindy/maker-shared/agent-input-projection';
 import type { AgentInputQueuedMessage } from '../../shared/agentInputQueue.js';
+import { reconcileSessionRefsForText } from '../../shared/agentInputQueue.js';
 import { createLogger } from '../logger.js';
 import { resolveSessionReferences } from '../maker-ipc/sessionReferenceResolver.js';
 
@@ -97,7 +99,10 @@ export async function rewriteOutboundSessionReferences(
   delete nextItem.trustedSessionReferenceContexts;
   if (queued.sessionRefs && queued.sessionRefs.length > 0) {
     try {
-      nextItem.trustedSessionReferenceContexts = await resolveSessionReferences(queued.sessionRefs);
+      nextItem.trustedSessionReferenceContexts = await resolveSessionReferences(queued.sessionRefs, {
+        inlineMessages: collectInlineMessageReferenceBodies(queued, href =>
+          reconcileSessionRefsForText(href, queued.sessionRefs)[0]?.deviceId),
+      });
     } catch (error) {
       // The raw deep link remains in `text`.  Dropping both side-channel
       // fields keeps the target from reinterpreting a foreign session id in

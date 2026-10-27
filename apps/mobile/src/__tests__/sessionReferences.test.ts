@@ -5,6 +5,7 @@ import {
   DL_SESSION_REFERENCE_CAPABILITY_CHANNEL,
 } from '@cindy/device-link';
 import { i18n } from '@/i18n';
+import { projectAgentFacingText } from '@cindy/maker-shared/agent-input-projection';
 import type { RemoteInvoke } from '@/device-link/mobileMakerTransport';
 import {
   estimateMobileReferenceTokens,
@@ -51,6 +52,48 @@ function asInvoke(
 }
 
 describe('mobile session-reference links', () => {
+  it.each(['enqueue', 'steer'] as const)('deduplicates only the projected anchor through mobile %s preparation', async (mode) => {
+    const href = 'cindy://session/source?message=anchor';
+    const body = '比较这段代码 🙂\nconst 答案 = 42;';
+    const item = { text: href + '\nKeep this instruction.', agentReferences: [{
+      kind: 'message' as const, href, start: 0, end: href.length, sessionId: 'source',
+      messageClientId: 'anchor', text: body,
+    }] };
+    const invoke = asInvoke(async (device, channel, args) => {
+      if (channel === DL_SESSION_REFERENCE_CAPABILITY_CHANNEL) return { supported: true, version: 1 };
+      expect(device).toBe('dev-source');
+      if (channel === 'local-db:sessions:get') return { id: 'source' };
+      if (channel === 'local-db:messages:around-client-id') {
+        return [message('source', '1', 'anchor', body)];
+      }
+      const order = (args[0] as { order: string }).order;
+      return { items: order === 'asc' ? [message('source', '2', 'neighbor', body)] : [], hasMore: false };
+    });
+    const prepare = mode === 'steer' ? prepareMobileQueuedSessionReferencesForSteer : prepareMobileQueuedSessionReferences;
+    const result = await prepare(item, invoke, () => 'dev-source', 'dev-target');
+    const contexts = (result as typeof result & { trustedSessionReferenceContexts: MobileSessionReferenceContext[] }).trustedSessionReferenceContexts;
+    expect(contexts[0]).toMatchObject({ messageClientId: 'anchor', messageCount: 1, truncated: false });
+    expect(contexts[0].messages[0].content).toBe(body); // Different message, same prose stays.
+    expect(projectAgentFacingText(result)).toContain(body);
+    expect(projectAgentFacingText(result)).toContain('Keep this instruction.');
+    expect(estimateMobileReferenceTokens(serializeMobileSessionReferencePayload(contexts))).toBeLessThanOrEqual(7872);
+  });
+
+  it.each(['x', 'ab', '🙂🙂'])('shrinks an oversized escaped anchor after exhausting neighbor %s', async (neighbor) => {
+    const invoke = asInvoke(async (_device, channel, args) => {
+      if (channel === 'local-db:sessions:get') return { id: 's' };
+      if (channel === 'local-db:messages:around-client-id') return [message('s', '1', 'anchor', '"'.repeat(30000))];
+      return { items: (args[0] as { order: string }).order === 'asc'
+        ? [message('s', '2', 'neighbor', neighbor)] : [], hasMore: false };
+    });
+    const contexts = await resolveMobileSessionReferences([{ sessionId: 's', messageClientId: 'anchor', deviceId: 'dev' }], invoke);
+    expect(contexts[0].messages).toHaveLength(2);
+    expect(contexts[0].truncated).toBe(true);
+    expect(contexts[0].messages[0].content.startsWith('…')).toBe(true);
+    expect(estimateMobileReferenceTokens(serializeMobileSessionReferencePayload(contexts))).toBeLessThanOrEqual(7872);
+    for (const row of contexts[0].messages) expect(row.content).toBe(row.content.toWellFormed());
+  });
+
   it('only permits stored-snapshot fallback for transient source outages', () => {
     expect(canFallbackToStoredMobileSessionReferenceSnapshot(
       new MobileSessionReferenceError('SESSION_REFERENCE_OFFLINE', 'offline'),

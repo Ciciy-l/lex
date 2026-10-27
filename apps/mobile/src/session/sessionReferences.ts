@@ -1,3 +1,4 @@
+import { agentInputMessageReferenceKey, collectInlineMessageReferenceBodies, type AgentInputReference, type InlineMessageReferenceBodies } from '@cindy/maker-shared/agent-input-projection';
 import {
   DL_HISTORY_MESSAGES_CHANNEL,
   DL_SESSION_REFERENCE_CAPABILITY_CHANNEL,
@@ -69,6 +70,7 @@ export interface MobilePersistedSessionReferenceMetadata {
 
 interface MobileQueuedReferenceCarrier {
   text: string;
+  agentReferences?: readonly AgentInputReference[];
   sessionRefs?: MobileSessionReference[];
   trustedSessionReferenceContexts?: MobileSessionReferenceContext[];
   sessionReferencesRequireTrustedSnapshot?: boolean;
@@ -255,35 +257,40 @@ function sliceTailToTokenBudget(text: string, budget: number): string {
   if (estimateMobileReferenceTokens(text) <= budget) return text;
   if (budget === 1) return '…';
   const payloadBudget = budget - 1;
+  const characters = Array.from(text);
   let low = 0;
-  let high = text.length;
+  let high = characters.length;
   while (low < high) {
     const middle = Math.ceil((low + high) / 2);
-    if (estimateMobileReferenceTokens(text.slice(text.length - middle)) <= payloadBudget) low = middle;
+    if (estimateMobileReferenceTokens(characters.slice(characters.length - middle).join('')) <= payloadBudget) low = middle;
     else high = middle - 1;
   }
-  return `…${text.slice(text.length - low)}`;
+  return `…${characters.slice(characters.length - low).join('')}`;
 }
 
 function fitMessagesToTokenBudget(
   raw: MobileSessionReferenceMessage[],
   tokenBudget: number,
   anchorIndex?: number,
-): { messages: MobileSessionReferenceMessage[]; usedTokens: number; truncated: boolean } {
+  inlineBodies?: ReadonlySet<string>,
+): { messages: MobileSessionReferenceMessage[]; usedTokens: number; truncated: boolean; anchorPosition: number } {
   if (anchorIndex !== undefined && raw[anchorIndex]) {
     const anchor = raw[anchorIndex];
     const anchorTokens = estimateMobileReferenceTokens(anchor.content);
-    if (anchorTokens >= tokenBudget) {
+    const excludeAnchor = inlineBodies?.has(anchor.content.trim()) === true;
+    if (!excludeAnchor && anchorTokens >= tokenBudget) {
       const content = sliceTailToTokenBudget(anchor.content, tokenBudget);
       return {
         messages: content ? [{ ...anchor, content }] : [],
         usedTokens: tokenBudget,
         truncated: true,
+        anchorPosition: content ? 0 : -1,
       };
     }
 
-    let remaining = tokenBudget - anchorTokens;
-    const kept = new Map<number, MobileSessionReferenceMessage>([[anchorIndex, anchor]]);
+    let remaining = excludeAnchor ? tokenBudget : tokenBudget - anchorTokens;
+    const kept = new Map<number, MobileSessionReferenceMessage>();
+    if (!excludeAnchor) kept.set(anchorIndex, anchor);
     let budgetExhausted = false;
     let partialTruncation = false;
     for (let distance = 1; kept.size < raw.length && !budgetExhausted; distance += 1) {
@@ -309,10 +316,12 @@ function fitMessagesToTokenBudget(
       }
       if (!found) break;
     }
+    const messages = [...kept.entries()].sort(([a], [b]) => a - b).map(([, message]) => message);
     return {
-      messages: [...kept.entries()].sort(([left], [right]) => left - right).map(([, message]) => message),
+      messages,
       usedTokens: tokenBudget - remaining,
-      truncated: partialTruncation || kept.size < raw.length,
+      truncated: partialTruncation || kept.size < raw.length - (excludeAnchor ? 1 : 0),
+      anchorPosition: excludeAnchor ? -1 : messages.indexOf(anchor),
     };
   }
 
@@ -336,11 +345,12 @@ function fitMessagesToTokenBudget(
     truncated = true;
     break;
   }
-  return { messages: kept, usedTokens: tokenBudget - remaining, truncated };
+  return { messages: kept, usedTokens: tokenBudget - remaining, truncated, anchorPosition: -1 };
 }
 
 function fitSerializedPayloadBudget(
   input: readonly MobileSessionReferenceContext[],
+  anchorPositions: readonly number[] = [],
 ): MobileSessionReferenceContext[] {
   const contexts = input.map((context) => ({
     ...context,
@@ -350,18 +360,27 @@ function fitSerializedPayloadBudget(
   while (tokens > FINAL_REFERENCE_PAYLOAD_TOKENS) {
     let targetContext: MobileSessionReferenceContext | undefined;
     let targetMessage: MobileSessionReferenceMessage | undefined;
-    for (const context of contexts) {
-      for (const message of context.messages) {
-        if (!targetMessage || message.content.length > targetMessage.content.length) {
-          targetContext = context;
-          targetMessage = message;
+    // Shed neighboring context first; the user-selected anchor is the last resort.
+    for (const protectAnchors of [true, false]) {
+      for (let contextIndex = 0; contextIndex < contexts.length; contextIndex++) {
+        const context = contexts[contextIndex];
+        for (let messageIndex = 0; messageIndex < context.messages.length; messageIndex++) {
+          if (protectAnchors && messageIndex === anchorPositions[contextIndex]) continue;
+          const message = context.messages[messageIndex];
+          if (Array.from(message.content).length <= 1) continue;
+          if (!targetMessage || message.content.length > targetMessage.content.length) {
+            targetContext = context;
+            targetMessage = message;
+          }
         }
       }
+      if (targetMessage) break;
     }
-    if (targetMessage && targetMessage.content.length > 1) {
+    if (targetMessage) {
       const excess = tokens - FINAL_REFERENCE_PAYLOAD_TOKENS;
-      const drop = Math.min(targetMessage.content.length - 1, Math.max(1, excess));
-      targetMessage.content = `…${targetMessage.content.slice(drop + 1)}`;
+      const characters = Array.from(targetMessage.content);
+      const drop = Math.min(characters.length - 1, Math.max(1, excess));
+      targetMessage.content = '…' + characters.slice(drop + 1).join('');
       if (targetContext) targetContext.truncated = true;
     } else {
       const titled = contexts.find((context) => context.title);
@@ -599,7 +618,8 @@ async function resolveRemoteReference(
   ref: MobileSessionReference,
   messageLimit: number,
   tokenBudget: number,
-): Promise<{ context: MobileSessionReferenceContext; usedTokens: number }> {
+  inlineBodies?: ReadonlySet<string>,
+): Promise<{ context: MobileSessionReferenceContext; usedTokens: number; anchorPosition: number }> {
   if (!ref.deviceId) {
     throw new MobileSessionReferenceError(
       'SESSION_REFERENCE_NOT_FOUND',
@@ -704,7 +724,7 @@ async function resolveRemoteReference(
       `Session ${ref.sessionId} has no visible messages to reference`,
     );
   }
-  const fitted = fitMessagesToTokenBudget(mapped, tokenBudget, anchorIndex);
+  const fitted = fitMessagesToTokenBudget(mapped, tokenBudget, anchorIndex, inlineBodies);
   return {
     context: {
       sessionId: ref.sessionId,
@@ -721,6 +741,7 @@ async function resolveRemoteReference(
       ...(terminal ? { terminal } : {}),
     },
     usedTokens: fitted.usedTokens,
+    anchorPosition: fitted.anchorPosition,
   };
 }
 
@@ -728,6 +749,7 @@ async function resolveRemoteReference(
 export async function resolveMobileSessionReferences(
   refs: readonly MobileSessionReference[] | undefined,
   invoke: RemoteInvoke,
+  options?: { inlineMessages?: InlineMessageReferenceBodies },
 ): Promise<MobileSessionReferenceContext[]> {
   if (!refs || refs.length === 0) return [];
   if (refs.length > MAX_MOBILE_SESSION_REFERENCES) {
@@ -738,6 +760,7 @@ export async function resolveMobileSessionReferences(
   }
 
   const contexts: MobileSessionReferenceContext[] = [];
+  const anchorPositions: number[] = [];
   let remainingMessages = MAX_MOBILE_REFERENCE_MESSAGES;
   let remainingTokens = MAX_MOBILE_REFERENCE_TOKENS;
   for (let index = 0; index < refs.length; index += 1) {
@@ -762,12 +785,16 @@ export async function resolveMobileSessionReferences(
     const referencesLeft = refs.length - index;
     const messageLimit = Math.max(1, Math.floor(remainingMessages / referencesLeft));
     const tokenBudget = Math.max(1, Math.floor(remainingTokens / referencesLeft));
-    const resolved = await resolveRemoteReference(invoke, ref, messageLimit, tokenBudget);
+    const inlineBodies = ref.messageClientId === undefined ? undefined : options?.inlineMessages?.get(
+      agentInputMessageReferenceKey(ref.sessionId, ref.messageClientId, ref.deviceId),
+    );
+    const resolved = await resolveRemoteReference(invoke, ref, messageLimit, tokenBudget, inlineBodies);
     contexts.push(resolved.context);
+    anchorPositions.push(resolved.anchorPosition);
     remainingMessages -= resolved.context.messageCount;
     remainingTokens -= resolved.usedTokens;
   }
-  return fitSerializedPayloadBudget(contexts);
+  return fitSerializedPayloadBudget(contexts, anchorPositions);
 }
 
 /**
@@ -874,7 +901,10 @@ export async function prepareMobileQueuedSessionReferences<T extends MobileQueue
     return prepared;
   }
   try {
-    const contexts = await resolveMobileSessionReferences(refs, invoke);
+    const contexts = await resolveMobileSessionReferences(refs, invoke, {
+      inlineMessages: collectInlineMessageReferenceBodies(item, href =>
+        extractMobileSessionReferences(href, deviceIdForSession, item.sessionRefs)[0]?.deviceId),
+    });
     return {
       ...prepared,
       sessionRefs: refs,
@@ -915,7 +945,10 @@ export async function prepareMobileQueuedSessionReferencesForSteer<T extends Mob
     return prepared;
   }
   try {
-    const contexts = await resolveMobileSessionReferences(refs, invoke);
+    const contexts = await resolveMobileSessionReferences(refs, invoke, {
+      inlineMessages: collectInlineMessageReferenceBodies(item, href =>
+        extractMobileSessionReferences(href, deviceIdForSession, item.sessionRefs)[0]?.deviceId),
+    });
     return {
       ...prepared,
       sessionRefs: refs,
