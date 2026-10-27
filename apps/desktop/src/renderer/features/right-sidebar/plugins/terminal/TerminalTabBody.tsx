@@ -125,7 +125,9 @@ function LocalTerminalTabBody({ state, ctx, active }: Props) {
   const { t } = useTranslation();
   const { confirm } = useConfirmDialog();
   const [destroyingPaneId, setDestroyingPaneId] = useState<string | null>(null);
-  const destroyingRef = useRef(false);
+  const destroyingRef = useRef<{ paneId: string; ptyId: string; confirmed: boolean } | null>(null);
+  const scopeRef = useRef(ctx);
+  scopeRef.current = ctx;
   // A failed create/restart belongs to one pane.  Keeping this keyed by pane
   // id prevents an error from pane A being shown after the user focuses pane B.
   const [runtimeErrors, setRuntimeErrors] = useState<Record<string, RuntimeError>>({});
@@ -212,7 +214,9 @@ function LocalTerminalTabBody({ state, ctx, active }: Props) {
   const canRestorePane = useCallback((paneId: string, ptyId: string) => {
     const current = stateRef.current;
     const pane = current.panes[paneId];
-    return !destroyingRef.current && !current.viewHidden && !!pane && !pane.viewHidden
+    const destroying = destroyingRef.current;
+    return !(destroying?.confirmed && destroying.paneId === paneId && destroying.ptyId === ptyId)
+      && !current.viewHidden && !!pane && !pane.viewHidden
       && (pane.terminalId || terminalPtyId(tabId, paneId)) === ptyId;
   }, [tabId]);
 
@@ -263,7 +267,14 @@ function LocalTerminalTabBody({ state, ctx, active }: Props) {
     if (destroyingRef.current) return;
     const pane = stateRef.current.panes[paneId];
     if (!pane) return;
-    destroyingRef.current = true;
+    const request = { sessionId: ctx.sessionId, tabId, paneId, ptyId: pane.terminalId || terminalPtyId(tabId, paneId), confirmed: false };
+    const owner = getDataOwnerGeneration();
+    const current = () => rootRef.current !== null && isDataOwnerGenerationCurrent(owner)
+      && scopeRef.current.sessionId === request.sessionId && scopeRef.current.tabId === request.tabId
+      && !!stateRef.current.panes[paneId]
+      && (stateRef.current.panes[paneId].terminalId || terminalPtyId(tabId, paneId)) === request.ptyId;
+    // The dialog prevents duplicate dialogs, but does not retire any PTY.
+    destroyingRef.current = request;
     setDestroyingPaneId(paneId);
     try {
       if (!await confirm({
@@ -272,11 +283,28 @@ function LocalTerminalTabBody({ state, ctx, active }: Props) {
         confirmText: t('rightSidebar.terminal.destroyPane'),
         confirmVariant: 'destructive',
       })) return;
-      await destroyTerminal(ctx.sessionId, pane.terminalId || terminalPtyId(tabId, paneId));
+      if (!current() || !canRestorePane(paneId, request.ptyId)) return;
+      request.confirmed = true;
+      // Only a confirmed target loses its old attachment generation.
+      const entry = getOrCreateXterm(request.ptyId);
+      entry.attachGeneration = (entry.attachGeneration ?? 0) + 1;
+      await destroyTerminal(request.sessionId, request.ptyId);
+      if (!current()) return;
       setZoomedPaneId(null);
       setSearchPaneId(null);
-    } catch { toast.error(t('rightSidebar.terminal.actionFailed')); }
-    finally { destroyingRef.current = false; setDestroyingPaneId(null); }
+    } catch {
+      if (current()) {
+        toast.error(t('rightSidebar.terminal.actionFailed'));
+        // Unknown destruction never authorizes another automatic create.
+        // Keep an actionable error if its old attachment was invalidated.
+        if (request.confirmed) setPaneRuntimeError(paneId, { key: 'rightSidebar.terminal.actionFailed', detail: '' });
+      }
+    } finally {
+      if (destroyingRef.current === request) {
+        destroyingRef.current = null;
+        setDestroyingPaneId(null);
+      }
+    }
   };
 
   const selectPane = useCallback(
