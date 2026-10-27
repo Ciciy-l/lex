@@ -9334,6 +9334,7 @@
       }
     },
     "markdownRenderer": {
+      "fileUnavailable": "暂时无法打开此文件。再次点击链接可刷新并重试。",
       "codeCopied": "已复制",
       "copyCode": "复制代码",
       "annotateImage": "标注图片",

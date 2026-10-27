@@ -10,16 +10,17 @@ import { openRemoteChatFile } from './remoteFileOpen';
  * hand off to the OS default application instead of trying to decode binary
  * content as UTF-8.
  */
-export async function shouldOpenTextLightbox(filePath: string): Promise<boolean> {
+export async function shouldOpenTextLightbox(filePath: string, isCurrent: () => boolean = () => true): Promise<boolean> {
+  if (!isCurrent()) return false;
   if (isTextPreviewSupported(filePath)) return true;
 
   try {
     const res = await window.electronAPI.openPath(filePath);
-    if (shouldShowOpenPathError(res)) {
+    if (isCurrent() && shouldShowOpenPathError(res)) {
       toast.error(res.error || i18n.t('logic.errors.openFileFailed'));
     }
   } catch (err) {
-    toast.error(err instanceof Error ? err.message : i18n.t('logic.errors.openFileFailed'));
+    if (isCurrent()) toast.error(err instanceof Error ? err.message : i18n.t('logic.errors.openFileFailed'));
   }
 
   return false;
@@ -36,9 +37,11 @@ export async function shouldOpenTextLightbox(filePath: string): Promise<boolean>
 export async function shouldOpenTextLightboxForOrigin(
   ctx: { origin: SessionFileOrigin; workingDir: string },
   filePath: string,
+  isCurrent: () => boolean = () => true,
 ): Promise<boolean> {
+  if (!isCurrent()) return false;
   if (isTextPreviewSupported(filePath)) return true;
-  if (!isRemoteFileOrigin(ctx.origin)) return shouldOpenTextLightbox(filePath);
-  await openRemoteChatFile(ctx.origin, ctx.workingDir, filePath);
+  if (!isRemoteFileOrigin(ctx.origin)) return shouldOpenTextLightbox(filePath, isCurrent);
+  await openRemoteChatFile(ctx.origin, ctx.workingDir, filePath, isCurrent);
   return false;
 }

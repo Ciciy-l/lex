@@ -9334,6 +9334,7 @@
       }
     },
     "markdownRenderer": {
+      "fileUnavailable": "이 파일을 열 수 없습니다. 링크를 다시 클릭하여 새로고침하고 다시 시도하세요.",
       "codeCopied": "복사됨",
       "copyCode": "코드 복사",
       "annotateImage": "이미지 주석",

@@ -9333,6 +9333,7 @@
       }
     },
     "markdownRenderer": {
+      "fileUnavailable": "暫時無法開啟此檔案。再次點擊連結可重新整理並重試。",
       "codeCopied": "已複製",
       "copyCode": "複製程式碼",
       "annotateImage": "標註圖片",

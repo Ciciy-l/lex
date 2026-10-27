@@ -9334,6 +9334,7 @@
       }
     },
     "markdownRenderer": {
+      "fileUnavailable": "このファイルを開けません。リンクをもう一度クリックして再読み込みしてください。",
       "codeCopied": "コピー済み",
       "copyCode": "コードをコピー",
       "annotateImage": "画像に注釈",

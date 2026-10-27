@@ -9,7 +9,7 @@
  * re-implement what we're trying to verify.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -579,5 +579,42 @@ describe('leading ~ (home) expansion', () => {
     );
     expect(out['~/Desktop/1.txt']).toEqual({ status: 'unique', candidates: [homeFile], kind: 'file' });
     expect(out['src/App.tsx']).toEqual({ status: 'unique', candidates: [rel], kind: 'file' });
+  });
+});
+
+describe('explicit file retry', () => {
+  it('refreshes a negative batch entry after the referenced file is created', async () => {
+    expect((await resolveWorkspacePathBatchCached(['new.ts'], workspace))['new.ts'].status).toBe('none');
+    const file = write('new.ts', 'new content');
+    expect((await resolveWorkspacePathCached('new.ts', workspace)).status).toBe('none');
+    expect(await resolveWorkspacePathCached('new.ts', workspace, { refresh: true }))
+      .toEqual({ status: 'unique', candidates: [file], kind: 'file' });
+    expect((await resolveWorkspacePathBatchCached(['new.ts'], workspace))['new.ts'].candidates).toEqual([file]);
+  });
+
+  it('does not let an old batch overwrite an explicit refresh', async () => {
+    const file = write('old.ts');
+    const oldStat = fs.statSync(file);
+    let release!: () => void;
+    let entered!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const spy = vi.spyOn(fs.promises, 'stat').mockImplementationOnce(async () => {
+      entered(); await pending; return oldStat as never;
+    });
+    const old = resolveWorkspacePathBatchCached(['old.ts'], workspace);
+    try {
+      await started;
+      fs.unlinkSync(file);
+      expect((await resolveWorkspacePathCached('old.ts', workspace, { refresh: true })).status).toBe('none');
+      release(); await old;
+      expect((await resolveWorkspacePathCached('old.ts', workspace)).status).toBe('none');
+    } finally { release(); await old; spy.mockRestore(); }
+  });
+
+  it('rechecks the active path guard before reusing a cached positive result', async () => {
+    write('private.ts');
+    expect((await resolveWorkspacePathCached('private.ts', workspace)).status).toBe('unique');
+    expect((await resolveWorkspacePathCached('private.ts', workspace, { isPathAllowed: () => false })).status).toBe('none');
   });
 });

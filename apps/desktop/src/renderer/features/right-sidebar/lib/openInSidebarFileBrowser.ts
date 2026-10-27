@@ -22,26 +22,32 @@ import { routeSidebarCommand } from './detachedSidebarRouting';
 export async function openDirInSidebarFileBrowser(
   sessionId: string,
   relDirPath: string,
+  isCurrent: () => boolean = () => true,
 ): Promise<void> {
+  if (!isCurrent()) return;
   const routeResult = await routeSidebarCommand({
     type: 'open-file-browser',
     sessionId,
     relPath: relDirPath,
     targetKind: 'directory',
   });
+  if (!isCurrent()) return;
   if (routeResult !== 'attached') {
     if (routeResult !== 'routed') return;
     requestRightSidebarVisibility('open', { sessionId });
     return;
   }
   await ensureHydrated(sessionId);
+  if (!isCurrent()) return;
   const bucket = getBucket(sessionId);
   const existing = bucket.tabs.find((t) => t.kind === 'file-browser');
   if (existing) {
     if (bucket.activeToolId !== existing.id) {
       await setActiveTab(sessionId, existing.id);
+      if (!isCurrent()) return;
     }
     await patchTabState(sessionId, existing.id, (current) => {
+      if (!isCurrent()) return current;
       const base =
         typeof current === 'object' && current !== null ? (current as Record<string, unknown>) : {};
       const nonce = typeof base.revealDirNonce === 'number' ? base.revealDirNonce : 0;
@@ -54,7 +60,7 @@ export async function openDirInSidebarFileBrowser(
       revealDirNonce: 1,
     });
   }
-  requestRightSidebarVisibility('open', { sessionId });
+  if (isCurrent()) requestRightSidebarVisibility('open', { sessionId });
 }
 
 /** 在指定 session 的侧边栏文件浏览器里打开 workdir 相对文件,并确保侧边栏可见。 */

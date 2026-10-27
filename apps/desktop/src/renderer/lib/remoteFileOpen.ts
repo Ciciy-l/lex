@@ -1,3 +1,4 @@
+import { getDataOwnerGeneration, isDataOwnerGenerationCurrent } from '../contexts/dataOwnerGeneration';
 import { shouldShowOpenPathError } from '../../shared/openPathResult';
 /**
  * remoteFileOpen — 聊天流文件类交互的远程分流入口(renderer 侧)。
@@ -61,13 +62,17 @@ export async function fetchChatFileWithToasts(
   origin: RemoteFileOrigin,
   workdir: string,
   absPath: string,
+  isCurrent: () => boolean = () => true,
 ): Promise<string | null> {
+  if (!isCurrent()) return null;
   let fetchingToastId: string | null = null;
   const delayed = setTimeout(() => {
+    if (!isCurrent()) return;
     fetchingToastId = toast.warning(i18n.t('chat.remoteFile.fetching'), { duration: 120_000 });
   }, 600);
   try {
     const res = await fetchChatFileToCache(origin, workdir, absPath);
+    if (!isCurrent()) return null;
     if (!res.ok) {
       toast.error(chatFileErrorText(res.code));
       return null;
@@ -85,11 +90,12 @@ export async function openRemoteChatFile(
   origin: RemoteFileOrigin,
   workdir: string,
   absPath: string,
+  isCurrent: () => boolean = () => true,
 ): Promise<void> {
-  const cachePath = await fetchChatFileWithToasts(origin, workdir, absPath);
-  if (!cachePath) return;
+  const cachePath = await fetchChatFileWithToasts(origin, workdir, absPath, isCurrent);
+  if (!cachePath || !isCurrent()) return;
   const res = await window.electronAPI.openPath(cachePath);
-  if (shouldShowOpenPathError(res)) toast.error(res.error || i18n.t('logic.errors.openFileFailed'));
+  if (isCurrent() && shouldShowOpenPathError(res)) toast.error(res.error || i18n.t('logic.errors.openFileFailed'));
 }
 
 /** 远程会话「定位文件」:取回缓存副本后在文件管理器中定位本地副本。 */
@@ -97,11 +103,12 @@ export async function revealRemoteChatFile(
   origin: RemoteFileOrigin,
   workdir: string,
   absPath: string,
+  isCurrent: () => boolean = () => true,
 ): Promise<void> {
-  const cachePath = await fetchChatFileWithToasts(origin, workdir, absPath);
-  if (!cachePath) return;
+  const cachePath = await fetchChatFileWithToasts(origin, workdir, absPath, isCurrent);
+  if (!cachePath || !isCurrent()) return;
   const res = await window.electronAPI.showItemInFolder({ filePath: cachePath });
-  if (!res.success) toast.error(res.error ?? i18n.t('chat.media.openFolderFailed'));
+  if (isCurrent() && !res.success) toast.error(res.error ?? i18n.t('chat.media.openFolderFailed'));
 }
 
 // ── chip 点亮预检(远端精确 stat)──────────────────────────────────────────
@@ -205,7 +212,7 @@ function verdictKey(
   const endpoint =
     origin.kind === 'device' ? `dev:${origin.deviceId}` : `ssh:${origin.remoteHostId}`;
   return (
-    `${endpoint}|${workdir}|${absPath}` +
+    JSON.stringify(getDataOwnerGeneration()) + '|' + `${endpoint}|${workdir}|${absPath}` +
     (modifiedWindow ? `|mtime:${modifiedWindow.startMs}:${modifiedWindow.endMs}` : '')
   );
 }
@@ -263,8 +270,15 @@ export function verifyRemotePathCached(
   workdir: string,
   absPath: string,
   modifiedWindow?: RemoteModifiedWindow,
+  options: { refresh?: boolean } = {},
 ): Promise<RemotePathVerdict> {
   const key = verdictKey(origin, workdir, absPath, modifiedWindow);
+  const owner = getDataOwnerGeneration();
+  if (options.refresh) {
+    verdictCache.delete(key);
+    verdictInflight.delete(key);
+    unknownUntil.delete(key);
+  }
   const hit = verdictCache.get(key);
   if (hit) return Promise.resolve(hit);
   const pending = verdictInflight.get(key);
@@ -289,6 +303,7 @@ export function verifyRemotePathCached(
     .then((res) => res.verdict)
     .catch(() => 'unknown' as const)
     .then((verdict) => {
+      if (verdictInflight.get(key) !== p || !isDataOwnerGenerationCurrent(owner)) return verdict;
       if (verdict === 'unknown') {
         // 短 TTL 负缓存,**不进 verdictCache**(见本节头注释的不变量 A)。
         capMapSize(unknownUntil, UNKNOWN_CACHE_CAP);
@@ -304,7 +319,7 @@ export function verifyRemotePathCached(
       notifyVerdictChange(key);
       return verdict;
     })
-    .finally(() => verdictInflight.delete(key));
+    .finally(() => { if (verdictInflight.get(key) === p) verdictInflight.delete(key); });
   verdictInflight.set(key, p);
   return p;
 }

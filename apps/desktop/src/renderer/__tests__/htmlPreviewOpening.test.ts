@@ -86,3 +86,16 @@ it('keeps SSH HTML on the remote preview path', async () => {
   expect(mocks.preview).toHaveBeenCalledWith({ origin: ssh.origin, workdir: '/remote', absPath: '/remote/index.html' });
   expect(mocks.local).not.toHaveBeenCalled();
 });
+
+it('does not open or report a late preview after the requesting view is retired', async () => {
+  let finish!: (value: { url: string }) => void;
+  mocks.preview.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  let current = true;
+  const pending = openHtmlFileByPreference('session', '/remote/index.html', t, context, undefined, () => current);
+  current = false;
+  finish({ url: 'http://127.0.0.1:12345/old/' });
+  await pending;
+  expect(mocks.sidebar).not.toHaveBeenCalled();
+  expect(mocks.external).not.toHaveBeenCalled();
+  expect(mocks.error).not.toHaveBeenCalled();
+});

@@ -3108,7 +3108,7 @@ interface ElectronAPI {
    * ends with `/<href>`. Returns 'none' on bad input or no matches so the
    * renderer can fall back to legacy resolveLocalPath.
    */
-  resolvePath: (params: { href: string; workingDir: string }) => Promise<{
+  resolvePath: (params: { href: string; workingDir: string; refresh?: boolean }) => Promise<{
     status: 'unique' | 'multiple' | 'none';
     candidates: string[];
     /** unique 命中时的目标类型;缺省按 file 理解(老 main 兼容)。 */
