@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appendLexUserAgent, withLexApplicationHeaders, withLexCustomHeaders } from './application-headers.js';
+import { appendLexUserAgent, withLexApplicationHeaders, withLexCustomHeaders } from '@cindy/model-compat/application-headers';
 
 describe('model request application identity', () => {
   it('preserves actual native metadata and adds one token through repeated proxies', () => {

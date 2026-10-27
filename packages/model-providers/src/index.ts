@@ -323,4 +323,5 @@ export {
 
 export { projectBuiltinOmpProvider, withOmpPresetRuntime } from './ompProjection.js';
 
-export { appendLexUserAgent, withLexApplicationHeaders, withLexCustomHeaders } from '@cindy/model-compat';
+// UI/mobile imports must not load the Node-only compatibility adapter barrel.
+export { appendLexUserAgent, withLexApplicationHeaders, withLexCustomHeaders } from '@cindy/model-compat/application-headers';
