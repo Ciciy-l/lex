@@ -1649,7 +1649,7 @@ describe('db worker tx handlers', () => {
 
   it.each([false, true])('honors native clear authority through Renderer/Main/SQLite failures and lost replies (inline=%s)', async useInlineWorker => {
     await withClient(async (client, config) => {
-      for (const scenario of ['intent', 'busy', 'exit', 'db', 'tombstone', 'success', 'lost-success', 'lost-failure']) {
+      for (const scenario of ['intent', 'busy', 'exit', 'db', 'tombstone', 'success', 'late-success', 'lost-success', 'lost-read-success', 'lost-failure']) {
         await client.exec('DELETE FROM sessions');
         const root = path.join(path.dirname(config.dbPath!), scenario), source = path.join(root, 'source.jsonl');
         await seedSession(client, 's1', { sdkSessionId: source });
@@ -1665,10 +1665,15 @@ describe('db worker tx handlers', () => {
         const session = new Session({ id: 's1', agentKind: 'pi', workDir: root, handle, logger, turnStallMs: 0,
           capabilities: { sessionTree: { supported: true } } as never });
         vi.spyOn(session, 'presentation', 'get').mockReturnValue({} as never);
+        const delayed = ['late-success', 'lost-success', 'lost-read-success', 'lost-failure'].includes(scenario);
+        const persistence = clearTestBarrier(), persistenceEntered = clearTestBarrier();
         const main = productionClearFixture(client, root, session, { beforeClose: async () => {
           if (scenario === 'exit') throw new Error('Executor exit unconfirmed');
+        }, beforePersist: async () => {
+          persistenceEntered.resolve(); if (delayed) await persistence.promise;
         } });
-        const renderer = productionRendererClearFixture(main, client, scenario.startsWith('lost-'));
+        const renderer = productionRendererClearFixture(main, client, { lostReply: scenario.startsWith('lost-'),
+          holdFirstRead: scenario === 'lost-read-success' });
         if (scenario === 'db' || scenario === 'lost-failure')
           await client.exec("CREATE TRIGGER reject_renderer_clear BEFORE UPDATE ON sessions BEGIN SELECT RAISE(ABORT, 'clear unavailable'); END");
         const original = atomic.atomicWriteFileSync;
@@ -1678,14 +1683,45 @@ describe('db worker tx handlers', () => {
           return original(file, value, ...rest);
         });
         try {
-          if (scenario === 'busy') await withNativeHistoryOperation(root, 's1', () => renderer.clear());
-          else await renderer.clear();
-          const success = scenario === 'success' || scenario === 'lost-success';
+          const clearing = scenario === 'busy'
+            ? withNativeHistoryOperation(root, 's1', () => renderer.clear()) : renderer.clear();
+          const diagnostic = async () => JSON.stringify({ scenario, useInlineWorker, results: renderer.results,
+            pendingFence: renderer.pending(), receipt: (await main.read()).clearReceipt, calls: main.calls,
+            db: await client.queryOne('SELECT sdk_session_id, cleared_at FROM sessions WHERE id = ?', ['s1']),
+            journal: readNativeHistoryForClear(root, 's1') });
+          if (delayed) {
+            await persistenceEntered.promise;
+            // Expire delivery at a known uncommitted DB barrier, independent
+            // of worker/CI speed. Only this fixture's guard clock is controlled.
+            await renderer.expireGuard();
+            if (scenario === 'lost-read-success') {
+              await renderer.firstRead.promise; await renderer.expireGuard();
+            }
+            await clearing;
+            const pending = await diagnostic();
+            expect(renderer.state().messages, pending).toEqual([{ clientId: 'old', content: 'keep' }]);
+            expect(renderer.state().askUserDraft, pending).toBe('draft');
+            expect(renderer.pending(), pending).toBe(true);
+            expect(renderer.results.map(result => result.kind), pending).toEqual(
+              scenario === 'lost-read-success' ? ['timeout', 'timeout'] : ['timeout', 'value']);
+            expect((await main.read()).clearReceipt.status, pending).toBe('pending');
+            expect(main.calls.filter(call => call === 'queue'), pending).toHaveLength(0);
+            expect(await client.queryOne('SELECT sdk_session_id, cleared_at FROM sessions WHERE id = ?', ['s1']), pending)
+              .toEqual({ sdk_session_id: source, cleared_at: null });
+            expect(readNativeHistoryForClear(root, 's1')?.clear, pending).toEqual({ at: 500, previousClearedAt: null });
+            persistence.resolve(); await renderer.settled(); renderer.releaseFirstRead();
+            // Lost replies do not deliver another mutation. Reconcile the
+            // exact pending request by read only after Main's known outcome.
+            await renderer.reconcile(); await renderer.settled();
+          } else await clearing;
+          const success = ['success', 'late-success', 'lost-success', 'lost-read-success'].includes(scenario);
+          const outcome = await diagnostic();
           expect(renderer.calls.filter(call => call === 'mutation')).toHaveLength(1);
           expect(renderer.calls).not.toContain('generic-write');
           expect(renderer.calls).not.toContain('independent-close');
-          expect(renderer.state().messages).toEqual(success ? [] : [{ clientId: 'old', content: 'keep' }]);
-          expect(renderer.state().askUserDraft).toBe(success ? null : 'draft');
+          expect(renderer.state().messages, outcome).toEqual(success ? [] : [{ clientId: 'old', content: 'keep' }]);
+          expect(renderer.state().askUserDraft, outcome).toBe(success ? null : 'draft');
+          expect(renderer.pending(), outcome).toBe(false);
           expect(main.calls.filter(call => call === 'queue')).toHaveLength(success ? 1 : 0);
           const committed = success || scenario === 'tombstone';
           expect(await client.queryOne('SELECT sdk_session_id, cleared_at FROM sessions WHERE id = ?', ['s1']))
@@ -1704,6 +1740,7 @@ describe('db worker tx handlers', () => {
           main.changeOwner();
           expect((await main.read()).clearReceipt.status).toBe('unknown');
         } finally {
+          persistence.resolve(); renderer.releaseFirstRead(); await renderer.settled();
           write.mockRestore(); await session.close();
           await client.exec('DROP TRIGGER IF EXISTS reject_renderer_clear');
         }
@@ -4101,10 +4138,17 @@ async function withClient(
   }
 }
 
+function clearTestBarrier() {
+  let resolve!: () => void;
+  const promise = new Promise<void>(done => { resolve = done; });
+  return { promise, resolve };
+}
+
 /** Production Renderer functions, Main callbacks and real SQLite in one chain.
  * Only UI services/executor faults are synthetic; separate Renderer tests import
  * the full store to cover module state and live event ownership. */
-function productionRendererClearFixture(main: ReturnType<typeof productionClearFixture>, client: DbClient, lostReply = false) {
+function productionRendererClearFixture(main: ReturnType<typeof productionClearFixture>, client: DbClient,
+  options: { lostReply?: boolean; holdFirstRead?: boolean } = {}) {
   const names = ['clearSessionAfterGuard', 'clearLocalSessionAfterGuard', 'clearSessionAfterGuardImpl',
     'resetClearedSessionView', 'awaitRemoteClearOperation', 'captureActiveTurnBoundaryMarker', 'sameActiveTurnBoundaryMarker'];
   const ast = createSourceFile('store.ts', fs.readFileSync(path.resolve('src/renderer/lib/makerChatStore.ts'), 'utf8'), ScriptTarget.Latest, true);
@@ -4125,17 +4169,36 @@ function productionRendererClearFixture(main: ReturnType<typeof productionClearF
   let task: Promise<unknown> | undefined;
   const api = { input: { clearSession: (_id: string, at: string) => {
     calls.push('mutation'); task = main.clear(Date.parse(at));
-    if (lostReply) { void task.catch(() => {}); return new Promise(() => {}); }
+    if (options.lostReply) { void task.catch(() => {}); return new Promise(() => {}); }
     return task;
   }, getProjection: async (_id: string, opts: { clearRequestAt: string }) => {
-    calls.push('read'); await task?.catch(() => {}); return main.read(Date.parse(opts.clearRequestAt));
+    calls.push('read'); const projection = await main.read(Date.parse(opts.clearRequestAt));
+    if (calls.filter(call => call === 'read').length === 1) {
+      firstRead.resolve(); if (options.holdFirstRead) await firstReadReply.promise;
+    }
+    return projection;
   } }, closeSession: async () => { calls.push('independent-close'); } };
   const no = () => {};
+  const active = new Set<Promise<void>>(), requests = new Map();
+  const firstRead = clearTestBarrier(), firstReadReply = clearTestBarrier();
+  const guards = new Map<number, () => void>();
+  let guardId = 0, nextGuard = clearTestBarrier();
+  const results: Array<{ kind: string; receipt?: unknown }> = [];
   const dependencies = {
-    remoteClearInFlight: new Set(), localClearRequests: new Map(), rendererClearGenerationBySession: new Map(), rendererClearBoundaryBySession: new Map(),
+    trackClear: (operation: Promise<void>) => {
+      active.add(operation); void operation.then(() => active.delete(operation), () => active.delete(operation)); return operation;
+    },
+    recordWait: (result: { kind: string; value?: { clearReceipt?: unknown } }) => results.push({ kind: result.kind, receipt: result.value?.clearReceipt }),
+    remoteClearInFlight: new Set(), localClearRequests: requests, rendererClearGenerationBySession: new Map(), rendererClearBoundaryBySession: new Map(),
     getStickySessionDeviceId: () => undefined, beginInputProjectionOperation: () => ({ api, dataOwner: {}, generation: 0 }),
     isCurrentInputProjectionOrigin: () => true, isDataOwnerGenerationCurrent: () => true,
-    CLEAR_SESSION_GUARD_TIMEOUT_MS: 20, setTimeout, clearTimeout, log: { warn: no }, toast: { warning: no, error: no }, i18n: { t: (key: string) => key },
+    CLEAR_SESSION_GUARD_TIMEOUT_MS: 20,
+    setTimeout: (callback: () => void, ms: number) => {
+      expect(ms).toBe(20); const id = ++guardId; guards.set(id, callback);
+      nextGuard.resolve(); nextGuard = clearTestBarrier(); return id;
+    },
+    clearTimeout: (id: number) => guards.delete(id),
+    log: { warn: no }, toast: { warning: no, error: no }, i18n: { t: (key: string) => key },
     sessionService: { update },
     dismissVisionBridgeToast: no, noteRendererClearBoundary: no, invalidateMessageHistoryWindow: no, bumpInteractionReconcileEpoch: no,
     supersedeInputProjectionRequests: no, _lastViewedAt: new Map(), discardPendingTextDelta: no, emitPatch: no,
@@ -4143,9 +4206,22 @@ function productionRendererClearFixture(main: ReturnType<typeof productionClearF
     getOrCreateState: () => state, _messagesEpoch: new Map(),
     setState: (_id: string, fn: (state: Record<string, unknown>) => Record<string, unknown>) => { state = fn(state); },
   };
-  const code = transpileModule(bodies.join(String.fromCharCode(10)) + '; return clearSessionAfterGuard;', { compilerOptions: { target: ScriptTarget.ES2022 } }).outputText;
+  const code = transpileModule(bodies.join(String.fromCharCode(10)) + `
+    const originalWait = awaitRemoteClearOperation;
+    awaitRemoteClearOperation = async promise => { const result = await originalWait(promise); recordWait(result); return result; };
+    const originalClear = clearSessionAfterGuard;
+    clearSessionAfterGuard = (...args) => trackClear(originalClear(...args));
+    return clearSessionAfterGuard;`, { compilerOptions: { target: ScriptTarget.ES2022 } }).outputText;
   const clear = new Function(...Object.keys(dependencies), code)(...Object.values(dependencies));
-  return { calls, state: () => state, clear: () => clear('s1', new Date(500).toISOString()) as Promise<void> };
+  return { calls, results, firstRead, releaseFirstRead: firstReadReply.resolve,
+    pending: () => requests.has('s1'), state: () => state,
+    expireGuard: async () => {
+      if (!guards.size) await nextGuard.promise;
+      const [id, expire] = guards.entries().next().value!; guards.delete(id); expire();
+    },
+    clear: () => clear('s1', new Date(500).toISOString()) as Promise<void>,
+    reconcile: async () => { if (requests.has('s1')) await clear('s1', new Date(500).toISOString()); },
+    settled: async () => { await task?.catch(() => {}); while (active.size) await Promise.all([...active]); } };
 }
 
 async function withTwoClients(fn: (clients: [DbClient, DbClient]) => Promise<void>): Promise<void> {
