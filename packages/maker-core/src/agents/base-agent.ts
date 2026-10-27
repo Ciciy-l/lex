@@ -707,6 +707,8 @@ export interface PiSubagentRunnerLaunchRequest {
 }
 
 export interface AgentDeps {
+  /** Actual embedding application build, separate from the native CLI version. */
+  getAppVersion?: () => string;
   /** Host-only dual-frontend service. Control-plane probes and SSH keep their own transports. */
   createLocalCodexNativeService?: (options: StdioTransportOptions) => CodexNativeService;
   /** Optional task-owned frontend; requires the same concrete native service. */

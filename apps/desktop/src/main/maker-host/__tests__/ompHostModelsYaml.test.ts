@@ -187,6 +187,7 @@ describe('buildOmpManagedModelsYaml', () => {
   it('keeps only non-sensitive identifiers in headers', () => {
     const yaml = buildOmpManagedModelsYaml({ sessionId: 'sess-1', model: 'm1', token: SECRET });
     expect(yaml).toContain('x-cindy-omp-session-id');
+    expect(yaml).toContain("X-Title: 'Lex'");
     expect(yaml).toContain('sess-1');
     expect(yaml).not.toContain('omp-tok');
   });

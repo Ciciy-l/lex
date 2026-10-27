@@ -1,3 +1,4 @@
+import { withLexApplicationHeaders } from '@cindy/model-compat';
 /**
  * Loopback HTTP 反向代理实现 ——
  *
@@ -966,7 +967,10 @@ function forward(
     return;
   }
   const actualTarget = overrideTarget ?? target;
-  let actualHeaders = headerOverride ? { ...headers, ...headerOverride } : headers;
+  let actualHeaders = withLexApplicationHeaders({ ...headers, ...headerOverride }, {
+    // Explicit route/User-Agent overrides retain their configured value.
+    appendNativeUserAgent: !Object.keys(headerOverride ?? {}).some(name => name.toLowerCase() === 'user-agent'),
+  });
   if (headerDelete && headerDelete.length > 0) {
     // clone if we haven't already —— 不能就地改 `headers`(透明重试会复用同一份原始 headers)。
     if (actualHeaders === headers) actualHeaders = { ...headers };
@@ -2860,7 +2864,7 @@ export async function createAnthropicCompatProxy(opts: ProxyOptions): Promise<Pr
         method: req.method ?? 'GET',
         path: upstreamPath,
         headers: {
-          ...headers,
+          ...withLexApplicationHeaders(headers, { appendNativeUserAgent: true }),
           host: formatHostHeader(target.hostname, target.port, target.protocol),
           connection: 'Upgrade',
           upgrade: 'websocket',

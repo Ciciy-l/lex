@@ -1,3 +1,4 @@
+import { withLexApplicationHeaders } from '@cindy/model-providers';
 import { normalizeAutoReviewUserIntent, createAutoReviewActionContext, type AutoReviewUserIntent } from '../shared/auto-review-decision.js';
 import { getPiExtensionUiCapability } from './extension-ui-capabilities.js';
 import { managePiNativeHistory, PI_NATIVE_RAW_HISTORY, type PiNativeHistoryHandle } from './native-history-reopen.js';
@@ -2420,6 +2421,12 @@ export class PiAgent extends BaseAgent {
         ...(np.headers && Object.keys(np.headers).length > 0 ? { headers: np.headers } : {}),
         ...(nativeModels.length > 0 ? { models: nativeModels } : {}),
       };
+    }
+    // Apply application attribution after the effective OAuth/provider headers
+    // are chosen. Native SDK User-Agent and explicit model overrides remain.
+    for (const provider of Object.values(providers)) {
+      const config = provider as { headers?: Record<string, string> };
+      config.headers = withLexApplicationHeaders(config.headers ?? {});
     }
     const modelsJsonPath = joinRemotePosixPath(agentHome, 'models.json');
     const modelsJsonContent = JSON.stringify({ providers }, null, 2) + '\n';

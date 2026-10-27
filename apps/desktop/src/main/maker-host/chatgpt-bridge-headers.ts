@@ -21,7 +21,7 @@ export function buildChatgptBridgeHeaders({
     'openai-beta': 'responses=experimental',
     originator: 'codex_cli_rs',
     session_id: sessionId ?? '',
-    'user-agent': 'codex_cli_rs/0.0.0 (xdt-maker bridge)',
+    'user-agent': 'Lex-ChatGPTBridge',
   };
   if (accountId) headers['chatgpt-account-id'] = accountId;
   return headers;

@@ -3409,9 +3409,10 @@ assertRouteCurrent();
       externalAuth,
       requireEphemeralAuth,
       logger: this.deps.logger,
-      // 自报名只进 codex app-server 的 userAgent 展示串,无门控消费
-      // (2026-07-17 随品牌翻转改 cindy;上游 gating 走 originator,与此无关)。
-      clientInfo: { name: 'cindy', version: '0.0.0' },
+      // Native initialize derives originator and the UA suffix from this name.
+      // Identify the actual embedding app, retaining the CLI's own version and
+      // platform. Do not impersonate the reserved Codex Desktop/TUI identities.
+      clientInfo: { name: 'Lex', version: this.deps.getAppVersion?.() ?? '0.0.0' },
       codexProxyActive,
       codexBrowserUseAvailable,
       codexBrowserUseVersion,

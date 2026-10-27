@@ -1237,6 +1237,8 @@ describe('chatBridgeCapabilitiesForRoute', () => {
     expect(config).toBeDefined();
     if (!config) throw new Error('Anthropic subscription bridge config was not captured');
     const headers = await config.buildHeaders();
+    expect(new Headers(headers).get('user-agent')).toBe('@anthropic-ai/sdk/0.74.0 Lex');
+    expect(new Headers(headers).get('x-title')).toBe('Lex');
     expect(headers).toEqual(expect.objectContaining({
       'anthropic-version': '2023-06-01',
       authorization: 'Bearer claude-subscription-token',

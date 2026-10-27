@@ -870,7 +870,7 @@ describe('ClaudeCodeAgent plan mode', () => {
     const env = starts[0]?.env as Record<string, string> | undefined;
     expect(env?.ANTHROPIC_BASE_URL).toBe('https://provider.example/v1');
     expect(env?.ANTHROPIC_API_KEY).toBe('k-route');
-    expect(env?.ANTHROPIC_CUSTOM_HEADERS).toBe('authorization: Bearer k-route\nx-tenant: acme');
+    expect(env?.ANTHROPIC_CUSTOM_HEADERS).toBe('authorization: Bearer k-route\nx-tenant: acme\nX-Title: Lex');
     expect(env?.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env?.ENABLE_TOOL_SEARCH).toBe('false');
     expect(behaviorFlags).toHaveBeenCalledWith({

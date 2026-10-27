@@ -1,3 +1,4 @@
+import { withLexCustomHeaders } from '@cindy/model-providers';
 /**
  * env 三段组装 + process.env strip —— Claude Code spawn 用。
  *
@@ -586,6 +587,7 @@ export async function buildClaudeEnv(
     env.NODE_DEBUG = process.env.NODE_DEBUG ?? 'http,https,net,tls';
   }
 
+  env.ANTHROPIC_CUSTOM_HEADERS = withLexCustomHeaders(env.ANTHROPIC_CUSTOM_HEADERS);
   return env;
 }
 

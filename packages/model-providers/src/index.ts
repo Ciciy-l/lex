@@ -322,3 +322,5 @@ export {
 } from "./channelSelection.js";
 
 export { projectBuiltinOmpProvider, withOmpPresetRuntime } from './ompProjection.js';
+
+export { appendLexUserAgent, withLexApplicationHeaders, withLexCustomHeaders } from '@cindy/model-compat';

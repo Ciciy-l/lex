@@ -454,3 +454,21 @@ OMP 通过现有原生 host-tool 通道显式提供 `mcp__cindy_helper__ask_user
 此入口不扩展普通 helper 工具面，不改 `select` / `confirm` 权限审批桥的判定；
 SSH 使用当前远程任务的原生通道，主机不代造授权。相关 OMP、共享 Session、
 MCP 与循环检测回归随源码提交，由 CI 执行，不能把测试文件存在当作实测通过。
+
+### Lex 模型请求标识
+
+模型请求的应用标识由共享 withLexApplicationHeaders 处理，不参与鉴权、模型、
+reasoning effort、Fast 档位或正文组装。共享 HTTP/SSE 代理和 WebSocket 握手在
+保留实际原生 User-Agent 的基础上追加一次 Lex product token；明确配置的路由
+User-Agent 优先，大小写无关的删除规则最后执行。原生直连 Claude、Pi 与 OMP
+在可组合的 X-Title 中标识 Lex，原生 SDK 的 User-Agent 保持不变，已有自定义值优先。
+
+Codex initialize 自报 Lex 与实际应用构建版本，原生仍生成 CLI 版本和平台片段。
+此名称同时影响原生 originator，不只是展示；不使用保留的 Codex Desktop/TUI 身份。
+ChatGPT HTTP bridge 仍保留其必需的 originator=codex_cli_rs，其宿主生成的
+User-Agent 标明实际 Lex bridge，不伪造原生 CLI 版本。Responses chat bridge、
+标题、图片与语音文本辅助调用同样使用各自真实的 Lex 应用标识。
+
+这些标识不改变供应商权限或准入规则，也不保证第三方接纳。Cindy 专用服务协议、
+内部 provider/session identity 与凭证字段保持原合同。SSH 与设备互联仍由实际执行
+任务的主机生成请求，不把远端失败回落成本机调用。

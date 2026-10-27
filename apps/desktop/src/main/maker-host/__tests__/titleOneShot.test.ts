@@ -824,6 +824,7 @@ describe('generateTitleViaProvider — openai(codex Responses SSE)', () => {
     expect(init.headers.authorization).toBe('Bearer ctok');
     expect(init.headers['chatgpt-account-id']).toBe('acc-1');
     expect(init.headers.originator).toBe('codex_cli_rs');
+    expect(init.headers['user-agent']).toBe('Lex-TitleBridge');
     const body = JSON.parse(init.body);
     expect(body.model).toBe('gpt-5.4-mini');
     expect(body.stream).toBe(true);

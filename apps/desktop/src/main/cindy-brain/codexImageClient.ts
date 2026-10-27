@@ -17,7 +17,7 @@ import { createLogger } from '../logger.js';
 
 const CODEX_RESPONSES_URL = 'https://chatgpt.com/backend-api/codex/responses';
 const HOST_MODEL = 'gpt-5.5';
-const USER_AGENT = `codex_cli_rs/cindy (${process.platform}; ${process.arch})`;
+const USER_AGENT = `Lex-ImageBridge (${process.platform}; ${process.arch})`;
 const SSE_EVENT_BOUNDARY = /(?:\r\n|\r|\n){2}/;
 const SSE_LINE_ENDING = /\r\n|\r|\n/;
 const log = createLogger('codex-image');

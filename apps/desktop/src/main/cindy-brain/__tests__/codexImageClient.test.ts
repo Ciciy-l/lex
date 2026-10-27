@@ -71,6 +71,9 @@ describe('codexImageClient', () => {
     const [url, init] = doFetch.mock.calls[0]!;
     expect(String(url)).toBe('https://chatgpt.com/backend-api/codex/responses');
     expect((init?.headers as Record<string, string>)['ChatGPT-Account-Id']).toBe('account-id');
+    expect(new Headers(init?.headers).get('user-agent')).toBe('Lex-ImageBridge (' + process.platform + '; ' + process.arch + ')');
+    expect(new Headers(init?.headers).get('originator')).toBe('codex_cli_rs');
+    expect(doFetch).toHaveBeenCalledOnce();
     const body = JSON.parse(String(init?.body)) as {
       tools: Array<Record<string, unknown>>;
       tool_choice?: unknown;

@@ -372,6 +372,18 @@ function createDeps(
   };
 }
 
+describe('Codex host application identity', () => {
+  it('initializes with the actual app build while leaving native version reporting to Codex', async () => {
+    const agent = new CodexAgent(createDeps({}, { getAppVersion: () => '0.1.12' }));
+    let handle: AgentSessionHandle | undefined;
+    try {
+      handle = await agent.startSession({ sessionId: 'app-identity', model: 'gpt-5.4', workingDir: '/repo' });
+      const initialize = createdTransports.at(-1)!.lines.map(line => JSON.parse(line)).find(row => row.method === 'initialize');
+      expect(initialize.params.clientInfo).toEqual({ name: 'Lex', version: '0.1.12' });
+    } finally { await handle?.close(); await agent.dispose(); }
+  });
+});
+
 describe('Codex managed Skill startup', () => {
 
   it.each(['start', 'resume'] as const)('refreshes projections and reloads the catalog before %s on a reused server', async (operation) => {

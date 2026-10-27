@@ -1,3 +1,4 @@
+import { withLexApplicationHeaders } from '@cindy/model-providers';
 import { t } from '../i18n.js';
 import { assertNotRetiredCompanionSession } from '../localDb/retiredCompanions.js';
 import { scanLocalCustomizations } from '../skillhub/customizationScanHost';
@@ -1399,7 +1400,7 @@ export function getMaker(): Maker {
                 ...params.env,
                 ANTHROPIC_BASE_URL: channelRoute.endpoint,
                 ANTHROPIC_API_KEY: 'cindy-host-managed-channel',
-                ANTHROPIC_CUSTOM_HEADERS: Object.entries(channelRoute.headers)
+                ANTHROPIC_CUSTOM_HEADERS: Object.entries(withLexApplicationHeaders(channelRoute.headers))
                   .map(([key, value]) => key + ': ' + value)
                   .join('\n'),
               };
@@ -1505,6 +1506,7 @@ export function getMaker(): Maker {
         ?? 'default';
     };
     const codexAgent = new CodexAgent({
+      getAppVersion: () => app.getVersion(),
       useLocalCodexNativePresentation: options => options.nativePresentation === true,
       createLocalCodexNativeService: createCodexNativeHostService,
       prepareLocalCodexNativePresentation: launch => prepareTaskCodexNativePresentation(launch, {

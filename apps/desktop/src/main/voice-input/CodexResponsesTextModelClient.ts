@@ -26,7 +26,7 @@ const REFINER_TIMING_ENABLED = process.env.XDT_VOICE_INPUT_REFINER_TIMING === '1
 // CLI identifier keeps our refine calls on the same code path the backend has
 // already vetted for Cloudflare fingerprinting.
 const ORIGINATOR = 'codex_cli_rs';
-const USER_AGENT = `codex_cli_rs/xdt-maker (${process.platform}; ${process.arch})`;
+const USER_AGENT = `Lex-TextBridge (${process.platform}; ${process.arch})`;
 
 /**
  * Shared connection pool for codex responses calls (tuning lives in
