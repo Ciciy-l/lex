@@ -38,6 +38,7 @@ import { TerminalSearchBar } from './TerminalSearchBar';
 import { Spinner } from '@/components/ui/spinner';
 import { Tip } from '@/components/ui/tooltip';
 import { extractIpcError } from '@/utils/ipcError';
+import { getDataOwnerGeneration, isDataOwnerGenerationCurrent } from '@/contexts/dataOwnerGeneration';
 import type { TabKindHostContext } from '../../types';
 import { getBucket } from '../../store';
 import { getOrCreateXterm, updateXtermTheme, type XtermEntry } from './lib/xtermPool';
@@ -66,7 +67,7 @@ import {
 } from './terminal-layout';
 import { terminalPtyId } from './index';
 import { useTerminalPaneDrag } from './lib/useTerminalPaneDrag';
-import type { TerminalExitEvent } from '../../../../../shared/terminal-bridge';
+import { isShellId, type TerminalExitEvent } from '../../../../../shared/terminal-bridge';
 
 interface Props {
   state: TerminalState;
@@ -207,6 +208,13 @@ function LocalTerminalTabBody({ state, ctx, active }: Props) {
     },
     [persist],
   );
+
+  const canRestorePane = useCallback((paneId: string, ptyId: string) => {
+    const current = stateRef.current;
+    const pane = current.panes[paneId];
+    return !destroyingRef.current && !current.viewHidden && !!pane && !pane.viewHidden
+      && (pane.terminalId || terminalPtyId(tabId, paneId)) === ptyId;
+  }, [tabId]);
 
   const setPaneRuntimeError = useCallback((paneId: string, error: RuntimeError | null) => {
     setRuntimeErrors((current) => {
@@ -362,6 +370,7 @@ function LocalTerminalTabBody({ state, ctx, active }: Props) {
             destroying={destroyingPaneId === paneId}
             onSplit={createSplitForPane}
             onPatchPane={patchPane}
+            canRestore={canRestorePane}
             onRuntimeError={setPaneRuntimeError}
             onBeginDrag={(id, event) => { setZoomedPaneId(null); beginDrag(id, event); }}
             zoomed={zoomedPaneId === paneId}
@@ -425,6 +434,7 @@ interface TerminalPaneViewProps {
   destroying: boolean;
   onSplit: (id: string, direction: 'horizontal' | 'vertical') => void;
   onPatchPane: (id: string, patch: Partial<Omit<TerminalPaneState, 'id'>>) => void;
+  canRestore: (paneId: string, ptyId: string) => boolean;
   onRuntimeError: (paneId: string, error: RuntimeError | null) => void;
   onBeginDrag: (id: string, event: ReactPointerEvent<HTMLButtonElement>) => void;
   dragging: boolean;
@@ -645,6 +655,7 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
   const isActive = props.activePaneId === pane.id;
   const canClose = visibleTerminalPaneIds(props.state).length > 1;
   const [restarting, setRestarting] = useState(false);
+  const restartPending = useRef(false);
   const [menu, setMenu] = useState<{x: number; y: number} | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [urlMenu, setUrlMenu] = useState<{ x: number; y: number; url: string } | null>(null);
@@ -702,8 +713,10 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
     if (pane.created && entry.ptyAttached) return;
     if (props.state.viewHidden || (!props.active && !pane.runtimeStarted)) return;
     let cancelled = false;
-    void window.electronAPI.terminal
-      .create({
+    const owner = getDataOwnerGeneration();
+    const generation = entry.attachGeneration = (entry.attachGeneration ?? 0) + 1;
+    const current = () => entry.attachGeneration === generation && isDataOwnerGenerationCurrent(owner);
+    const params = {
         id: ptyId,
         sessionId: props.sessionId,
         attachOnly: pane.runtimeStarted === true,
@@ -711,16 +724,31 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
         cols: entry.lastSize.cols,
         rows: entry.lastSize.rows,
         profile: pane.profile,
-        ...(pane.shellPref === undefined ? {} : { shellPref: pane.shellPref }),
+        ...(pane.profile === 'shell' && isShellId(pane.shellId) && pane.shellId !== 'auto'
+          ? { shellPref: pane.shellId }
+          : pane.shellPref === undefined ? {} : { shellPref: pane.shellPref }),
+      };
+    void window.electronAPI.terminal.create(params)
+      .catch((error: unknown) => {
+        if (!current() || cancelled || !aliveRef.current || !props.canRestore(pane.id, ptyId)) return;
+        // Only the trusted host's typed absence is proof that no process can
+        // be reattached. A timeout/permission error never authorizes a spawn.
+        if (!params.attachOnly || extractIpcError(error)?.code !== 'TERMINAL_NOT_FOUND') throw error;
+        if (pane.exited) return;
+        if (pane.profile !== 'shell') throw error;
+        // Preserve the PTY identity: Main's synchronous create-or-attach makes
+        // simultaneous remounts idempotent. Never replay terminal input.
+        return window.electronAPI.terminal.create({ ...params, attachOnly: false, restore: true });
       })
       .then((result) => {
+        if (!result || !current()) return;
         // Local bucket absence can mean navigation/cache handoff, not deletion.
         // A late response must never authorize process termination.
-        if (cancelled || !aliveRef.current) {
+        if (cancelled || !aliveRef.current || !props.canRestore(pane.id, ptyId)) {
           entry.ptyAttached = true;
           const retained = getBucket(props.sessionId).tabs.find((tab) => tab.id === props.tabId);
           const saved = retained ? hydrateTerminalState(retained.state) : null;
-          if (!aliveRef.current || saved?.viewHidden || (saved && !saved.panes[pane.id])) {
+          if (!aliveRef.current || !props.canRestore(pane.id, ptyId) || saved?.viewHidden || (saved && !saved.panes[pane.id])) {
             void window.electronAPI.terminal.detach(ptyId).catch(() => undefined);
           }
           return;
@@ -732,12 +760,13 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
           created: true,
           exited: result.exit,
           shellId: result.shellId,
+          ...(pane.profile === 'shell' && isShellId(result.shellId) ? { shellPref: result.shellId } : {}),
           shellDisplayName: result.profileDisplayName || result.shellDisplayName,
         });
         props.onRuntimeError(pane.id, null);
       })
       .catch((error: unknown) => {
-        if (cancelled || !aliveRef.current) return;
+        if (cancelled || !aliveRef.current || !current()) return;
         props.onRuntimeError(pane.id, parseRuntimeError(error));
       });
     return () => {
@@ -750,6 +779,7 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
     pane.shellPref,
     props.onPatchPane,
     props.onRuntimeError,
+    props.canRestore,
     props.workdir,
     props.sessionId,
     props.tabId,
@@ -781,12 +811,19 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
   }, [isActive, props.active, props.state.layout, ptyId]);
 
   const restart = async () => {
-    if (restarting) return;
+    const entry = entryRef.current;
+    if (restartPending.current || !entry || !props.canRestore(pane.id, ptyId)) return;
+    restartPending.current = true;
+    const owner = getDataOwnerGeneration();
+    const generation = entry.attachGeneration = (entry.attachGeneration ?? 0) + 1;
+    const current = () => aliveRef.current && entryRef.current === entry
+      && entry.attachGeneration === generation && isDataOwnerGenerationCurrent(owner)
+      && props.canRestore(pane.id, ptyId);
     setRestarting(true);
     try {
-      // Missing runtime after an app restart is not resumed automatically.
-      // An explicit Restart is allowed to create a new process.
+      // Explicit restart also allows ended shells and legacy Agent panes.
       const records = await window.electronAPI.terminal.list(props.sessionId);
+      if (!current()) return;
       const result = records.some((record) => record.terminalId === ptyId)
         ? await window.electronAPI.terminal.restart(ptyId)
         : await window.electronAPI.terminal.create({
@@ -796,20 +833,23 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
             profile: pane.profile,
             ...(pane.shellPref === undefined ? {} : { shellPref: pane.shellPref }),
           });
-      if (entryRef.current) entryRef.current.ptyAttached = true;
+      if (!current()) return;
+      entry.ptyAttached = true;
       props.onPatchPane(pane.id, {
         terminalId: ptyId,
         runtimeStarted: true,
         created: true,
-        exited: null,
+        exited: result.exit,
         shellId: result.shellId,
+        ...(pane.profile === 'shell' && isShellId(result.shellId) ? { shellPref: result.shellId } : {}),
         shellDisplayName: result.profileDisplayName || result.shellDisplayName,
       });
       props.onRuntimeError(pane.id, null);
     } catch (error: unknown) {
-      props.onRuntimeError(pane.id, parseRuntimeError(error));
+      if (current()) props.onRuntimeError(pane.id, parseRuntimeError(error));
     } finally {
-      setRestarting(false);
+      restartPending.current = false;
+      if (aliveRef.current) setRestarting(false);
     }
   };
 

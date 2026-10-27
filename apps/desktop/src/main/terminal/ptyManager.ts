@@ -92,6 +92,7 @@ const ENV_KEYS_TO_STRIP: readonly string[] = [
 export interface CreateOptions {
   sessionId?: string;
   attachOnly?: boolean;
+  restore?: boolean;
   /** PTY session id，对应 RSB tab id（1:1 关系）。 */
   id: string;
   /** 工作目录；不存在或为空时主调方应自己 fallback 到 home。 */
@@ -198,6 +199,9 @@ export interface PtyManagerDeps {
 
 export class PtyManager {
   private readonly sessions = new Map<string, PtySession>();
+  // Explicitly removed identities cannot be revived by an in-flight attach /
+  // recovery request. New panes already use new IDs; owner teardown is separate.
+  private readonly retiredIds = new Set<string>();
   private readonly destroying = new Map<string, Promise<void>>();
   private readonly trackedOwners = new WeakSet<WebContents>();
   private readonly spawnFn: PtySpawnFn;
@@ -286,7 +290,7 @@ export class PtyManager {
   /** Terminate one concrete PTY and remove it only after its real exit. */
   async destroy(id: string, owner: WebContents): Promise<void> {
     const session = this.sessions.get(id);
-    if (!session) return;
+    if (!session) { this.retiredIds.add(id); return; }
     if (session.owner !== owner) throw new Error('TERMINAL_OWNER_MISMATCH');
     const pending = this.destroying.get(id);
     if (pending) return pending;
@@ -344,6 +348,8 @@ export class PtyManager {
    *     用户点 Restart 才会显式重启。否则跨窗口后的新宿主拿不到 restart ownership。
    */
   create(opts: CreateOptions): CreateResult {
+    if (opts.restore && (this.retiredIds.has(opts.id) || (opts.profile ?? 'shell') !== 'shell'))
+      throw new Error(`TERMINAL_RETIRED:${opts.id}`);
     const existing = this.sessions.get(opts.id);
     if (existing) {
       if (opts.sessionId && existing.leadSessionId && existing.leadSessionId !== opts.sessionId) {
@@ -463,16 +469,19 @@ export class PtyManager {
   /** 真正关闭 PTY + 移出 Map。已经 exit 的也走一遍清理（idempotent）。 */
   dispose(id: string, owner: WebContents): void {
     const session = this.sessions.get(id);
-    if (!session || session.owner !== owner) return;
+    if (session && session.owner !== owner) return;
+    this.retiredIds.add(id);
+    if (!session) return;
     this.disposeSession(session);
   }
 
   /** Check and remove synchronously, so a stale renderer list cannot kill a restarted PTY. */
   forget(id: string, owner: WebContents): void {
     const session = this.sessions.get(id);
-    if (!session) return;
+    if (!session) { this.retiredIds.add(id); return; }
     if (session.owner !== owner) throw new Error('TERMINAL_OWNER_MISMATCH');
     if (!session.exit) throw new Error('TERMINAL_STILL_RUNNING');
+    this.retiredIds.add(id);
     this.disposeSession(session);
   }
 
@@ -592,6 +601,8 @@ export class PtyManager {
     const profile = opts.profile ?? 'shell';
     const resolved =
       resolveTerminalCommand(profile) ?? resolveShellForCreate(opts.shellPref ?? null);
+    if (opts.restore && opts.shellPref && opts.shellPref !== 'auto' && resolved.id !== opts.shellPref)
+      throw new Error('shell not found');
 
     // 合并 env:先复制父进程环境,做平台兜底,再应用调用方显式覆盖。
     // ENV_KEYS_TO_STRIP 与 TERM 仍在下方强制执行,不允许 opts.env 改写。

@@ -49,6 +49,8 @@ export interface TerminalCreateParams {
   sessionId?: string;
   /** Reconnect only: never spawn a replacement for a missing runtime. */
   attachOnly?: boolean;
+  /** Recover a missing shell only; never revive an explicitly removed identity. */
+  restore?: boolean;
   /** Stable PTY identity, independent of its content tab and split pane. */
   id: string;
   cwd: string;

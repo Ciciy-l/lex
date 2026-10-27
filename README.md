@@ -59,6 +59,11 @@ name.
 Lex continues to support Cindy plugins, Skill Hub resources, and `.cindy` files so the
 existing Cindy community ecosystem remains useful.
 
+Restored local terminal panes reconnect to a live process. If the host confirms
+that an unfinished Shell no longer exists, Lex opens a fresh Shell with its saved
+startup directory and shell choice, without replaying commands. Ended terminals
+and legacy Agent CLI panes still require an explicit restart.
+
 ## What's new in 0.1.7
 
 The model selector puts the model name first, with one compact channel/protocol
