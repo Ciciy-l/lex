@@ -49,7 +49,7 @@ name.
 | **Content tabs** | Open terminals, files, the browser, Worker conversations, and the Git workspace (Git Graph / Review) beside your conversation. |
 | **GUI / TUI** | Start a local task directly in TUI, switch views with its history, and explicitly send a new message after stopping a generation. Available advanced features vary by engine and view. |
 | **Saved drafts** | Keep task and new-task drafts separate. Saved text, attachments, and image annotations restore after a desktop restart; sending or discarding clears the draft. |
-| **CLI launch** | Use the `+` menu to start Claude Code, Codex, Pi, OMP, or an installed local Shell in a dedicated tab. Shell choices are detected from the computer instead of being hard-coded. |
+| **Shell terminals** | Use the `+` menu to open an installed local Shell or the browser. Shell choices are detected from the computer. Use the task's GUI/TUI switch for Claude Code, Codex, Pi, or OMP. |
 | **Terminal layout** | Split panes, resize or drag them into place, rename tabs, search output, and temporarily maximize the pane that needs attention. |
 | **Long-running work** | Hide a pane, switch tabs, or collapse the workspace without terminating its PTY. Stopping a process remains an explicit action. |
 | **Files** | Browse the project tree, single-click to preview, double-click to keep a file open, and automatically keep a preview once it is edited. |
@@ -109,7 +109,8 @@ the **beta** update channel; the stable channel does not receive prereleases.
 2. Start in the account-free main interface. To use Cindy online services, open
    **Sign In**, choose **Cindy**, and follow the existing account login.
 3. Open the project directory you want to work in.
-4. Select `+` to start a CLI, Shell, or browser; open collaboration from the
+4. Use the task's GUI/TUI switch to choose how to work with your Agent. Select `+`
+   to open a Shell or browser; open collaboration from the
    workspace tool area when you need Workers.
 
 ## One app, two Cindy service regions

@@ -7110,7 +7110,6 @@
       "defaultTitle": "Terminal",
       "workbenchTitle": "Terminal ({{count}} panes)",
       "profileShell": "Shell",
-      "agentSection": "Agent",
       "defaultShellBadge": "Default",
       "detectingShells": "Detecting terminals…",
       "profileClaude": "Claude",

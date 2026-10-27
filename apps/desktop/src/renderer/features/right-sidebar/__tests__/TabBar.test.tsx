@@ -137,19 +137,6 @@ describe('workspace + menu', () => {
     expect(launch).toHaveBeenCalledExactlyOnceWith('shell', undefined);
   });
 
-  it.each([
-    ['claude', 'profileClaude'],
-    ['codex', 'profileCodex'],
-    ['pi', 'profilePi'],
-  ] as const)('launches %s in a new content tab, without choosing a shell', (profile, key) => {
-    const launch = vi.fn();
-    renderStrip({ onLaunchTerminal: launch });
-    openCreateMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'rightSidebar.terminal.' + key }));
-    expect(launch).toHaveBeenCalledExactlyOnceWith(profile, undefined);
-    expect(screen.queryByRole('menu')).toBeNull();
-  });
-
   it('opens the browser through the existing tab callback', () => {
     const { onAdd } = renderStrip();
     openCreateMenu();
@@ -178,10 +165,10 @@ describe('workspace + menu', () => {
     renderStrip();
     openCreateMenu();
     expect(probe).not.toHaveBeenCalled();
-    const cli = screen.getByRole('menuitem', {
-      name: 'rightSidebar.terminal.profileCodex',
+    const shell = screen.getByRole('menuitem', {
+      name: 'rightSidebar.terminal.profileShell',
     }) as HTMLButtonElement;
-    expect(cli.disabled).toBe(true);
+    expect(shell.disabled).toBe(true);
   });
 
   it('keeps file/background/review/collaboration on the rail, not browser', () => {
