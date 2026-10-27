@@ -10,6 +10,12 @@
 
 import { describe, expect, it } from 'vitest';
 
+import {
+  buildUserProvider,
+  mergeDiscoveredRuntimeModels,
+  parseModelsListResponse,
+  unifiedModelEntries,
+} from '@cindy/model-providers';
 import type {
   UnifiedAgentCapability,
   UnifiedModelEntry,
@@ -153,6 +159,37 @@ describe('resolveUnifiedRowConfig', () => {
     });
     expect(catalogOff.fastCapable).toBe(false);
     expect(catalogOff.fast).toBe(false);
+  });
+
+  it('clamps remembered Fast to the selected connection after discovery, save and sparse refresh', () => {
+    const providers = [false, true].map((supportsFastMode) => {
+      const discovered = parseModelsListResponse({ data: [{ id: 'gpt-5.4', supportsFastMode,
+        additional_speed_tiers: supportsFastMode ? [] : ['fast'],
+      }] })!;
+      const savedJson = JSON.stringify(mergeDiscoveredRuntimeModels([], discovered));
+      const models = mergeDiscoveredRuntimeModels(JSON.parse(savedJson),
+        parseModelsListResponse({ data: [{ id: 'gpt-5.4' }] })!);
+      return { ...buildUserProvider({ id: supportsFastMode ? 'fast-allowed' : 'fast-denied',
+        name: 'Same model, separate connection', runtimes: {
+          codex: { baseUrl: 'https://relay.example/v1', models },
+        },
+      }), connected: true };
+    });
+    const entries = unifiedModelEntries({ providers, agents: ['codex'] });
+    expect(entries).toHaveLength(2);
+    const originalProviders = JSON.stringify(providers);
+    const memoryFast = (agent: string) => agent === 'codex';
+    for (const index of [1, 0, 1, 0]) {
+      const entry = entries.find((candidate) => candidate.providerId === providers[index].id)!;
+      expect(entry).toBeDefined();
+      const config = resolveUnifiedRowConfig({ entry, memoryFast, agentFastModeCapable: () => true });
+      expect(config.agent).toBe('codex');
+      expect.soft(config.fastCapable, entry.providerId).toBe(index === 1);
+      expect.soft(config.fast, entry.providerId).toBe(index === 1);
+      // Connection changes clamp the shared preference without rewriting it or the catalog.
+      expect(memoryFast('codex')).toBe(true);
+      expect(JSON.stringify(providers)).toBe(originalProviders);
+    }
   });
 
   it('无档位的模型 → effort 为 null(不可调,滑杆不画)', () => {

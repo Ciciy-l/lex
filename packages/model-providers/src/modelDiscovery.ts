@@ -158,6 +158,10 @@ export function parseModelsListResponse(
     const fastDeclared = declaredTiers !== undefined || additionalTiers !== undefined
       ? [...(declaredTiers ?? []), ...(additionalTiers ?? [])].some(tier => tier === 'priority' || tier === 'fast')
       : undefined;
+    // Explicit booleans win: canonical, snake-case alias, then legacy alias.
+    // Invalid values are absent; a valid false must not fall through to inferred tiers.
+    const explicitFast = [record.supportsFastMode, record.supports_fast_mode, record.supportsServiceTier]
+      .find((value): value is boolean => typeof value === 'boolean');
     const isVercel = sourceUrl !== undefined && (() => {
       try { const url = new URL(sourceUrl); return url.origin === 'https://ai-gateway.vercel.sh'
         && url.pathname.replace(/\/+$/, '') === '/v1/models'; } catch { return false; }
@@ -208,8 +212,7 @@ export function parseModelsListResponse(
         : info.supports_function_calling ?? capabilities.trained_for_tool_use,
       reasoningRequired: reasoning?.required ?? reasoning?.mandatory,
       defaultEffort: rawDefault === "none" ? null : rawDefault,
-      supportsFastMode: record.supports_fast_mode ?? record.supportsServiceTier ??
-        fastDeclared,
+      supportsFastMode: explicitFast ?? fastDeclared,
       supportsImageInput:
         record.supports_image_input ?? info.supports_vision ?? capabilities.vision ??
         (Array.isArray(inputModalities) && inputModalities.every(value => typeof value === 'string')

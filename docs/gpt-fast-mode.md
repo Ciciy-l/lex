@@ -16,6 +16,8 @@
 
 本次只补齐客户端能力发现与回执兼容，没有修改在线 Model Access、模型目录价格、默认型号、引擎版本或认证方式；也未加入 Ultrafast。不能从客户端显示推断外部服务已经部署或某个账号已获准使用。
 
+发现结果中的显式布尔能力优先于档位推断：依次采用 `supportsFastMode`、`supports_fast_mode`、`supportsServiceTier` 中首个合法布尔值。明确 `false` 不会被 Fast 档位覆盖，明确 `true` 也不会被空档位列表关闭；非布尔值不作为能力声明。没有合法显式值时才参考有效档位列表，缺字段刷新保留已有实报，恢复的 Fast 偏好仍受目标连接能力约束。
+
 ## 请求与实际结果
 
 [OpenAI 官方 Fast 文档](https://developers.openai.com/api/docs/guides/fast-mode)规定 Responses / Chat Completions 使用 `service_tier: "fast"`，支持模型上 `priority` 为同义值；响应的 `service_tier` 才是实际处理档位，可能降为 `default`。GPT-5.6 及更早模型可返回旧名 `priority`。
