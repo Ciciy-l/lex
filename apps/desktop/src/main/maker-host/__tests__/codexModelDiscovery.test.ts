@@ -95,6 +95,22 @@ const SAMPLE = {
 const OAUTH_AUTH = JSON.stringify({ tokens: { access_token: 'oauth-token' } });
 
 describe('mapCodexModelsToCatalog', () => {
+  it.each([
+    [{ service_tiers: [{ id: 'fast' }] }, true],
+    [{ additional_speed_tiers: ['fast'] }, true],
+    [{ service_tiers: [], additional_speed_tiers: ['fast'] }, true],
+    [{ service_tiers: [{ id: 'priority' }] }, true],
+    [{ additional_speed_tiers: ['ultrafast'] }, false],
+    [{ additional_speed_tiers: [] }, false],
+    [{}, undefined],
+  ])('reads account Fast capability without inventing a model or changing effort: %j', (tiers, supported) => {
+    const [model] = mapCodexModelsToCatalog({ models: [{ ...SAMPLE.models[0], service_tiers: undefined, ...tiers }] });
+    expect(model.supportsFastMode).toBe(supported);
+    expect(model.discoveredMetadata?.supportsFastMode).toBe(supported);
+    expect(model.id).toBe('gpt-5.5');
+    expect(model.defaultEffort).toBe('medium');
+  });
+
   it('retains native maximum and explicit image capability separately from defaults', () => {
     const [model] = mapCodexModelsToCatalog({
       models: [

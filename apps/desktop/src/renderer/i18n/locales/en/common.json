@@ -8200,7 +8200,7 @@
         "recommendedConfig": "Recommended setup",
         "customized": "Customized",
         "reset": "Reset to recommended",
-        "fastTip": "Fast · priority speed · uses more quota",
+        "fastTip": "Fast may cost more or use more quota. Actual speed depends on the provider.",
         "effortEndFast": "Faster",
         "effortEndSmart": "Smarter",
         "railSameEngine": "{{agent}} only",

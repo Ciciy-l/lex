@@ -8198,7 +8198,7 @@
         "recommendedConfig": "推奨設定",
         "customized": "カスタム済み",
         "reset": "推奨に戻す",
-        "fastTip": "Fast · 優先処理で高速 · 使用量が増えます",
+        "fastTip": "Fast は料金や使用量が増える場合があります。実際の速度はプロバイダーによって異なります。",
         "effortEndFast": "高速",
         "effortEndSmart": "高精度",
         "railSameEngine": "{{agent}} のみ",

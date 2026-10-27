@@ -8198,7 +8198,7 @@
         "recommendedConfig": "推荐配置",
         "customized": "已自定义",
         "reset": "恢复推荐",
-        "fastTip": "Fast · 插队加速 · 用量更多",
+        "fastTip": "Fast 可能增加费用或用量，实际速度取决于供应商",
         "effortEndFast": "更高效",
         "effortEndSmart": "更智能",
         "railSameEngine": "仅 {{agent}}",

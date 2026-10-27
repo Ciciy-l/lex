@@ -247,6 +247,24 @@ describe('Sub2API Grok model discovery', () => {
 });
 
 describe('Sub2API manifest capabilities', () => {
+  it.each([
+    [{ service_tiers: [{ id: 'fast' }] }, true],
+    [{ additional_speed_tiers: ['fast'] }, true],
+    [{ service_tiers: [], additional_speed_tiers: ['fast'] }, true],
+    [{ supports_fast_mode: false, additional_speed_tiers: ['fast'] }, false],
+    [{ additional_speed_tiers: ['ultrafast'] }, false],
+    [{ additional_speed_tiers: [] }, false],
+    [{ additional_speed_tiers: [null] }, undefined],
+    [{}, undefined],
+  ])('keeps declared Fast capability through account save/refresh: %j', (tiers, supported) => {
+    const discovered = parseModelsListResponse({ models: [{ slug: 'gpt-fixture', ...tiers }] })!;
+    const saved = JSON.parse(JSON.stringify(mergeDiscoveredRuntimeModels([], discovered)));
+    const refreshed = mergeDiscoveredRuntimeModels(saved, parseModelsListResponse({ data: [{ id: 'gpt-fixture' }] })!);
+    expect(refreshed[0].discoveredMetadata?.supportsFastMode).toBe(supported);
+    const other = parseModelsListResponse({ data: [{ id: 'gpt-fixture' }] })!;
+    expect(other[0].discoveredMetadata?.supportsFastMode).toBeUndefined();
+  });
+
   it('preserves vision, Fast and capacity separately through save and refresh for every engine', () => {
     const discovered = parseModelsListResponse({ models: [{ slug: 'private-model',
       context_window: 272000, max_context_window: 1050000,
