@@ -38,6 +38,24 @@ function fixture(options: Partial<SessionOptions> = {}, handleOptions: Partial<A
 }
 
 describe('native presentation activation through the product Session', () => {
+  it('manual native compaction uses the current input owner and refuses retired or foreign requests', async () => {
+    let resolver!: Parameters<NonNullable<AgentSessionHandle['setNativeCompactResolver']>>[0];
+    const release = vi.fn(), admission = vi.fn(() => release);
+    const f = fixture({ acquireSendAdmission: admission }, { setNativeCompactResolver: value => { resolver = value; } });
+    const accept = vi.fn(async () => ({})), signal = new AbortController().signal;
+    const request = { nativeSessionId: 'native-session', signal, accept };
+    await expect(resolver(request)).rejects.toThrow('owner changed');
+    const retire = f.session.onNativeInput(vi.fn());
+    await expect(resolver({ ...request, nativeSessionId: 'foreign' })).rejects.toThrow('owner changed');
+    await expect(resolver(request)).resolves.toEqual({});
+    expect(accept).toHaveBeenCalledOnce(); expect(admission).toHaveBeenCalledOnce(); expect(release).toHaveBeenCalledOnce();
+    retire(); await expect(resolver(request)).rejects.toThrow('owner changed');
+    f.session.onNativeInput(vi.fn());
+    admission.mockImplementationOnce(() => { f.session.close(); return release; });
+    await expect(resolver(request)).rejects.toThrow();
+    expect(accept).toHaveBeenCalledOnce(); expect(release).toHaveBeenCalledTimes(2);
+    expect(f.handle.send).not.toHaveBeenCalled();
+  });
   it('projects the current handle GUI capabilities without mutating the catalogue or another task', async () => {
     const base = { sameTurnSteer: { supported: true }, planMode: { supported: true } } as const;
     let overrides: Partial<Capabilities> = { sameTurnSteer: { supported: false, reason: 'not-implemented', recovery: 'native-ui' } };

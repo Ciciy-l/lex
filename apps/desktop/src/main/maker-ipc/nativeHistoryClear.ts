@@ -1,4 +1,4 @@
-import { createNativeHistoryJournal, readNativeHistoryForClear, type NativeHistoryPending } from './nativeHistoryJournal.js';
+import { createNativeHistoryJournal, readNativeHistoryForClear, nativeHistoryExecutorHasExited, type NativeHistoryPending } from './nativeHistoryJournal.js';
 import { withNativeHistoryOperation } from './nativeHistoryOperation.js';
 
 export interface NativeHistoryClearState { nativeId: string | null; clearedAt: number | null }
@@ -14,11 +14,14 @@ export interface NativeHistoryClearDependencies {
 function journalFor(root: string, record: NativeHistoryPending) {
   return createNativeHistoryJournal(root, { sessionId: record.sessionId, nativeId: record.nativeId,
     agentKind: record.agentKind, workingDir: record.workingDir, model: record.model,
-    ...(record.configuration !== undefined ? { configuration: record.configuration } : {}) });
+    ...(record.configuration !== undefined ? { configuration: record.configuration } : {}),
+    ...(record.clearedAt !== undefined ? { clearedAt: record.clearedAt } : {}) });
 }
 function assertStoredIdentity(record: NativeHistoryPending, state: NativeHistoryClearState) {
   if (state.nativeId !== record.nativeId && state.nativeId !== record.targetNativeId)
     throw new Error('Native history clear identity changed');
+  if (record.clearedAt !== undefined && record.clearedAt !== state.clearedAt)
+    throw new Error('Native history clear boundary changed');
 }
 
 /** Main's explicit clear transaction. The same cross-process lock excludes
@@ -36,8 +39,9 @@ export async function withNativeHistoryClear<T>(deps: NativeHistoryClearDependen
     if (pending && !pending.clear) {
       assertStoredIdentity(pending, state);
       const executor = deps.executor;
-      if (!executor || (executor.nativeId !== pending.nativeId && executor.nativeId !== pending.targetNativeId)
-        || executor.agentKind !== pending.agentKind || executor.workingDir !== pending.workingDir)
+      if (!executor ? !nativeHistoryExecutorHasExited(pending)
+        : (executor.nativeId !== pending.nativeId && executor.nativeId !== pending.targetNativeId)
+          || executor.agentKind !== pending.agentKind || executor.workingDir !== pending.workingDir)
         throw new Error('Resume the original native task before clearing its unfinished history');
     }
     if (deps.executor) {

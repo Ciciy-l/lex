@@ -268,6 +268,8 @@ export interface AppServerHostOptions {
    * 远端 codex 用 `createSshDaemonTransport({remoteHost, ...})` (P2)。
    */
   createTransport: () => Transport;
+  /** Captured local child only; SSH never supplies a local writer identity. */
+  getLocalProcessId?: () => number | undefined;
   logger: Logger;
   /** initialize 时上报的客户端身份 (走 server 日志 / thread metadata)。 */
   clientInfo: ClientInfo;
@@ -525,6 +527,8 @@ export class AppServerHost {
   }
 
   /** oauth spawn 定义的 OpenAI 身份 provider id;非 oauth spawn / 未下发 → null。 */
+  getLocalProcessId(): number | undefined { return this.opts.getLocalProcessId?.(); }
+
   getRemoteCompactionProviderId(): string | null {
     return this.opts.remoteCompactionProviderId ?? null;
   }

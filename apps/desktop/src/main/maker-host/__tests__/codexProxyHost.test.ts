@@ -355,7 +355,10 @@ describe('codex gateway config', () => {
       .map(v => { const [key, ...value] = v.slice(`model_providers.${id}.`.length).split('='); return [key, value.join('=')]; }));
     const gateway = provider('cindy_gateway');
     expect(provider('cindy_summary')).toEqual({ ...gateway, name: '"Cindy Summary"' });
-    expect(provider('cindy_codex').name).toBe('"OpenAI"');
+    expect(gateway['capabilities.remote_compaction']).toBe('"unsupported"');
+    expect(provider('cindy_codex').name).toBe('"Lex Codex route"');
+    expect(provider('cindy_codex')['capabilities.remote_compaction']).toBe('"v2"');
+    if (mode === 'oauth-bearer') expect(provider('cindy_openai')['capabilities.remote_compaction']).toBe('"v2"');
   });
 
   it('所有认证模式都让缺少 model metadata 的 Codex 模型使用 CodeModeOnly', async () => {
@@ -392,7 +395,7 @@ describe('codex gateway config', () => {
     expect(args).toContain('model_providers.cindy_openai.wire_api="responses"');
     expect(args).toContain('model_providers.cindy_openai.requires_openai_auth=true');
     expect(args).toContain('model_providers.cindy_openai.supports_websockets=true');
-    expect(args).toContain('model_providers.cindy_codex.name="OpenAI"');
+    expect(args).toContain('model_providers.cindy_codex.name="Lex Codex route"');
     expect(args).toContain('model_providers.cindy_codex.requires_openai_auth=true');
     expect(args).toContain('model_providers.cindy_codex.supports_websockets=false');
     // is_openai + OAuth 命中时 codex 默认 zstd 压缩请求体,loopback proxy 无法解析,必须关。
@@ -405,7 +408,7 @@ describe('codex gateway config', () => {
     for (const mode of ['env-key', 'provider-oauth'] as const) {
       const args = buildCodexProxySpawnArgs('http://127.0.0.1:12345', mode);
       expect(args.some((arg) => arg.includes('cindy_openai'))).toBe(false);
-      expect(args).toContain('model_providers.cindy_codex.name="OpenAI"');
+      expect(args).toContain('model_providers.cindy_codex.name="Lex Codex route"');
       expect(args).toContain('model_providers.cindy_codex.env_key="XDT_CODEX_API_KEY"');
       expect(args).toContain('model_providers.cindy_codex.supports_websockets=false');
       expect(args).toContain('features.enable_request_compression=false');

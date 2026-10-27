@@ -26,9 +26,8 @@ export const CODEX_GATEWAY_PROVIDER_ID = 'cindy_gateway';
 
 /**
  * OpenAI 身份 provider id(仅 oauth-bearer spawn 定义)。base_url 同样指向本地
- * loopback proxy,但 `name` 必须逐字等于 "OpenAI" —— codex 的
- * `ModelProviderInfo::supports_remote_compaction()` 按 name 判定,命中后订阅会话
- * 才走 OpenAI 远端压缩(remote compaction v2,经普通 /responses 由服务端压缩),
+ * loopback proxy。固定 Codex 0.162.1 通过正式 capabilities.remote_compaction
+ * 字段启用远端压缩(remote compaction v2,经普通 /responses 由服务端压缩),
  * 否则只有低保真的本地 summarization fallback。
  *
  * 只允许「ChatGPT 订阅直连路由」的 thread 用它(thread/start|resume 的
@@ -39,7 +38,7 @@ export const CODEX_OPENAI_COMPACT_PROVIDER_ID = 'cindy_openai';
 
 /**
  * Cindy Provider codex/* 的内部 transport identity。产品 Provider 和上游不变；
- * name="OpenAI" 只用于让 Codex 启用远程压缩，HTTP 与订阅 WS identity 分开冻结。
+ * 通过正式能力字段启用远程压缩，HTTP 与订阅 WS identity 分开冻结。
  */
 export const CODEX_CINDY_COMPACT_PROVIDER_ID = 'cindy_codex';
 
@@ -105,6 +104,7 @@ export function buildCodexProxySpawnArgs(
     // socket 级透传)。网关 / xAI / 自定义供应商都走这个 provider,因此一律不发 upgrade。
     // 只有不依赖请求体改写的订阅直连 provider(下面的 cindy_openai)才放开 WS。
     '-c', `model_providers.${p}.supports_websockets=false`,
+    '-c', `model_providers.${p}.capabilities.remote_compaction="unsupported"`,
   ];
   // Same HTTP endpoint and authentication as the normal proxy identity. Its
   // distinct id is persisted by native Codex so a reopened task stays on summaries.
@@ -115,17 +115,19 @@ export function buildCodexProxySpawnArgs(
     '-c', `model_providers.${summary}.wire_api="responses"`,
     '-c', authArg.replace(`model_providers.${p}.`, `model_providers.${summary}.`),
     '-c', `model_providers.${summary}.supports_websockets=false`,
+    '-c', `model_providers.${summary}.capabilities.remote_compaction="unsupported"`,
   );
   const c = CODEX_CINDY_COMPACT_PROVIDER_ID;
   const cindyCompactAuthArg = authMode === 'oauth-bearer'
     ? `model_providers.${c}.requires_openai_auth=true`
     : `model_providers.${c}.env_key="${CODEX_GATEWAY_ENV_KEY}"`;
   args.push(
-    '-c', `model_providers.${c}.name="OpenAI"`,
+    '-c', `model_providers.${c}.name="Lex Codex route"`,
     '-c', `model_providers.${c}.base_url="${baseUrl}"`,
     '-c', `model_providers.${c}.wire_api="responses"`,
     '-c', cindyCompactAuthArg,
     '-c', `model_providers.${c}.supports_websockets=false`,
+    '-c', `model_providers.${c}.capabilities.remote_compaction="v2"`,
   );
   if (authMode === 'oauth-bearer') {
     // OpenAI 身份 provider(见 CODEX_OPENAI_COMPACT_PROVIDER_ID):默认 model_provider
@@ -138,6 +140,7 @@ export function buildCodexProxySpawnArgs(
       '-c', `model_providers.${o}.base_url="${baseUrl}"`,
       '-c', `model_providers.${o}.wire_api="responses"`,
       '-c', `model_providers.${o}.requires_openai_auth=true`,
+      '-c', `model_providers.${o}.capabilities.remote_compaction="v2"`,
       // 订阅直连走 bundled codex 原生的 Responses WebSocket:Codex 自己执行
       // startup prewarm、连接复用、重试与 HTTP fallback；Cindy 只把 loopback upgrade
       // 原样隧道到同一个 ChatGPT endpoint。这样 at-capacity / 重连语义由同版本 Codex
