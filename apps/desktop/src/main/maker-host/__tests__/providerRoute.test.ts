@@ -536,6 +536,7 @@ describe('resolveSessionRouteDecision (per-session 选择 → 路由;no-break fa
     });
     expect(buildLocalHandlerHeaders(route!, 'codex')).toEqual({
       headers: {
+        'X-Title': 'Lex',
         'anthropic-version': '2023-06-01',
         'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20',
         authorization: 'Bearer claude-subscription-token',
