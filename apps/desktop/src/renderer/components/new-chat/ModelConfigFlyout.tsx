@@ -191,10 +191,11 @@ export function ModelConfigFlyout({
               onClick={() => onFastChange(!config.fast)}
               aria-pressed={config.fast}
               title={t('newChat.modelSelector.unified.fastTip')}
-              aria-label={t('newChat.modelSelector.unified.fastTip')}
+              aria-label={t('newChat.modelSelector.meta.fastBadge')}
+              aria-description={t('newChat.modelSelector.unified.fastTip')}
               data-fast-toggle
               className={cn(
-                'flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition-colors',
+                'flex h-7 shrink-0 items-center justify-center gap-1 px-2 rounded-full border text-13 transition-colors',
                 config.fast
                   ? 'border-transparent'
                   : 'border-[var(--model-dropdown-border)] text-[var(--text-tertiary)] hover:bg-[var(--model-item-hover)]',
@@ -213,9 +214,15 @@ export function ModelConfigFlyout({
               }
             >
               <Zap size={14} fill="currentColor" />
+              <span>{t('newChat.modelSelector.meta.fastBadge')}</span>
             </button>
           )}
         </div>
+      )}
+      {config.fastCapable && (
+        <p className="pt-2 text-12 leading-normal text-[var(--text-tertiary)]">
+          {t('newChat.modelSelector.unified.fastTip')}
+        </p>
       )}
 
       <ModelHarnessPicker

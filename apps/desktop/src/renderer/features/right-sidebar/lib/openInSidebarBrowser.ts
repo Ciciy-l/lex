@@ -76,6 +76,8 @@ export function isLocalHtmlFileUrl(url: string): boolean {
 }
 
 export interface OpenUrlInSidebarBrowserOptions {
+  /** Fence asynchronous file activation to its original task/view. */
+  isCurrent?: () => boolean;
   /**
    * false = 不是用户当次手势(插件 preview 槽开页):标签照常开、内容照常加载,
    * 但 detached 形态下不得把子窗口 show + focus 抢走用户前台。缺省 true。
@@ -89,6 +91,8 @@ export async function openUrlInSidebarBrowser(
   url: string,
   options: OpenUrlInSidebarBrowserOptions = {},
 ): Promise<void> {
+  const isCurrent = options.isCurrent ?? (() => true);
+  if (!isCurrent()) return;
   const userInitiated = options.userInitiated !== false;
   const routeResult = await routeSidebarCommand(
     {
@@ -98,6 +102,7 @@ export async function openUrlInSidebarBrowser(
     },
     { userInitiated },
   );
+  if (!isCurrent()) return;
   if (routeResult !== 'attached') {
     if (routeResult !== 'routed') return;
     requestRightSidebarVisibility('open', { sessionId, userInitiated });
@@ -108,6 +113,7 @@ export async function openUrlInSidebarBrowser(
   // 此时 Shell 的异步 list 拉取尚未回包,直接 addTab 会与后到的 list 结果
   // 互相覆盖。先 ensureHydrated(已 hydrate 时是同步 no-op)消除该竞态。
   await ensureHydrated(sessionId);
+  if (!isCurrent()) return;
   // initialState 形状与 RightSidebarShell popup 路径 / rsbBrowserBridge open
   // 路径保持一致,plugin hydrate 不会看到意外字段。
   await addTab(sessionId, 'web-browser', {
@@ -116,5 +122,5 @@ export async function openUrlInSidebarBrowser(
     favicon: null,
     isAudible: false,
   });
-  requestRightSidebarVisibility('open', { sessionId, userInitiated });
+  if (isCurrent()) requestRightSidebarVisibility('open', { sessionId, userInitiated });
 }

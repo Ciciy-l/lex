@@ -7110,7 +7110,6 @@
       "defaultTitle": "Terminal",
       "workbenchTitle": "Terminal ({{count}} panes)",
       "profileShell": "Shell",
-      "agentSection": "Agent",
       "defaultShellBadge": "Default",
       "detectingShells": "Detecting terminals…",
       "profileClaude": "Claude",
@@ -8201,7 +8200,7 @@
         "recommendedConfig": "Recommended setup",
         "customized": "Customized",
         "reset": "Reset to recommended",
-        "fastTip": "Fast · priority speed · uses more quota",
+        "fastTip": "Fast may cost more or use more quota. Actual speed depends on the provider.",
         "effortEndFast": "Faster",
         "effortEndSmart": "Smarter",
         "railSameEngine": "{{agent}} only",
@@ -9341,6 +9340,7 @@
       }
     },
     "markdownRenderer": {
+      "fileUnavailable": "This file is unavailable. Click the link again to refresh and retry.",
       "codeCopied": "Copied",
       "copyCode": "Copy code",
       "annotateImage": "Annotate image",

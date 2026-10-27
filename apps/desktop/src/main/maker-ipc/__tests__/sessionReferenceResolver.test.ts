@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DL_HISTORY_MESSAGES_CHANNEL } from '@cindy/device-link';
 import { serializeSessionReferencePayload } from '../../../shared/agentInputQueue.js';
+import { buildMakerUserMessage, type AgentInputQueuedMessage } from '../../../shared/agentInputQueue.js';
+import { collectInlineMessageReferenceBodies } from '@cindy/maker-shared/agent-input-projection';
 
 const remoteInvoke = vi.hoisted(() => vi.fn());
 vi.mock('../../device-link/index.js', () => ({
@@ -21,6 +23,80 @@ function historyPage(items: Record<string, unknown>[], hasMore = false) {
 
 describe('sessionReferenceResolver', () => {
   beforeEach(() => remoteInvoke.mockReset());
+
+  it('delivers projected code and attachments once through the final user-message serializer', async () => {
+    const href = 'cindy://session/s-1?message=anchor&device=dev-1';
+    const body = '唯一正文 🙂\nconst answer = 42;';
+    const text = href + '\nExplain the code.';
+    const item: AgentInputQueuedMessage = {
+      clientId: 'current', text, persistedContent: text, model: 'test', effort: 'medium',
+      permissionMode: 'default', workingDir: '/repo', chatMessage: { clientId: 'current', role: 'user', content: text },
+      createOpts: { agentKind: 'codex', model: 'test', permissionMode: 'default', workingDir: '/repo' },
+      agentReferences: [{ kind: 'message', href, start: 0, end: href.length, sessionId: 's-1', messageClientId: 'anchor', text: body }],
+      files: [{ id: 'attachment', size: 7, category: 'file', ext: '.txt', path: '/repo/context.txt', name: 'context.txt', mimeType: 'text/plain' }],
+    };
+    remoteInvoke.mockResolvedValueOnce({ ok: true, result: { id: 's-1' } })
+      .mockResolvedValueOnce({ ok: true, result: [{ id: 'row', clientId: 'anchor', sessionId: 's-1', role: 'assistant', content: body, createdAt: 100 }] })
+      .mockResolvedValueOnce(historyPage([])).mockResolvedValueOnce(historyPage([]));
+    const contexts = await resolveSessionReferences([{ sessionId: 's-1', messageClientId: 'anchor', deviceId: 'dev-1' }], {
+      inlineMessages: collectInlineMessageReferenceBodies(item),
+    });
+    const output = buildMakerUserMessage(item, contexts);
+    const serialized = JSON.stringify(output);
+    expect(serialized.split('唯一正文')).toHaveLength(2);
+    expect(serialized).toContain('Explain the code.');
+    expect(serialized).toContain('/repo/context.txt');
+    expect(serialized).toContain('anchor');
+    expect(contexts[0]).toMatchObject({ messageCount: 0, range: 'around-anchor', truncated: false });
+    const blocks = (output as { content: Array<{ text?: string }> }).content;
+    expect(estimateReferenceTokens(blocks.at(-1)!.text!)).toBeLessThanOrEqual(MAX_REFERENCE_TOKENS);
+  });
+
+  it.each(['x', 'ab', '🙂🙂'])('fits an oversized escaped anchor with a minimal neighbor %s', async (neighbor) => {
+    remoteInvoke.mockResolvedValueOnce({ ok: true, result: { id: 's-1' } })
+      .mockResolvedValueOnce({ ok: true, result: [{ id: 'row', clientId: 'anchor', sessionId: 's-1', role: 'assistant', content: '"'.repeat(30000), createdAt: 100 }] })
+      .mockResolvedValueOnce(historyPage([]))
+      .mockResolvedValueOnce(historyPage([{ id: 'other', sessionId: 's-1', role: 'user', content: neighbor, createdAt: 101 }]));
+    const contexts = await resolveSessionReferences([{ sessionId: 's-1', messageClientId: 'anchor', deviceId: 'dev-1' }]);
+    expect(contexts[0].messages).toHaveLength(2);
+    expect(contexts[0].truncated).toBe(true);
+    expect(contexts[0].messages[0].content.startsWith('…')).toBe(true);
+    expect(estimateReferenceTokens(serializeSessionReferencePayload(contexts))).toBeLessThanOrEqual(MAX_REFERENCE_TOKENS - 128);
+    for (const row of contexts[0].messages) expect(row.content).toBe(row.content.toWellFormed());
+  });
+
+  it.each(['same', 'different-body', 'different-device', 'different-message', 'only-anchor'])('deduplicates only the exact inline anchor: %s', async (variant) => {
+    const body = '报告\n\u0060\u0060\u0060ts\nconst 值 = "🙂";\n\u0060\u0060\u0060';
+    remoteInvoke.mockResolvedValueOnce({ ok: true, result: { id: 's-1' } })
+      .mockResolvedValueOnce({ ok: true, result: [{ id: 'anchor-row', clientId: 'anchor',
+        sessionId: 's-1', role: 'assistant', content: body, createdAt: 100 }] })
+      .mockResolvedValueOnce(historyPage([]))
+      .mockResolvedValueOnce(historyPage(variant === 'only-anchor' ? [] : [
+        { id: 'other', sessionId: 's-1', role: 'user', content: body, createdAt: 101 },
+      ]));
+    const key = JSON.stringify([variant === 'different-device' ? 'dev-2' : 'dev-1', 's-1',
+      variant === 'different-message' ? 'other' : 'anchor']);
+    const [context] = await resolveSessionReferences([{ sessionId: 's-1', deviceId: 'dev-1', messageClientId: 'anchor' }], {
+      inlineMessages: new Map([[key, new Set([variant === 'different-body' ? 'old body' : body])]]),
+    });
+    expect(context.messages).toHaveLength(variant === 'only-anchor' ? 0 : variant === 'same' ? 1 : 2);
+    expect(context.messages.every(message => message.content === body)).toBe(true);
+    expect(context).toMatchObject({ messageClientId: 'anchor', range: 'around-anchor', truncated: false });
+  });
+
+  it('protects the anchor while fitting the escaped final JSON budget', async () => {
+    const body = '结'.repeat(2000) + '"'.repeat(8000);
+    remoteInvoke.mockResolvedValueOnce({ ok: true, result: { id: 's-1' } })
+      .mockResolvedValueOnce({ ok: true, result: [{ id: 'anchor-row', clientId: 'anchor',
+        sessionId: 's-1', role: 'assistant', content: body, createdAt: 100 }] })
+      .mockResolvedValueOnce(historyPage([]))
+      .mockResolvedValueOnce(historyPage([{ id: 'other', sessionId: 's-1', role: 'user',
+        content: '邻'.repeat(2900), createdAt: 101 }]));
+    const contexts = await resolveSessionReferences([{ sessionId: 's-1', deviceId: 'dev-1', messageClientId: 'anchor' }]);
+    expect(contexts[0].messages[0].content).toBe(body);
+    expect(contexts[0].truncated).toBe(true);
+    expect(estimateReferenceTokens(serializeSessionReferencePayload(contexts))).toBeLessThanOrEqual(MAX_REFERENCE_TOKENS - 128);
+  });
 
   it('queries remote user/assistant roles before limiting the recent window', async () => {
     remoteInvoke

@@ -86,6 +86,7 @@ describe('CodexResponsesTextModelClient', () => {
     expect(record.init.headers['ChatGPT-Account-Id']).toBe('account-xyz');
     expect(record.init.headers['OpenAI-Beta']).toBe('responses=experimental');
     expect(record.init.headers.originator).toBe('codex_cli_rs');
+    expect(record.init.headers['User-Agent']).toBe('Lex-TextBridge (' + process.platform + '; ' + process.arch + ')');
     expect(record.init.headers.Accept).toBe('text/event-stream');
 
     const sent = JSON.parse(record.init.body) as Record<string, unknown>;

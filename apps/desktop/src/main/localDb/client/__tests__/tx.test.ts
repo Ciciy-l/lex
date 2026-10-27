@@ -1,18 +1,21 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { promisify } from 'node:util';
 
 import Database from 'better-sqlite3';
 import { createSourceFile, forEachChild, isFunctionDeclaration, ScriptTarget, transpileModule, type Node } from 'typescript';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { Session, type AgentSessionHandle } from '@cindy/maker-core';
+import { Session, NATIVE_HISTORY_HANDOFF, type StartSessionOptions, type AgentSessionHandle } from '@cindy/maker-core';
 import { commitSessionContextClear } from '../../sessionContextClear.js';
+import { prepareCodexHistoryHandoff, createCodexHistoryDatabase } from '../../../maker-ipc/codexHistoryHandoff.js';
 import { createNativeHistoryHandoff } from '../../../maker-ipc/nativeHistoryHandoff.js';
-import { createNativeHistoryJournal, readNativeHistoryForClear } from '../../../maker-ipc/nativeHistoryJournal.js';
+import { createNativeHistoryJournal, readNativeHistoryForClear, nativeHistoryConfiguration } from '../../../maker-ipc/nativeHistoryJournal.js';
 import { withNativeHistoryClear } from '../../../maker-ipc/nativeHistoryClear.js';
 import { productionClearFixture } from '../../../../test/fixtures/nativeClearMain.js';
+import { productionCodexHistoryFixture } from '../../../../test/fixtures/codexHistoryMain.js';
 import { withNativeHistoryOperation } from '../../../maker-ipc/nativeHistoryOperation.js';
 import * as atomic from '../../../utils/atomicWriteFile.js';
 
@@ -1409,6 +1412,170 @@ describe('db worker tx handlers', () => {
     },
   );
 
+  it.each([false, true])('durably hands Codex full history to summary and recovers without another fork (inline=%s)', async useInlineWorker => {
+    await withClient(async client => {
+      const source = '0199ae4e-d6b0-7755-a755-66754cd7a847', target = '0199ae4e-d6b0-7755-a755-66754cd7a848';
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lex-codex-handoff-'));
+      const logger = { trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {}, child() { return this; } };
+      try {
+        for (const failure of ['none', 'database', 'tombstone', 'unknown', 'clear', 'owner'] as const) {
+          const task = 'codex-' + failure, journalRoot = path.join(root, failure);
+          await seedSession(client, task, { agentKind: 'codex', sdkSessionId: source, workingDir: root, model: 'exact-model' });
+          await client.exec('INSERT INTO messages (id,client_id,session_id,role,content,created_at) VALUES (?,?,?,?,?,1)',
+            [task, task, task, 'user', 'keep original history']);
+          let current = true, id = source, forks = 0, commits = 0;
+          const assertCurrent = () => { if (!current) throw new Error('owner changed'); };
+          const database = createCodexHistoryDatabase(client, task, assertCurrent, row => nativeHistoryConfiguration(row));
+          const handle: AgentSessionHandle = { get id() { return id; }, agentKind: 'codex', model: 'exact-model',
+            send: vi.fn(async () => {}), steer: vi.fn(async () => {}), abort: vi.fn(async () => {}), close: vi.fn(async () => {}),
+            events: async function* () {}, setInteractionResolver() {}, isTurnRunning: () => false,
+            getUsageSnapshot: () => ({ tokenUsage: 234, contextTokens: 17, contextWindow: 100, costUsd: 0.12 }) };
+          const session = new Session({ id: task, sessionInstanceId: 'instance', agentKind: 'codex', workDir: root, handle,
+            logger, turnStallMs: 0, capabilities: {} as never });
+          const start: StartSessionOptions = { model: 'exact-model', workingDir: root, resumeSessionId: source };
+          const commit = async (identity: Parameters<typeof database.commit>[0], to: string) => { commits++; await database.commit(identity, to); };
+          await prepareCodexHistoryHandoff({ root: journalRoot, start, ...database, commit, assertCurrent,
+            retire: async () => {}, // synthetic executor's confirmed exit
+            hold: async (instance, from, run) => {
+              expect(instance).toBe(session.instanceId); expect(from).toBe(session.sdkSessionId);
+              await session.replaceNativeHistoryAndPersist(run);
+            } });
+          const originalWrite = atomic.atomicWriteFileSync;
+          const write = vi.spyOn(atomic, 'atomicWriteFileSync');
+          if (failure === 'tombstone') write.mockImplementation((file, data) => {
+            if (data === 'null') throw new Error('injected tombstone failure'); return originalWrite(file, data);
+          });
+          if (failure === 'database') await client.exec("CREATE TRIGGER fail_codex_identity BEFORE UPDATE OF sdk_session_id ON sessions BEGIN SELECT RAISE(FAIL, 'injected database failure'); END");
+          const replacement = start[NATIVE_HISTORY_HANDOFF]!.replace(source, 'instance', async checkpoint => {
+            forks++;
+            expect(session.isTurnRunning()).toBe(true);
+            await expect(session.send('no replay')).rejects.toThrow();
+            if (failure === 'unknown') throw new Error('unknown fork result');
+            await checkpoint.target(target);
+            if (failure === 'clear') await client.exec('UPDATE sessions SET cleared_at = 999 WHERE id = ?', [task]);
+            if (failure === 'owner') current = false;
+            await checkpoint.commit(); id = target;
+          }, process.pid);
+          if (failure === 'none') await replacement;
+          else await expect(replacement).rejects.toThrow();
+          write.mockRestore();
+          if (failure === 'database') await client.exec('DROP TRIGGER fail_codex_identity');
+          expect(forks).toBe(1); expect(handle.send).not.toHaveBeenCalled();
+          expect(session.getUsageSnapshot().tokenUsage).toBe(234);
+          expect(session.isTurnRunning()).toBe(failure !== 'none');
+          await session.close();
+          const stored = await client.queryOne<{ id: string }>('SELECT sdk_session_id AS id FROM sessions WHERE id = ?', [task]);
+          const next: StartSessionOptions = { model: 'exact-model', workingDir: root, resumeSessionId: stored!.id };
+          const prepare = () => prepareCodexHistoryHandoff({ root: journalRoot, start: next, ...database, commit,
+            assertCurrent, hold: async () => { throw new Error('restart must never fork'); } });
+          if (['unknown', 'clear', 'owner'].includes(failure)) await expect(prepare()).rejects.toThrow();
+          else {
+            await prepare();
+            if (failure !== 'none') {
+              expect(next.resumeSessionId).toBe(target);
+              await next[NATIVE_HISTORY_HANDOFF]!.starting!(process.pid);
+              await expect(next[NATIVE_HISTORY_HANDOFF]!.recover(target, 'wrong-provider')).rejects.toThrow('readback changed');
+              await next[NATIVE_HISTORY_HANDOFF]!.recover(target, 'cindy_summary');
+              expect(next[NATIVE_HISTORY_HANDOFF]!.isPersisted(target)).toBe(true);
+            }
+            expect(readNativeHistoryForClear(journalRoot, task)).toBeNull();
+            expect(await client.queryOne('SELECT sdk_session_id AS id FROM sessions WHERE id = ?', [task])).toEqual({ id: target });
+          }
+          expect(forks).toBe(1); expect(commits).toBeLessThanOrEqual(2);
+          expect(await client.query('SELECT content FROM messages WHERE session_id = ?', [task])).toEqual([{ content: 'keep original history' }]);
+        }
+      } finally { vi.restoreAllMocks(); fs.rmSync(root, { recursive: true, force: true }); }
+    }, { useInlineWorker });
+  });
+
+  it.each([false, true])('coordinates Codex Main retirement, unknown forks and explicit clear without replay (inline=%s)', async useInlineWorker => {
+    await withClient(async (client, config) => {
+      const source = '0199ae4e-d6b0-7755-a755-66754cd7a847', target = '0199ae4e-d6b0-7755-a755-66754cd7a848';
+      const logger = { trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {}, child() { return this; } };
+      for (const mode of ['unknown', 'exit-failure', 'known-restart', 'owner'] as const) {
+        const task = 'retired-' + mode, root = path.join(path.dirname(config.dbPath!), task);
+        await seedSession(client, task, { agentKind: 'codex', sdkSessionId: source, workingDir: root, model: 'exact-model' });
+        let failExit = mode === 'exit-failure', forks = 0;
+        const handle: AgentSessionHandle = { id: source, agentKind: 'codex', model: 'exact-model',
+          send: vi.fn(), steer: vi.fn(), abort: vi.fn(), isTurnRunning: () => false, setInteractionResolver() {},
+          events: async function* () {}, close: vi.fn(async () => { if (failExit) throw new Error('exit unconfirmed'); }),
+          getUsageSnapshot: () => ({ tokenUsage: 234, contextTokens: 17, contextWindow: 100, costUsd: 0.12 }) };
+        const session = new Session({ id: task, sessionInstanceId: 'original-instance', agentKind: 'codex', workDir: root,
+          handle, logger, turnStallMs: 0, capabilities: {} as never });
+        const main = productionCodexHistoryFixture(client, root); main.setSession(session);
+        const start = { agentKind: 'codex' as const, model: 'exact-model', workingDir: root, resumeSessionId: source };
+        await main.prepare(task, start);
+        const handoff = (start as StartSessionOptions)[NATIVE_HISTORY_HANDOFF]!;
+        try {
+          await expect(handoff.replace(source, session.instanceId, async checkpoint => {
+            forks++;
+            if (mode === 'known-restart') await checkpoint.target(target);
+            if (mode === 'owner') main.changeOwner();
+            throw new Error('injected fork outcome / database failure');
+          }, process.pid)).rejects.toThrow();
+          const pending = readNativeHistoryForClear(root, task)!;
+          expect(pending.executorRetired).toBe(['unknown', 'known-restart'].includes(mode));
+          expect(main.closes()).toBe(mode === 'owner' ? 0 : 1);
+          expect(handle.send).not.toHaveBeenCalled(); expect(forks).toBe(1);
+          const clear = productionClearFixture(client, root);
+          if (mode === 'known-restart') {
+            // Startup consumes the old exit receipt BEFORE the new writer may
+            // launch. A concurrent clear cannot reuse that old receipt.
+            const next = { ...start };
+            await main.prepare(task, next);
+            expect(next.resumeSessionId).toBe(target);
+            await (next as StartSessionOptions)[NATIVE_HISTORY_HANDOFF]!.starting!(process.pid);
+            expect(readNativeHistoryForClear(root, task)!.executorRetired).toBe(false);
+            await expect(clear.clear(500, task)).rejects.toThrow();
+            await (next as StartSessionOptions)[NATIVE_HISTORY_HANDOFF]!.recover(target, 'cindy_summary');
+            expect(await client.queryOne('SELECT sdk_session_id AS id FROM sessions WHERE id = ?', [task])).toEqual({ id: target });
+          } else if (mode === 'unknown') {
+            await expect(main.prepare(task, { ...start })).rejects.toThrow('unknown');
+            await clear.clear(500, task);
+            expect(await client.queryOne('SELECT sdk_session_id AS id, cleared_at FROM sessions WHERE id = ?', [task]))
+              .toEqual({ id: null, cleared_at: 500 });
+          } else {
+            await expect(clear.clear(500, task)).rejects.toThrow();
+            expect(await client.queryOne('SELECT sdk_session_id AS id FROM sessions WHERE id = ?', [task])).toEqual({ id: source });
+          }
+          expect(handle.send).not.toHaveBeenCalled(); expect(forks).toBe(1);
+          expect(session.getUsageSnapshot().tokenUsage).toBe(234);
+        } finally { failExit = false; await session.close(); }
+      }
+    }, { useInlineWorker });
+  });
+
+  it.each([false, true])('recovers a journal after a captured child exits, but fences live and replacement writers (inline=%s)', async useInlineWorker => {
+    await withClient(async (client, config) => {
+      const source = '0199ae4e-d6b0-7755-a755-66754cd7a847', target = '0199ae4e-d6b0-7755-a755-66754cd7a848';
+      const root = path.join(path.dirname(config.dbPath!), 'crashed-codex-journal');
+      await seedSession(client, 's1', { agentKind: 'codex', sdkSessionId: source, workingDir: root, model: 'exact-model' });
+      const child = spawn(process.execPath, ['-e', 'process.stdin.resume()'], { stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
+      const exited = once(child, 'exit');
+      try {
+        const database = createCodexHistoryDatabase(client, 's1', () => {}, row => nativeHistoryConfiguration(row));
+        const identity = await database.read(), journal = createNativeHistoryJournal(root, identity);
+        const pending = journal.replace(journal.begin('codex-summary'), target);
+        journal.executorRetired(pending, false, child.pid!);
+        const start = { agentKind: 'codex' as const, model: 'exact-model', workingDir: root, resumeSessionId: source };
+        const main = productionCodexHistoryFixture(client, root);
+        await expect(main.prepare('s1', { ...start })).rejects.toThrow('exit is unconfirmed');
+        await expect(productionClearFixture(client, root).clear()).rejects.toThrow();
+        // Natural exit of this test-owned child is the only negative proof.
+        child.stdin.end(); await exited;
+        await main.prepare('s1', start); expect(start.resumeSessionId).toBe(target);
+        const handoff = (start as StartSessionOptions)[NATIVE_HISTORY_HANDOFF]!;
+        await handoff.starting!(process.pid);
+        await expect(main.prepare('s1', { ...start, resumeSessionId: source })).rejects.toThrow('exit is unconfirmed');
+        await expect(productionClearFixture(client, root).clear()).rejects.toThrow();
+        await handoff.recover(target, 'cindy_summary');
+        expect(readNativeHistoryForClear(root, 's1')).toBeNull();
+        expect(await client.queryOne('SELECT sdk_session_id AS id FROM sessions WHERE id = ?', ['s1'])).toEqual({ id: target });
+        expect(main.closes()).toBe(0);
+      } finally { child.stdin.end(); await exited; }
+    }, { useInlineWorker });
+  });
+
   it.each([false, true])('rejects a history projection from before explicit clear even when a native ID is reused (inline=%s)', async useInlineWorker => {
     await withClient(async client => {
       await seedSession(client, 's1', { sdkSessionId: 'source' });
@@ -1482,7 +1649,7 @@ describe('db worker tx handlers', () => {
 
   it.each([false, true])('honors native clear authority through Renderer/Main/SQLite failures and lost replies (inline=%s)', async useInlineWorker => {
     await withClient(async (client, config) => {
-      for (const scenario of ['intent', 'busy', 'exit', 'db', 'tombstone', 'success', 'lost-success', 'lost-failure']) {
+      for (const scenario of ['intent', 'busy', 'exit', 'db', 'tombstone', 'success', 'late-success', 'lost-success', 'lost-read-success', 'lost-failure']) {
         await client.exec('DELETE FROM sessions');
         const root = path.join(path.dirname(config.dbPath!), scenario), source = path.join(root, 'source.jsonl');
         await seedSession(client, 's1', { sdkSessionId: source });
@@ -1498,10 +1665,15 @@ describe('db worker tx handlers', () => {
         const session = new Session({ id: 's1', agentKind: 'pi', workDir: root, handle, logger, turnStallMs: 0,
           capabilities: { sessionTree: { supported: true } } as never });
         vi.spyOn(session, 'presentation', 'get').mockReturnValue({} as never);
+        const delayed = ['late-success', 'lost-success', 'lost-read-success', 'lost-failure'].includes(scenario);
+        const persistence = clearTestBarrier(), persistenceEntered = clearTestBarrier();
         const main = productionClearFixture(client, root, session, { beforeClose: async () => {
           if (scenario === 'exit') throw new Error('Executor exit unconfirmed');
+        }, beforePersist: async () => {
+          persistenceEntered.resolve(); if (delayed) await persistence.promise;
         } });
-        const renderer = productionRendererClearFixture(main, client, scenario.startsWith('lost-'));
+        const renderer = productionRendererClearFixture(main, client, { lostReply: scenario.startsWith('lost-'),
+          holdFirstRead: scenario === 'lost-read-success' });
         if (scenario === 'db' || scenario === 'lost-failure')
           await client.exec("CREATE TRIGGER reject_renderer_clear BEFORE UPDATE ON sessions BEGIN SELECT RAISE(ABORT, 'clear unavailable'); END");
         const original = atomic.atomicWriteFileSync;
@@ -1511,14 +1683,45 @@ describe('db worker tx handlers', () => {
           return original(file, value, ...rest);
         });
         try {
-          if (scenario === 'busy') await withNativeHistoryOperation(root, 's1', () => renderer.clear());
-          else await renderer.clear();
-          const success = scenario === 'success' || scenario === 'lost-success';
+          const clearing = scenario === 'busy'
+            ? withNativeHistoryOperation(root, 's1', () => renderer.clear()) : renderer.clear();
+          const diagnostic = async () => JSON.stringify({ scenario, useInlineWorker, results: renderer.results,
+            pendingFence: renderer.pending(), receipt: (await main.read()).clearReceipt, calls: main.calls,
+            db: await client.queryOne('SELECT sdk_session_id, cleared_at FROM sessions WHERE id = ?', ['s1']),
+            journal: readNativeHistoryForClear(root, 's1') });
+          if (delayed) {
+            await persistenceEntered.promise;
+            // Expire delivery at a known uncommitted DB barrier, independent
+            // of worker/CI speed. Only this fixture's guard clock is controlled.
+            await renderer.expireGuard();
+            if (scenario === 'lost-read-success') {
+              await renderer.firstRead.promise; await renderer.expireGuard();
+            }
+            await clearing;
+            const pending = await diagnostic();
+            expect(renderer.state().messages, pending).toEqual([{ clientId: 'old', content: 'keep' }]);
+            expect(renderer.state().askUserDraft, pending).toBe('draft');
+            expect(renderer.pending(), pending).toBe(true);
+            expect(renderer.results.map(result => result.kind), pending).toEqual(
+              scenario === 'lost-read-success' ? ['timeout', 'timeout'] : ['timeout', 'value']);
+            expect((await main.read()).clearReceipt.status, pending).toBe('pending');
+            expect(main.calls.filter(call => call === 'queue'), pending).toHaveLength(0);
+            expect(await client.queryOne('SELECT sdk_session_id, cleared_at FROM sessions WHERE id = ?', ['s1']), pending)
+              .toEqual({ sdk_session_id: source, cleared_at: null });
+            expect(readNativeHistoryForClear(root, 's1')?.clear, pending).toEqual({ at: 500, previousClearedAt: null });
+            persistence.resolve(); await renderer.settled(); renderer.releaseFirstRead();
+            // Lost replies do not deliver another mutation. Reconcile the
+            // exact pending request by read only after Main's known outcome.
+            await renderer.reconcile(); await renderer.settled();
+          } else await clearing;
+          const success = ['success', 'late-success', 'lost-success', 'lost-read-success'].includes(scenario);
+          const outcome = await diagnostic();
           expect(renderer.calls.filter(call => call === 'mutation')).toHaveLength(1);
           expect(renderer.calls).not.toContain('generic-write');
           expect(renderer.calls).not.toContain('independent-close');
-          expect(renderer.state().messages).toEqual(success ? [] : [{ clientId: 'old', content: 'keep' }]);
-          expect(renderer.state().askUserDraft).toBe(success ? null : 'draft');
+          expect(renderer.state().messages, outcome).toEqual(success ? [] : [{ clientId: 'old', content: 'keep' }]);
+          expect(renderer.state().askUserDraft, outcome).toBe(success ? null : 'draft');
+          expect(renderer.pending(), outcome).toBe(false);
           expect(main.calls.filter(call => call === 'queue')).toHaveLength(success ? 1 : 0);
           const committed = success || scenario === 'tombstone';
           expect(await client.queryOne('SELECT sdk_session_id, cleared_at FROM sessions WHERE id = ?', ['s1']))
@@ -1537,6 +1740,7 @@ describe('db worker tx handlers', () => {
           main.changeOwner();
           expect((await main.read()).clearReceipt.status).toBe('unknown');
         } finally {
+          persistence.resolve(); renderer.releaseFirstRead(); await renderer.settled();
           write.mockRestore(); await session.close();
           await client.exec('DROP TRIGGER IF EXISTS reject_renderer_clear');
         }
@@ -3934,10 +4138,17 @@ async function withClient(
   }
 }
 
+function clearTestBarrier() {
+  let resolve!: () => void;
+  const promise = new Promise<void>(done => { resolve = done; });
+  return { promise, resolve };
+}
+
 /** Production Renderer functions, Main callbacks and real SQLite in one chain.
  * Only UI services/executor faults are synthetic; separate Renderer tests import
  * the full store to cover module state and live event ownership. */
-function productionRendererClearFixture(main: ReturnType<typeof productionClearFixture>, client: DbClient, lostReply = false) {
+function productionRendererClearFixture(main: ReturnType<typeof productionClearFixture>, client: DbClient,
+  options: { lostReply?: boolean; holdFirstRead?: boolean } = {}) {
   const names = ['clearSessionAfterGuard', 'clearLocalSessionAfterGuard', 'clearSessionAfterGuardImpl',
     'resetClearedSessionView', 'awaitRemoteClearOperation', 'captureActiveTurnBoundaryMarker', 'sameActiveTurnBoundaryMarker'];
   const ast = createSourceFile('store.ts', fs.readFileSync(path.resolve('src/renderer/lib/makerChatStore.ts'), 'utf8'), ScriptTarget.Latest, true);
@@ -3958,17 +4169,36 @@ function productionRendererClearFixture(main: ReturnType<typeof productionClearF
   let task: Promise<unknown> | undefined;
   const api = { input: { clearSession: (_id: string, at: string) => {
     calls.push('mutation'); task = main.clear(Date.parse(at));
-    if (lostReply) { void task.catch(() => {}); return new Promise(() => {}); }
+    if (options.lostReply) { void task.catch(() => {}); return new Promise(() => {}); }
     return task;
   }, getProjection: async (_id: string, opts: { clearRequestAt: string }) => {
-    calls.push('read'); await task?.catch(() => {}); return main.read(Date.parse(opts.clearRequestAt));
+    calls.push('read'); const projection = await main.read(Date.parse(opts.clearRequestAt));
+    if (calls.filter(call => call === 'read').length === 1) {
+      firstRead.resolve(); if (options.holdFirstRead) await firstReadReply.promise;
+    }
+    return projection;
   } }, closeSession: async () => { calls.push('independent-close'); } };
   const no = () => {};
+  const active = new Set<Promise<void>>(), requests = new Map();
+  const firstRead = clearTestBarrier(), firstReadReply = clearTestBarrier();
+  const guards = new Map<number, () => void>();
+  let guardId = 0, nextGuard = clearTestBarrier();
+  const results: Array<{ kind: string; receipt?: unknown }> = [];
   const dependencies = {
-    remoteClearInFlight: new Set(), localClearRequests: new Map(), rendererClearGenerationBySession: new Map(), rendererClearBoundaryBySession: new Map(),
+    trackClear: (operation: Promise<void>) => {
+      active.add(operation); void operation.then(() => active.delete(operation), () => active.delete(operation)); return operation;
+    },
+    recordWait: (result: { kind: string; value?: { clearReceipt?: unknown } }) => results.push({ kind: result.kind, receipt: result.value?.clearReceipt }),
+    remoteClearInFlight: new Set(), localClearRequests: requests, rendererClearGenerationBySession: new Map(), rendererClearBoundaryBySession: new Map(),
     getStickySessionDeviceId: () => undefined, beginInputProjectionOperation: () => ({ api, dataOwner: {}, generation: 0 }),
     isCurrentInputProjectionOrigin: () => true, isDataOwnerGenerationCurrent: () => true,
-    CLEAR_SESSION_GUARD_TIMEOUT_MS: 20, setTimeout, clearTimeout, log: { warn: no }, toast: { warning: no, error: no }, i18n: { t: (key: string) => key },
+    CLEAR_SESSION_GUARD_TIMEOUT_MS: 20,
+    setTimeout: (callback: () => void, ms: number) => {
+      expect(ms).toBe(20); const id = ++guardId; guards.set(id, callback);
+      nextGuard.resolve(); nextGuard = clearTestBarrier(); return id;
+    },
+    clearTimeout: (id: number) => guards.delete(id),
+    log: { warn: no }, toast: { warning: no, error: no }, i18n: { t: (key: string) => key },
     sessionService: { update },
     dismissVisionBridgeToast: no, noteRendererClearBoundary: no, invalidateMessageHistoryWindow: no, bumpInteractionReconcileEpoch: no,
     supersedeInputProjectionRequests: no, _lastViewedAt: new Map(), discardPendingTextDelta: no, emitPatch: no,
@@ -3976,9 +4206,22 @@ function productionRendererClearFixture(main: ReturnType<typeof productionClearF
     getOrCreateState: () => state, _messagesEpoch: new Map(),
     setState: (_id: string, fn: (state: Record<string, unknown>) => Record<string, unknown>) => { state = fn(state); },
   };
-  const code = transpileModule(bodies.join(String.fromCharCode(10)) + '; return clearSessionAfterGuard;', { compilerOptions: { target: ScriptTarget.ES2022 } }).outputText;
+  const code = transpileModule(bodies.join(String.fromCharCode(10)) + `
+    const originalWait = awaitRemoteClearOperation;
+    awaitRemoteClearOperation = async promise => { const result = await originalWait(promise); recordWait(result); return result; };
+    const originalClear = clearSessionAfterGuard;
+    clearSessionAfterGuard = (...args) => trackClear(originalClear(...args));
+    return clearSessionAfterGuard;`, { compilerOptions: { target: ScriptTarget.ES2022 } }).outputText;
   const clear = new Function(...Object.keys(dependencies), code)(...Object.values(dependencies));
-  return { calls, state: () => state, clear: () => clear('s1', new Date(500).toISOString()) as Promise<void> };
+  return { calls, results, firstRead, releaseFirstRead: firstReadReply.resolve,
+    pending: () => requests.has('s1'), state: () => state,
+    expireGuard: async () => {
+      if (!guards.size) await nextGuard.promise;
+      const [id, expire] = guards.entries().next().value!; guards.delete(id); expire();
+    },
+    clear: () => clear('s1', new Date(500).toISOString()) as Promise<void>,
+    reconcile: async () => { if (requests.has('s1')) await clear('s1', new Date(500).toISOString()); },
+    settled: async () => { await task?.catch(() => {}); while (active.size) await Promise.all([...active]); } };
 }
 
 async function withTwoClients(fn: (clients: [DbClient, DbClient]) => Promise<void>): Promise<void> {

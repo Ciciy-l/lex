@@ -1,4 +1,5 @@
 import type { CodexNativeSessionHandle } from './native-input.js';
+import { Session } from '../../session.js';
 import { TurnDispatchUnconfirmedError } from '../base-agent.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import path from 'node:path';
@@ -20,6 +21,7 @@ import {
   INHERITED_CAPABILITY_SELECTION,
   MAIN_OWNED_SEND_CONTEXT,
   PINNED_SKILL_INVOCATION,
+  NATIVE_HISTORY_HANDOFF,
   CodexResumePreparationBlockedError,
   AgentNotAuthenticatedError,
   type AgentDeps,
@@ -369,6 +371,18 @@ function createDeps(
     ...overrides,
   };
 }
+
+describe('Codex host application identity', () => {
+  it('initializes with the actual app build while leaving native version reporting to Codex', async () => {
+    const agent = new CodexAgent(createDeps({}, { getAppVersion: () => '0.1.12' }));
+    let handle: AgentSessionHandle | undefined;
+    try {
+      handle = await agent.startSession({ sessionId: 'app-identity', model: 'gpt-5.4', workingDir: '/repo' });
+      const initialize = createdTransports.at(-1)!.lines.map(line => JSON.parse(line)).find(row => row.method === 'initialize');
+      expect(initialize.params.clientInfo).toEqual({ name: 'Lex', version: '0.1.12' });
+    } finally { await handle?.close(); await agent.dispose(); }
+  });
+});
 
 describe('Codex managed Skill startup', () => {
 
@@ -10262,7 +10276,125 @@ describe('CodexAgent MCP thread context hooks', () => {
     expect(host.subscribeThread).toHaveBeenCalledTimes(1);
   });
 
+  describe('manual native compaction', () => {
+    async function setup() {
+      const agent = new CodexAgent(createDeps());
+      const host = installFakeHost(agent, method => method === 'thread/compact/start' || method === Method.TurnInterrupt ? {} : undefined,
+        { userAgent: 'codex/0.162.1' });
+      const handle = await agent.startSession({ sessionId: 'manual-compact', model: 'gpt-5.4', workingDir: '/repo' });
+      return { host, handle };
+    }
+    function started(host: ReturnType<typeof installFakeHost>, id = 'compact-1') {
+      host.getThreadHandlers()!.turnStarted!({ threadId: 'start-thread-id', turn: { id, status: 'inProgress' } });
+      host.getThreadHandlers()!.itemStarted!({ threadId: 'start-thread-id', turnId: id, item: { id: 'compaction', type: 'contextCompaction' } });
+    }
+    it('waits beyond ACK and compaction item for the matching successful terminal, without a user prompt', async () => {
+      const { host, handle } = await setup();
+      const compact = handle.compactSession!();
+      let settled = false; void compact.then(() => { settled = true; });
+      await waitForExpectation(() => expect(host.request.mock.calls.some(([m]) => m === 'thread/compact/start')).toBe(true));
+      expect(settled).toBe(false); expect(handle.isTurnRunning?.()).toBe(true);
+      started(host);
+      host.getThreadHandlers()!.itemCompleted!({ threadId: handle.id, turnId: 'compact-1', item: { id: 'compaction', type: 'contextCompaction' } });
+      await Promise.resolve(); expect(settled).toBe(false);
+      host.getThreadHandlers()!.turnCompleted!({ threadId: handle.id, turn: { id: 'compact-1', status: 'completed' } });
+      await expect(compact).resolves.toEqual({});
+      expect(handle.isTurnRunning?.()).toBe(false);
+      expect(host.request.mock.calls.some(([m]) => m === Method.TurnStart)).toBe(false);
+      await handle.close();
+    });
+    it('refuses overlapping compaction and rejects failed terminal without inventing success', async () => {
+      const { host, handle } = await setup();
+      const compact = handle.compactSession!();
+      const failure = expect(compact).rejects.toThrow('fixture failed');
+      await expect(handle.compactSession!()).rejects.toThrow(/running|busy/i);
+      started(host);
+      host.getThreadHandlers()!.turnCompleted!({ threadId: handle.id, turn: { id: 'compact-1', status: 'failed', error: { message: 'fixture failed' } } });
+      await failure;
+      expect(host.request.mock.calls.filter(([m]) => m === 'thread/compact/start')).toHaveLength(1);
+      await handle.close();
+    });
+    it('keeps a lost ACK fenced until the same turn completes, without replay', async () => {
+      const { host, handle } = await setup();
+      host.request.mockImplementationOnce(async () => { throw new Error('fixture ACK timeout'); });
+      await expect(handle.compactSession!()).rejects.toThrow('fixture ACK timeout');
+      await expect(handle.send({ type: 'user', content: 'later' })).rejects.toThrow(/unconfirmed/);
+      started(host);
+      host.getThreadHandlers()!.itemCompleted!({ threadId: handle.id, turnId: 'compact-1', item: { id: 'compaction', type: 'contextCompaction' } });
+      host.getThreadHandlers()!.turnCompleted!({ threadId: handle.id, turn: { id: 'compact-1', status: 'completed' } });
+      expect(handle.isTurnRunning?.()).toBe(false);
+      expect(host.request.mock.calls.filter(([m]) => m === Method.ThreadCompactStart)).toHaveLength(1);
+      await handle.close();
+    });
+    it('fences the product Session on a lost compact ACK instead of attributing its late terminal to the preceding send', async () => {
+      const deps = createDeps();
+      const agent = new CodexAgent(deps);
+      const host = installFakeHost(agent, method => {
+        if (method === Method.TurnStart) return { turn: { id: 'initial' } };
+        if (method === Method.ThreadCompactStart) throw new Error('fixture lost compact ACK');
+        return undefined;
+      }, { userAgent: 'codex/0.162.1' });
+      const handle = await agent.startSession({ sessionId: 'compact-owner', model: 'gpt-5.4', workingDir: '/repo' });
+      const close = vi.spyOn(handle, 'close');
+      const session = new Session({ id: 'compact-owner', agentKind: 'codex', workDir: '/repo', handle,
+        logger: deps.logger, turnStallMs: 0, capabilities: agent.capabilities });
+      const events: CoreAgentEvent[] = []; session.onEvent(event => events.push(event));
+      try {
+        await session.send('initial explicit message');
+        const handlers = host.getThreadHandlers()!;
+        handlers.turnCompleted!({ threadId: handle.id, turn: { id: 'initial', status: 'completed' } });
+        await waitForExpectation(() => expect(events.filter(event => event.type === 'done')).toHaveLength(1));
+        await expect(session.compactSession()).rejects.toBeInstanceOf(TurnDispatchUnconfirmedError);
+        expect(close).toHaveBeenCalledOnce();
+        await expect(session.send('must not replay or continue on this executor')).rejects.toThrow(/closed/);
+        started(host);
+        handlers.itemCompleted!({ threadId: handle.id, turnId: 'compact-1', item: { id: 'compaction', type: 'contextCompaction' } });
+        handlers.turnCompleted!({ threadId: handle.id, turn: { id: 'compact-1', status: 'completed' } });
+        await Promise.resolve();
+        expect(events.filter(event => event.type === 'done').map(event => event.sessionTurnGeneration)).toEqual([1]);
+        expect(host.request.mock.calls.filter(([m]) => m === Method.ThreadCompactStart)).toHaveLength(1);
+        expect(host.request.mock.calls.filter(([m]) => m === Method.TurnStart)).toHaveLength(1);
+      } finally { await session.close(); await agent.dispose(); }
+    });
+    it('a Stop before turn identity interrupts the late accepted compact once and releases only at terminal', async () => {
+      const { host, handle } = await setup();
+      const compact = handle.compactSession!();
+      const stopped = expect(compact).rejects.toThrow('interrupted');
+      await handle.abort(); await stopped;
+      expect(handle.isTurnRunning?.()).toBe(true);
+      started(host);
+      await waitForExpectation(() => expect(host.request.mock.calls.filter(([m]) => m === Method.TurnInterrupt)).toHaveLength(1));
+      host.getThreadHandlers()!.turnCompleted!({ threadId: handle.id, turn: { id: 'compact-1', status: 'interrupted' } });
+      expect(handle.isTurnRunning?.()).toBe(false);
+      expect(host.request.mock.calls.filter(([m]) => m === Method.ThreadCompactStart)).toHaveLength(1);
+      await handle.close();
+    });
+    it('native admission requires the product binding and returns ACK while completion remains running', async () => {
+      const { host, handle } = await setup();
+      const native = handle as CodexNativeSessionHandle;
+      const signal = new AbortController().signal;
+      await expect(native.acceptNativeCompact({ threadId: handle.id }, signal)).rejects.toThrow('product owner');
+      const admit = vi.fn(async (request: { accept(): Promise<Record<string, never>> }) => request.accept());
+      native.setNativeCompactResolver!(admit);
+      await expect(native.acceptNativeCompact({ threadId: 'other' }, signal)).rejects.toThrow('Invalid');
+      await expect(native.acceptNativeCompact({ threadId: handle.id }, signal)).resolves.toEqual({});
+      expect(admit).toHaveBeenCalledOnce(); expect(handle.isTurnRunning?.()).toBe(true);
+      started(host);
+      host.getThreadHandlers()!.itemCompleted!({ threadId: handle.id, turnId: 'compact-1', item: { id: 'compaction', type: 'contextCompaction' } });
+      host.getThreadHandlers()!.turnCompleted!({ threadId: handle.id, turn: { id: 'compact-1', status: 'completed' } });
+      expect(handle.isTurnRunning?.()).toBe(false);
+      await handle.close();
+    });
+  });
+
   describe('automatic remote compaction summary fallback', () => {
+    // Core contract fixture. Main/SQLite/journal behavior is tested separately.
+    const historyOptions = () => ({ sessionInstanceId: 'fixture-instance', [NATIVE_HISTORY_HANDOFF]: {
+      async replace(_source: string, _instance: string, operation: (checkpoint: { target(id: string): Promise<void>; commit(): Promise<void> }) => Promise<void>) {
+        await operation({ target: async () => {}, commit: async () => {} });
+      },
+      async recover() {}, isPersisted: () => false,
+    } });
     it.each(['cindy_openai', 'cindy_summary', null])('resumes canonical account history before host reads (%s)', async (savedProvider) => {
       const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cindy-account-resume-'));
       const threadId = '0199ae4e-d6b0-7755-a755-66754cd7a847';
@@ -10283,7 +10415,7 @@ describe('CodexAgent MCP thread context hooks', () => {
           if (method === Method.ThreadResume) return { thread: { id: threadId, path: source }, model: 'gpt-5.6-luna', modelProvider: (raw as { modelProvider?: string }).modelProvider };
           return undefined;
         }, { codexProxyActive: true, localCompactionProviderId: 'cindy_summary', codexHome: '/tmp/target-account-home' });
-        const handle = await agent.startSession({ sessionId: 'account-switch', providerId: 'openai', model: 'gpt-5.6-luna', workingDir: dir, resumeSessionId: threadId });
+        const handle = await agent.startSession({ ...historyOptions(), sessionId: 'account-switch', providerId: 'openai', model: 'gpt-5.6-luna', workingDir: dir, resumeSessionId: threadId });
         expect(prepare).toHaveBeenCalledOnce();
         expect(host.getHost).toHaveBeenCalledWith(undefined, expect.anything(), expect.objectContaining({ sqliteHome: dir, keyOverride: expect.stringContaining(`:storage:${dir}`) }));
         expect(recordLocation).toHaveBeenCalledWith(threadId, dir, source);
@@ -10309,7 +10441,7 @@ describe('CodexAgent MCP thread context hooks', () => {
           if (method === Method.ThreadResume) throw Object.assign(new Error(`codex app-server thread/resume error -32600: no rollout found for thread id ${threadId}`), { code: -32600, data: undefined });
           return undefined;
         }, { localCompactionProviderId: 'cindy_summary' });
-        await expect(agent.startSession({ sessionId: 'failed-account-switch', providerId: 'openai', model: 'gpt-5.6-luna', workingDir: dir, resumeSessionId: threadId })).rejects.toThrow();
+        await expect(agent.startSession({ ...historyOptions(), sessionId: 'failed-account-switch', providerId: 'openai', model: 'gpt-5.6-luna', workingDir: dir, resumeSessionId: threadId })).rejects.toThrow();
         expect(host.request.mock.calls.some(([m]) => m === Method.ThreadStart || m === Method.ThreadFork)).toBe(false);
         expect((agent as unknown as { hostSessionBindingLeases: Map<string, number> }).hostSessionBindingLeases.size).toBe(0);
         if (failure !== 'missing-file') expect(await fs.readFile(source, 'utf8')).toBe(history);
@@ -10323,6 +10455,7 @@ describe('CodexAgent MCP thread context hooks', () => {
       let turns = 0;
       const host = installFakeHost(agent, (method, raw) => {
         if (method === Method.ExperimentalFeatureEnablementSet) return {};
+        if (method === Method.ThreadCompactStart) return {};
         const params = raw as { threadId?: string; modelProvider?: string };
         if (method === Method.TurnStart) return { turn: { id: `turn-${++turns}` } };
         if (method === Method.ThreadFork) return { thread: { id: 'fork-thread-id' }, model: 'codex/gpt-6-astra', modelProvider: params.modelProvider };
@@ -10338,7 +10471,7 @@ describe('CodexAgent MCP thread context hooks', () => {
     }
     async function start(savedProvider?: string) {
       const { agent, host } = setup(savedProvider);
-      const handle = await agent.startSession({ sessionId: 'summary-task', providerId: 'xd',
+      const handle = await agent.startSession({ ...historyOptions(), sessionId: 'summary-task', providerId: 'xd',
         model: 'codex/gpt-6-astra', workingDir: '/repo', ...(savedProvider ? { resumeSessionId: nativeId } : {}) });
       const events: AgentEvent[] = [];
       void (async () => { for await (const e of handle.events()) events.push(e); })();
@@ -10382,7 +10515,7 @@ describe('CodexAgent MCP thread context hooks', () => {
       await fs.writeFile(path.join(workingDir, 'evidence.md'), 'FORK_REVIEW_EVIDENCE');
       const { agent, host } = setup('cindy_codex', () => 1_000_000, true);
       try {
-        const handle = await agent.startSession({ sessionId: 'review-summary-task', providerId: 'xd',
+        const handle = await agent.startSession({ ...historyOptions(), sessionId: 'review-summary-task', providerId: 'xd',
           model: 'codex/gpt-6-astra', workingDir, reviewMode: true });
         const started = host.request.mock.calls.find(([m]) => m === Method.ThreadStart)![1] as Record<string, unknown>;
         expect(started.dynamicTools).toEqual(expect.arrayContaining([
@@ -10410,6 +10543,61 @@ describe('CodexAgent MCP thread context hooks', () => {
         await agent.dispose();
         await fs.rm(workingDir, { recursive: true, force: true });
       }
+    });
+    it('manual compact falls back once after terminal rejection, without any user turn replay', async () => {
+      const { agent, host } = setup();
+      const handle = await agent.startSession({ ...historyOptions(), sessionId: 'manual-summary', providerId: 'xd',
+        model: 'codex/gpt-6-astra', workingDir: '/repo' });
+      const operation = handle.compactSession!();
+      let finished = false; void operation.then(() => { finished = true; });
+      host.getThreadHandlers()!.turnStarted!({ threadId: nativeId, turn: { id: 'manual-1', status: 'inProgress' } });
+      compact(host, 'manual-1');
+      fail(host, 'manual-1', { message: '{"error":{"type":"invalid_request_error","message":"compact unsupported"}}', codexErrorInfo: 'other' });
+      await waitForExpectation(() => expect(host.request.mock.calls.filter(([m]) => m === Method.ThreadCompactStart)).toHaveLength(2));
+      expect(finished).toBe(false);
+      const handlers = host.getThreadHandlers()!;
+      handlers.turnStarted!({ threadId: handle.id, turn: { id: 'manual-2', status: 'inProgress' } });
+      handlers.itemCompleted!({ threadId: handle.id, turnId: 'manual-2', item: { id: 'summary', type: 'contextCompaction' } });
+      handlers.turnCompleted!({ threadId: handle.id, turn: { id: 'manual-2', status: 'completed' } });
+      await operation;
+      expect(host.request.mock.calls.filter(([m]) => m === Method.ThreadFork)).toHaveLength(1);
+      expect(host.request.mock.calls.filter(([m]) => m === Method.TurnStart)).toHaveLength(0);
+      await handle.close();
+    });
+
+    it('retains a native presentation thread and draft on failure instead of forking behind its frontend', async () => {
+      const frontend = vi.fn(async () => ({ presentation: {} as never, ready: Promise.resolve(), close: async () => {} }));
+      const agent = new CodexAgent(createDeps({}, { createLocalCodexNativePresentation: frontend }));
+      const host = installFakeHost(agent, (method, raw) => {
+        if (method === Method.ThreadResume) return { thread: { id: nativeId }, model: 'codex/gpt-6-astra', modelProvider: 'cindy_codex' };
+        if (method === Method.ThreadCompactStart) return {};
+        if (method === 'thread/read') return { thread: { id: nativeId, modelProvider: 'cindy_codex' } };
+        return undefined;
+      }, { userAgent: 'codex/0.162.1', codexProxyActive: true, cindyRemoteCompactionProviderId: 'cindy_codex', localCompactionProviderId: 'cindy_summary' });
+      const handle = await agent.startSession({ ...historyOptions(), sessionId: 'native-summary-limit', providerId: 'xd',
+        model: 'codex/gpt-6-astra', workingDir: '/repo', resumeSessionId: nativeId });
+      const result = expect(handle.compactSession!()).rejects.toThrow('502');
+      host.getThreadHandlers()!.turnStarted!({ threadId: nativeId, turn: { id: 'turn-1', status: 'inProgress' } });
+      compact(host); fail(host); await result;
+      expect(handle.id).toBe(nativeId);
+      expect(host.request.mock.calls.filter(([m]) => m === Method.ThreadFork || m === Method.TurnStart)).toHaveLength(0);
+      expect(handle.isTurnRunning?.()).toBe(false);
+      await handle.close();
+    });
+    it.each([
+      ['{"error":{"type":"invalid_request_error","message":"unsupported"}}', true],
+      ['{"error":{"type":"invalid_request_error","message":"request timed out"}}', false],
+      ['{"error":{"type":"authentication_error","message":"invalid API key"}}', false],
+      ['{"error":{"type":"invalid_request_error","code":"invalid_encrypted_content"}}', false],
+      ['{"error":{"type":"invalid_request_error"}', false],
+      ['{"error":{"message":"unsupported"}}', false],
+      ['invalid_request_error', false],
+    ] as const)('uses an authoritative API rejection only: %s', async (message, fallback) => {
+      const { host, handle } = await start();
+      compact(host); fail(host, 'turn-1', { message, codexErrorInfo: 'other' });
+      await waitForExpectation(() => expect(fallback ? handle.getCurrentTurnId?.() === 'turn-2' : !handle.isTurnRunning?.()).toBe(true));
+      expect(host.request.mock.calls.filter(([m]) => m === Method.ThreadFork)).toHaveLength(fallback ? 1 : 0);
+      await handle.close();
     });
     it('switches after remote compact exhausts 429 retries, only when the native turn finishes', async () => {
       const { host, handle } = await start();
@@ -10463,7 +10651,7 @@ describe('CodexAgent MCP thread context hooks', () => {
     it('keeps the active native window when settings change during compaction', async () => {
       let limit = 1_000_000;
       const { agent, host } = setup('cindy_codex', () => limit);
-      const handle = await agent.startSession({ sessionId: 'summary-frozen-window', providerId: 'xd',
+      const handle = await agent.startSession({ ...historyOptions(), sessionId: 'summary-frozen-window', providerId: 'xd',
         model: 'codex/gpt-6-astra', workingDir: '/repo' });
       await handle.send({ type: 'user', content: 'Finish the work.' });
       limit = 500_000;
@@ -10531,11 +10719,26 @@ describe('CodexAgent MCP thread context hooks', () => {
       expect(handle.getUsageSnapshot().tokenUsage).toBe(usageBeforeReplay + 10);
       await handle.close();
     });
-    it('honors the persisted summary provider when reopening the task', async () => {
+    it('rearms remote compaction on a new native executor without forking its saved summary history', async () => {
       const { host, handle } = await start('cindy_summary');
-      expect(host.request.mock.calls.find(([m]) => m === Method.ThreadResume)![1]).toMatchObject({ modelProvider: 'cindy_summary' });
+      expect(host.request.mock.calls.find(([m]) => m === Method.ThreadResume)![1]).toMatchObject({ modelProvider: 'cindy_codex' });
+      expect(handle.codexThreadModelProviderId).toBe('cindy_codex');
+      expect(handle.id).toBe(nativeId);
+      expect(host.request.mock.calls.filter(([m]) => m === Method.ThreadFork)).toHaveLength(0);
+      await handle.close();
+    });
+    it('keeps the actual summary identity when a loaded native executor ignores the rearm override', async () => {
+      const { agent, host } = setup('cindy_summary');
+      const original = host.request.getMockImplementation()!;
+      host.request.mockImplementation(async (method, params) => method === Method.ThreadResume
+        ? { thread: { id: nativeId }, model: 'codex/gpt-6-astra', modelProvider: 'cindy_summary' }
+        : original(method, params));
+      const handle = await agent.startSession({ ...historyOptions(), sessionId: 'still-loaded', providerId: 'xd',
+        model: 'codex/gpt-6-astra', workingDir: '/repo', resumeSessionId: nativeId });
+      expect(handle.codexThreadModelProviderId).toBe('cindy_summary');
+      await handle.send({ type: 'user', content: 'Continue once.' });
       compact(host); fail(host);
-      expect(host.request.mock.calls.filter(([m]) => m === Method.TurnStart)).toHaveLength(1);
+      expect(host.request.mock.calls.filter(([m]) => m === Method.ThreadFork)).toHaveLength(0);
       await handle.close();
     });
     it('does not switch on an ordinary generation 502', async () => {

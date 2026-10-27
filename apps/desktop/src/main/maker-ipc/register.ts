@@ -464,6 +464,7 @@ import { captureMediaRefCompensationScope } from '../cindy-media/refCompensation
 import { requestUtilityText } from '../utility-model/oneShotCandidates.js';
 import { gitExec } from '../worktree/gitExec.js';
 import { ownerScopedUserDataPath } from '../appSessionState.js';
+import { prepareCodexHistoryHandoff, createCodexHistoryDatabase } from './codexHistoryHandoff.js';
 import { createNativeHistoryHandoff } from './nativeHistoryHandoff.js';
 import { withNativeHistoryOperation } from './nativeHistoryOperation.js';
 import { nativeHistoryStartupTarget, nativeHistoryConfiguration, nativeHistoryRouteReference, readNativeHistoryForClear } from './nativeHistoryJournal.js';
@@ -4700,6 +4701,38 @@ function nativeHistoryConfigurationForSession(value: Parameters<typeof nativeHis
     getProviderRoutingDescriptor(value.providerId, value.agentKind, value.model)), effort: model
     ? resolveCompatibleSessionRuntimeEffort(model, (value.effort ?? null) as Parameters<typeof resolveCompatibleSessionRuntimeEffort>[1]) : value.effort });
 }
+/** Installed by Maker's common prepare hook, including non-Renderer starts. */
+export async function prepareCodexHistoryStart(sessionId: string, start: import('@cindy/maker-core').CreateSessionOptions): Promise<void> {
+  if (start.agentKind !== 'codex' || start.remoteHostId) return;
+  const db = getDbClient(), ownerDb = getCurrentDbClientSnapshot(), owner = getActiveAppSession();
+  const maker = getMaker();
+  const assertCurrent = () => {
+    if (!ownerDb || ownerDb !== getCurrentDbClientSnapshot() || isAppSessionBoundaryPending()
+      || !owner.dataOwnerId || owner.generation !== getActiveAppSession().generation)
+      throw new Error('Codex history owner changed');
+  };
+  assertCurrent();
+  await finishCommittedNativeHistoryClear(captureNativeHistoryClearDependencies(sessionId));
+  const database = createCodexHistoryDatabase(db, sessionId, assertCurrent, row =>
+    nativeHistoryConfigurationForSession({ ...row, model: row.model!, agentKind: 'codex' }));
+  await prepareCodexHistoryHandoff({ root: ownerScopedUserDataPath('native-history-handoffs'), start,
+    assertCurrent, ...database,
+    async hold(instanceId, source, operation) {
+      assertCurrent();
+      const session = maker.getSession(sessionId);
+      if (!session || session.instanceId !== instanceId || session.sdkSessionId !== source || session.agentKind !== 'codex')
+        throw new Error('Codex history executor changed');
+      await session.replaceNativeHistoryAndPersist(operation); assertCurrent();
+    },
+    async retire(instanceId) {
+      assertCurrent();
+      const session = maker.getSession(sessionId);
+      if (!session || session.instanceId !== instanceId) throw new Error('Codex history executor retirement is unconfirmed');
+      await withRehydrateCloseSuppressed(sessionId, () => maker.closeSessionIfCurrent(session)); assertCurrent();
+      if (maker.getSession(sessionId) === session) throw new Error('Codex history executor exit unconfirmed');
+    },
+  });
+}
 const nativeHistoryBindings = new WeakMap<Session, {
   controller: ReturnType<typeof createNativeHistoryHandoff<NativeHistoryProjection>>;
   ready: Promise<void>;
@@ -4729,7 +4762,9 @@ function captureNativeHistoryClearDependencies(sessionId: string): NativeHistory
       if (!row) throwIpcError('NOT_FOUND', 'History task no longer exists');
       return row;
     },
-    ...(session?.presentation && !session.remoteHostId && ['pi', 'omp'].includes(session.agentKind) ? {
+    ...(session && !session.remoteHostId && (session.agentKind === 'codex'
+      ? readNativeHistoryForClear(ownerScopedUserDataPath('native-history-handoffs'), sessionId) !== null
+      : session.presentation && ['pi', 'omp'].includes(session.agentKind)) ? {
       executor: { nativeId: session.sdkSessionId, agentKind: session.agentKind, workingDir: session.workDir,
         async close() {
           assertCurrent();

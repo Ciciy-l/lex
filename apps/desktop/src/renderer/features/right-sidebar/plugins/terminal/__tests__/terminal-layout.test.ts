@@ -233,7 +233,7 @@ describe('terminal layout model', () => {
       profile: 'claude',
       title: 'Agent',
       created: false,
-      exited: null,
+      exited: { code: 1, signal: null },
     });
     expect(state.panes.right.profile).toBe('pi');
 

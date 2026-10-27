@@ -11,6 +11,13 @@ export interface NativeHistoryIdentity {
   model: string;
   /** Stable route/configuration references only, never credentials or tokens. */
   configuration?: string;
+  /** Codex full-history replacement keeps the task's existing clear boundary. */
+  clearedAt?: number | null;
+}
+const codexThreadId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function validReplacementTarget(identity: NativeHistoryIdentity, target: string): boolean {
+  return identity.agentKind === 'codex' ? codexThreadId.test(identity.nativeId) && codexThreadId.test(target)
+    : path.isAbsolute(target) && target.length <= 32768 && path.dirname(target) === path.dirname(identity.nativeId);
 }
 export function nativeHistoryRouteReference(route: RoutingDescriptor | null): string {
   // An explicit allowlist: never serialize headers, keys or OAuth token values.
@@ -31,8 +38,21 @@ export interface NativeHistoryPending extends NativeHistoryIdentity {
   cancelled?: boolean;
   replacing?: boolean;
   targetNativeId?: string;
+  /** Codex's captured executor confirmed physical exit; never inferred by ID. */
+  executorRetired?: boolean;
+  /** Captured local native child. Existence is never ownership or exit proof. */
+  executorPid?: number;
   /** Written only after the exact executor has confirmed exit for explicit clear. */
   clear?: { at: number; previousClearedAt: number | null };
+}
+
+/** Only negative process existence proves a crashed writer has gone. A live or
+ * reused PID and permission/probe errors remain protected; never signal it. */
+export function nativeHistoryExecutorHasExited(record: NativeHistoryPending): boolean {
+  if (record.executorRetired === true) return true;
+  if (record.agentKind !== 'codex' || !record.executorPid) return false;
+  try { process.kill(record.executorPid, 0); return false; }
+  catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; }
 }
 
 /** Owner-scoped, one small record per task. This is an operation journal, not a
@@ -53,10 +73,12 @@ export function createNativeHistoryJournal(root: string, identity: NativeHistory
       || [record.nativeDraft, record.draftText].some(value => value !== undefined && (typeof value !== 'string' || value.length > 1_000_000))
       || (record.cancelled !== undefined && typeof record.cancelled !== 'boolean')
       || (record.replacing !== undefined && typeof record.replacing !== 'boolean')
+      || (record.executorRetired !== undefined && (record.agentKind !== 'codex' || typeof record.executorRetired !== 'boolean'))
+      || (record.executorPid !== undefined && (record.agentKind !== 'codex' || !Number.isSafeInteger(record.executorPid) || record.executorPid <= 0))
       || (record.clear !== undefined && (!record.clear || !Number.isSafeInteger(record.clear.at) || record.clear.at <= 0
         || (record.clear.previousClearedAt !== null && !Number.isSafeInteger(record.clear.previousClearedAt))))
-      || (record.targetNativeId !== undefined && (typeof record.targetNativeId !== 'string' || !path.isAbsolute(record.targetNativeId)
-        || record.targetNativeId.length > 32768 || path.dirname(record.targetNativeId) !== path.dirname(record.nativeId))))
+      || (record.clearedAt !== undefined && record.clearedAt !== null && !Number.isSafeInteger(record.clearedAt))
+      || (record.targetNativeId !== undefined && (typeof record.targetNativeId !== 'string' || !validReplacementTarget(record, record.targetNativeId))))
       throw new Error('Native history recovery identity changed');
     return record;
   };
@@ -73,6 +95,14 @@ export function createNativeHistoryJournal(root: string, identity: NativeHistory
   return {
     read,
     readForClear,
+    executorRetired(pending: NativeHistoryPending, retired: boolean, executorPid?: number): NativeHistoryPending {
+      const current = read();
+      if (current?.agentKind !== 'codex' || current.operationId !== pending.operationId)
+        throw new Error('Native history executor changed');
+      if (executorPid !== undefined && (!Number.isSafeInteger(executorPid) || executorPid <= 0)) throw new Error('Invalid native history writer');
+      const updated = { ...current, executorRetired: retired, ...(executorPid !== undefined ? { executorPid } : {}) };
+      write(updated); return updated;
+    },
     markClearing(pending: NativeHistoryPending, at: number, previousClearedAt: number | null): NativeHistoryPending {
       const current = readForClear();
       if (!current || JSON.stringify(current) !== JSON.stringify(pending)) throw new Error('Native history clear operation changed');
@@ -110,8 +140,7 @@ export function createNativeHistoryJournal(root: string, identity: NativeHistory
     replace(pending: NativeHistoryPending, targetNativeId?: string): NativeHistoryPending {
       const current = read();
       if (!current || current.operationId !== pending.operationId) throw new Error('Native history replacement changed');
-      if (targetNativeId !== undefined && (!path.isAbsolute(targetNativeId) || targetNativeId.length > 32768
-        || path.dirname(targetNativeId) !== path.dirname(current.nativeId)
+      if (targetNativeId !== undefined && (!validReplacementTarget(current, targetNativeId)
         || (current.targetNativeId !== undefined && current.targetNativeId !== targetNativeId))) throw new Error('Invalid native history replacement target');
       const updated = { ...current, replacing: true, ...(targetNativeId ? { targetNativeId } : {}) };
       write(updated); return updated;
@@ -135,13 +164,14 @@ export function readNativeHistoryForClear(root: string, sessionId: string): Nati
   if (raw.length > 2_100_000) throw new Error('Native history recovery record is too large');
   const value = JSON.parse(raw) as NativeHistoryPending | null;
   if (value === null) return null;
-  if (value.sessionId !== sessionId || !['pi', 'omp'].includes(value.agentKind)
-    || typeof value.nativeId !== 'string' || !path.isAbsolute(value.nativeId)
+  if (value.sessionId !== sessionId || !['pi', 'omp', 'codex'].includes(value.agentKind)
+    || typeof value.nativeId !== 'string' || (value.agentKind === 'codex' ? !codexThreadId.test(value.nativeId) : !path.isAbsolute(value.nativeId))
     || typeof value.workingDir !== 'string' || typeof value.model !== 'string')
     throw new Error('Native history recovery identity changed');
   return createNativeHistoryJournal(root, { sessionId, nativeId: value.nativeId, agentKind: value.agentKind,
     workingDir: value.workingDir, model: value.model,
-    ...(value.configuration !== undefined ? { configuration: value.configuration } : {}) }).readForClear();
+    ...(value.configuration !== undefined ? { configuration: value.configuration } : {}),
+    ...(value.clearedAt !== undefined ? { clearedAt: value.clearedAt } : {}) }).readForClear();
 }
 
 /** Before spawning anything: never reopen the source after an unknown fork. */

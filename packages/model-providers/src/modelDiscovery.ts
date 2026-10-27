@@ -149,6 +149,19 @@ export function parseModelsListResponse(
     const inputModalities = (modalities as { input?: unknown } | undefined)?.input ?? record.input_modalities;
     const contextWindowMax = pickModelMetadata({ contextWindowMax: record.max_context_window ?? record.contextWindowMax }).contextWindowMax;
     const serviceTiers = record.service_tiers;
+    const additionalSpeedTiers = record.additional_speed_tiers;
+    const declaredTiers = Array.isArray(serviceTiers) && serviceTiers.every(tier =>
+      tier && typeof tier === 'object' && typeof tier.id === 'string')
+      ? serviceTiers.map(tier => tier.id as string) : undefined;
+    const additionalTiers = Array.isArray(additionalSpeedTiers) &&
+      additionalSpeedTiers.every(tier => typeof tier === 'string') ? additionalSpeedTiers : undefined;
+    const fastDeclared = declaredTiers !== undefined || additionalTiers !== undefined
+      ? [...(declaredTiers ?? []), ...(additionalTiers ?? [])].some(tier => tier === 'priority' || tier === 'fast')
+      : undefined;
+    // Explicit booleans win: canonical, snake-case alias, then legacy alias.
+    // Invalid values are absent; a valid false must not fall through to inferred tiers.
+    const explicitFast = [record.supportsFastMode, record.supports_fast_mode, record.supportsServiceTier]
+      .find((value): value is boolean => typeof value === 'boolean');
     const isVercel = sourceUrl !== undefined && (() => {
       try { const url = new URL(sourceUrl); return url.origin === 'https://ai-gateway.vercel.sh'
         && url.pathname.replace(/\/+$/, '') === '/v1/models'; } catch { return false; }
@@ -199,10 +212,7 @@ export function parseModelsListResponse(
         : info.supports_function_calling ?? capabilities.trained_for_tool_use,
       reasoningRequired: reasoning?.required ?? reasoning?.mandatory,
       defaultEffort: rawDefault === "none" ? null : rawDefault,
-      supportsFastMode: record.supports_fast_mode ?? record.supportsServiceTier ??
-        (Array.isArray(serviceTiers) && serviceTiers.every(tier =>
-          tier && typeof tier === 'object' && typeof tier.id === 'string')
-          ? serviceTiers.some(tier => tier.id === 'priority') : undefined),
+      supportsFastMode: explicitFast ?? fastDeclared,
       supportsImageInput:
         record.supports_image_input ?? info.supports_vision ?? capabilities.vision ??
         (Array.isArray(inputModalities) && inputModalities.every(value => typeof value === 'string')

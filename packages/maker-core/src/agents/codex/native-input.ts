@@ -38,6 +38,7 @@ export interface CodexNativeSessionHandle extends AgentSessionHandle {
   acceptNativeTurn(request: CodexNativeTurnRequest): Promise<TurnStartResponse>;
   applyNativeRuntimeSettings(params: unknown, signal: AbortSignal): Promise<Record<string, never>>;
   interruptNativeTurn(params: unknown, signal: AbortSignal): Promise<Record<string, never>>;
+  acceptNativeCompact(params: unknown, signal: AbortSignal): Promise<Record<string, never>>;
 }
 
 /** Reuse the product reservation and normal Codex send policy before forwarding a native turn. */

@@ -322,3 +322,6 @@ export {
 } from "./channelSelection.js";
 
 export { projectBuiltinOmpProvider, withOmpPresetRuntime } from './ompProjection.js';
+
+// UI/mobile imports must not load the Node-only compatibility adapter barrel.
+export { appendLexUserAgent, withLexApplicationHeaders, withLexCustomHeaders } from '@cindy/model-compat/application-headers';

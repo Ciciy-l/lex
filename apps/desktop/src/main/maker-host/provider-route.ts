@@ -1,3 +1,4 @@
+import { withLexApplicationHeaders } from '@cindy/model-providers';
 /**
  * provider-route —— 把 catalog 的 `RoutingDescriptor` 翻译成 loopback proxy 的 `RoutingDecision`,
  * 并据 per-session 选定的供应商解析本会话的路由。
@@ -854,9 +855,9 @@ export function buildLocalHandlerHeaders(
     route.routing.authStrategy === 'api-key-header' ||
     route.routing.authStrategy === 'oauth-token' ||
     route.routing.authStrategy === 'provider-oauth-header';
-  const headers: Record<string, string> = hostManagedAuth
+  const headers = withLexApplicationHeaders(hostManagedAuth
     ? withoutClientAuthHeaders(route.routing.headerOverride)
-    : { ...(route.routing.headerOverride ?? {}) };
+    : { ...(route.routing.headerOverride ?? {}) });
   const headerDelete = new Set(route.routing.headerDelete ?? []);
   switch (route.routing.authStrategy) {
     case 'none':

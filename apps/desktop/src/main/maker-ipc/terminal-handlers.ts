@@ -205,6 +205,9 @@ export function registerTerminalHandlers(options?: TerminalHandlersOptions): Pty
       // 区分 shell not found vs 通用 spawn 失败。shellResolver 永远返回 ResolvedShell，
       // 兜底到 /bin/sh / cmd.exe；这里失败一般是 spawn 系统调用层面的（权限 / 路径不可达）。
       const msg = err instanceof Error ? err.message : String(err);
+      if (/TERMINAL_RETIRED/.test(msg)) {
+        throwIpcError('PRECONDITION_FAILED', 'terminal was removed; open a new terminal');
+      }
       if (/TERMINAL_NOT_FOUND/.test(msg)) {
         throwIpcError('TERMINAL_NOT_FOUND', 'terminal is no longer available');
       }
@@ -383,6 +386,9 @@ function parseCreateParams(raw: unknown, owner: WebContents): CreateOptions {
   if (obj.attachOnly !== undefined && typeof obj.attachOnly !== 'boolean') {
     throwIpcError('INVALID_PARAMS', 'attachOnly must be boolean');
   }
+  if (obj.restore !== undefined && typeof obj.restore !== 'boolean') {
+    throwIpcError('INVALID_PARAMS', 'restore must be boolean');
+  }
   return {
     id,
     cwd,
@@ -393,6 +399,7 @@ function parseCreateParams(raw: unknown, owner: WebContents): CreateOptions {
     owner,
     sessionId,
     attachOnly: obj.attachOnly === true,
+    restore: obj.restore === true,
   };
 }
 

@@ -24,6 +24,32 @@ function fixture() {
   return { session, presentation, handle, navigate, read, state };
 }
 describe('native history and Host projection handoff', () => {
+  it('manual compact drains its own product terminal before the next send and never sends a synthetic prompt', async () => {
+    const queue = createAsyncQueue<AgentEvent>();
+    let finished!: () => void;
+    const nativeCompletion = new Promise<Record<string, never>>(ok => { finished = () => ok({}); });
+    const handle: AgentSessionHandle = { id: 'codex-thread', agentKind: 'codex', model: 'model',
+      send: vi.fn(async () => {}), steer: vi.fn(), abort: vi.fn(), close: async () => queue.end(),
+      events: () => queue, isTurnRunning: () => false, setInteractionResolver() {},
+      getUsageSnapshot: () => ({ tokenUsage: 0, contextTokens: 17, contextWindow: 100, costUsd: 0 }),
+      compactSession: async () => ({}), startManualCompact: () => ({ accepted: Promise.resolve(), completed: nativeCompletion }) };
+    const session = new Session({ id: 'task', agentKind: 'codex', workDir: '.', handle, logger,
+      turnStallMs: 0, capabilities: { manualCompact: { supported: true } } as never });
+    const events: AgentEvent[] = []; session.onEvent(event => events.push(event));
+    try {
+      const compact = session.compactSession(); let settled = false; void compact.then(() => { settled = true; });
+      await vi.waitFor(() => expect(session.getTurnGeneration()).toBe(1));
+      finished(); await Promise.resolve(); await Promise.resolve(); expect(settled).toBe(false);
+      queue.push({ type: 'status', data: { status: 'Compacting', isRunning: true }, source: 'codex' });
+      queue.push({ type: 'compact_boundary', data: { boundaryId: 'compact', trigger: 'manual', preTokens: 17, postTokens: 3, durationMs: 1 }, source: 'codex' });
+      queue.push({ type: 'done', data: { usage: { promptTokens: 2, completionTokens: 1 } }, source: 'codex' });
+      await compact;
+      expect(events.filter(event => event.type === 'done').map(event => event.sessionTurnGeneration)).toEqual([1]);
+      expect(handle.send).not.toHaveBeenCalled();
+      await session.send('next explicit message');
+      expect(handle.send).toHaveBeenCalledOnce(); expect(session.getTurnGeneration()).toBe(2);
+    } finally { await session.close(); }
+  });
   it.each(['setModel', 'setEffort'] as const)('refuses history mutation while an earlier %s is unresolved', async setting => {
     const f = fixture(); let finish!: () => void;
     const pending = new Promise<void>(resolve => { finish = resolve; });

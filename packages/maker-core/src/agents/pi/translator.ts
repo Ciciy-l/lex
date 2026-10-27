@@ -449,7 +449,7 @@ function applyUsage(
 }
 
 function priceVariantFromServiceTier(value: unknown): 'standard' | 'priority' | undefined {
-  if (value === 'priority') return 'priority';
+  if (value === 'priority' || value === 'fast') return 'priority';
   if (value === 'default' || value === 'standard') return 'standard';
   return undefined;
 }

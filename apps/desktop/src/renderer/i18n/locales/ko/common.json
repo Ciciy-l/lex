@@ -7108,7 +7108,6 @@
       "defaultTitle": "터미널",
       "workbenchTitle": "터미널({{count}}개 창)",
       "profileShell": "Shell",
-      "agentSection": "Agent",
       "defaultShellBadge": "기본값",
       "detectingShells": "터미널 감지 중…",
       "profileClaude": "Claude",
@@ -8199,7 +8198,7 @@
         "recommendedConfig": "추천 설정",
         "customized": "사용자 지정됨",
         "reset": "추천으로 되돌리기",
-        "fastTip": "Fast · 우선 처리로 빠르게 · 사용량 증가",
+        "fastTip": "Fast는 요금이나 사용량이 늘어날 수 있습니다. 실제 속도는 제공자에 따라 달라집니다.",
         "effortEndFast": "더 빠르게",
         "effortEndSmart": "더 똑똑하게",
         "railSameEngine": "{{agent}} 전용",
@@ -9335,6 +9334,7 @@
       }
     },
     "markdownRenderer": {
+      "fileUnavailable": "이 파일을 열 수 없습니다. 링크를 다시 클릭하여 새로고침하고 다시 시도하세요.",
       "codeCopied": "복사됨",
       "copyCode": "코드 복사",
       "annotateImage": "이미지 주석",

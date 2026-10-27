@@ -56,7 +56,7 @@ interface AddTabDropdownProps {
   iosSimulatorAvailable?: boolean;
   /** Pi is the only harness with the complete Subagents detail contract. */
   subagentsAvailable?: boolean;
-  /** Launch a new terminal/agent in the existing content tab strip. */
+  /** Launch a new shell terminal in the existing content tab strip. */
   onLaunchTerminal?: (profile: TerminalProfile, shellPref?: ShellId) => void;
 }
 
@@ -224,11 +224,6 @@ export function AddTabDropdown({
   const shellItems = [...(availableShells ?? [])].sort(
     (a, b) => Number(b.isAutoDetectTarget) - Number(a.isAutoDetectTarget),
   );
-  const agentItems: Array<{ profile: TerminalProfile; label: string; icon: LucideIcon }> = [
-    { profile: 'claude', label: t('rightSidebar.terminal.profileClaude'), icon: Bot },
-    { profile: 'codex', label: t('rightSidebar.terminal.profileCodex'), icon: Bot },
-    { profile: 'pi', label: t('rightSidebar.terminal.profilePi'), icon: Bot },
-  ];
 
   return createPortal(
     <div
@@ -284,17 +279,6 @@ export function AddTabDropdown({
           onClick={() => onLaunchTerminal?.('shell')}
         />
       )}
-      <div className="mx-1 my-1 h-px bg-[var(--border-default)]" />
-      <GroupHeader label={t('rightSidebar.terminal.agentSection')} />
-      {agentItems.map((item) => (
-        <DropdownItem
-          key={item.profile}
-          icon={item.icon}
-          label={item.label}
-          disabled={!onLaunchTerminal}
-          onClick={() => onLaunchTerminal?.(item.profile)}
-        />
-      ))}
       <div className="mx-1 my-1 h-px bg-[var(--border-default)]" />
       {enabled.map((m) => {
         const alreadyOpen = m.singleton && existingKinds?.has(m.kind);

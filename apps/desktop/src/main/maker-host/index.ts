@@ -1,3 +1,4 @@
+import { withLexApplicationHeaders } from '@cindy/model-providers';
 import { t } from '../i18n.js';
 import { assertNotRetiredCompanionSession } from '../localDb/retiredCompanions.js';
 import { scanLocalCustomizations } from '../skillhub/customizationScanHost';
@@ -74,6 +75,7 @@ import {
   dispatchInterAgentMessage,
   isSessionInTurn,
   wireSessionToIpc,
+  prepareCodexHistoryStart,
 } from '../maker-ipc/register.js';
 import { MAKER_PUSH } from '../maker-ipc/channels.js';
 import { tapWindowBroadcast } from '../device-link/broadcast-tap.js';
@@ -1398,7 +1400,7 @@ export function getMaker(): Maker {
                 ...params.env,
                 ANTHROPIC_BASE_URL: channelRoute.endpoint,
                 ANTHROPIC_API_KEY: 'cindy-host-managed-channel',
-                ANTHROPIC_CUSTOM_HEADERS: Object.entries(channelRoute.headers)
+                ANTHROPIC_CUSTOM_HEADERS: Object.entries(withLexApplicationHeaders(channelRoute.headers))
                   .map(([key, value]) => key + ': ' + value)
                   .join('\n'),
               };
@@ -1504,6 +1506,7 @@ export function getMaker(): Maker {
         ?? 'default';
     };
     const codexAgent = new CodexAgent({
+      getAppVersion: () => app.getVersion(),
       useLocalCodexNativePresentation: options => options.nativePresentation === true,
       createLocalCodexNativeService: createCodexNativeHostService,
       prepareLocalCodexNativePresentation: launch => prepareTaskCodexNativePresentation(launch, {
@@ -2732,6 +2735,7 @@ export function getMaker(): Maker {
           // 所有创建路径共用的派发边界,opts.providerId 此刻已是本次启动的终值。
           freezeSessionProviderAtStart(sessionId, opts.providerId);
           await preparePersistedOrcaSessionStart(sessionId, opts as MakerSessionCreateOpts);
+          await prepareCodexHistoryStart(sessionId, opts);
           if (opts.agentKind === 'pi' && opts.thinkingEnabled === undefined) {
             const thinkingEnabled = getThinkingEnabledFromMemory(
               opts.agentKind,

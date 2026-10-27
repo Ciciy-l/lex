@@ -1235,6 +1235,7 @@ export const Method = {
   ThreadTurnsList: 'thread/turns/list',
   ThreadUnsubscribe: 'thread/unsubscribe',
   ThreadSettingsUpdate: 'thread/settings/update',
+  ThreadCompactStart: 'thread/compact/start',
   TurnStart: 'turn/start',
   TurnSteer: 'turn/steer',
   TurnInterrupt: 'turn/interrupt',

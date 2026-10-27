@@ -1,3 +1,4 @@
+import { getDataOwnerGeneration, isDataOwnerGenerationCurrent } from '@/contexts/dataOwnerGeneration';
 /**
  * MarkdownRenderer
  * ---------------------------------------------------------------------------
@@ -978,6 +979,7 @@ function FileTargetChip({
   line,
   column,
   onOpen,
+  onActivate,
   title,
   children,
   sessionId,
@@ -987,6 +989,7 @@ function FileTargetChip({
   line?: number;
   column?: number;
   onOpen: () => void | Promise<void>;
+  onActivate?: () => void | Promise<void>;
   title?: string;
   children: ReactNode;
   /** 当前会话 id;就位时 html 文件左键弹"打开方式"菜单(侧边栏浏览器项需要它)。 */
@@ -1030,6 +1033,7 @@ function FileTargetChip({
   const activate = () => {
     // 与输入附件一致：点击打开 lightbox 前先撤掉 hover 层，避免关闭大图后残留。
     setImagePreviewOpen(false);
+    if (onActivate) { void onActivate(); return; }
     if (htmlWithSession) {
       if (sidebarTargetSessionId) {
         void openHtmlFileByPreference(sidebarTargetSessionId, resolvedAbsPath, t, fileCtx);
@@ -1110,6 +1114,7 @@ function ResolvedLocalLink({
   column,
   href,
   onOpen,
+  onActivate,
   anchorProps,
   children,
   sessionId,
@@ -1120,6 +1125,7 @@ function ResolvedLocalLink({
   column?: number;
   href: string;
   onOpen: () => void | Promise<void>;
+  onActivate?: () => void | Promise<void>;
   anchorProps: Record<string, unknown>;
   children: ReactNode;
   /** 当前会话 id;就位时 html 文件左键弹"打开方式"菜单(同 FileTargetChip)。 */
@@ -1148,6 +1154,7 @@ function ResolvedLocalLink({
         className={MARKDOWN_LINK_CLASS}
         onClick={async (e) => {
           e.preventDefault();
+          if (onActivate) { await onActivate(); return; }
           if (htmlWithSession) {
             if (sidebarTargetSessionId) {
               await openHtmlFileByPreference(sidebarTargetSessionId, resolvedAbsPath, t, fileCtx);
@@ -1357,7 +1364,9 @@ async function activateResolvedLocalTarget(
   setLightboxSrc: (src: string) => void,
   setTextLightboxFile: (file: { path: string; name: string; line?: number } | null) => void,
   setModelLightboxPath: (absPath: string | null) => void,
+  isCurrent: () => boolean = () => true,
 ): Promise<void> {
+  if (!isCurrent()) return;
   const remoteOrigin = isRemoteFileOrigin(ctx.origin) ? ctx.origin : null;
   // 目录 chip:定位进侧边栏文件浏览器(远程零特判——file-browser plugin 自身
   // 已按会话路由远端)。workdir 外目录进不了树:本地退回 Finder 定位,远程给
@@ -1366,7 +1375,7 @@ async function activateResolvedLocalTarget(
     const rel = toWorkdirRel(ctx.workingDir, target.absPath);
     const sidebarTargetSessionId = ctx.sidebarTargetSessionId ?? ctx.sessionId;
     if (rel && sidebarTargetSessionId) {
-      await openDirInSidebarFileBrowser(sidebarTargetSessionId, rel);
+      await openDirInSidebarFileBrowser(sidebarTargetSessionId, rel, isCurrent);
       return;
     }
     if (!remoteOrigin) {
@@ -1393,8 +1402,8 @@ async function activateResolvedLocalTarget(
       setLightboxSrc(rewritten);
       return;
     }
-    const cachePath = await fetchChatFileWithToasts(remoteOrigin, ctx.workingDir, target.absPath);
-    if (cachePath) setLightboxSrc(toLocalFileUrl(cachePath));
+    const cachePath = await fetchChatFileWithToasts(remoteOrigin, ctx.workingDir, target.absPath, isCurrent);
+    if (cachePath && isCurrent()) setLightboxSrc(toLocalFileUrl(cachePath));
     return;
   }
   // 3D 模型:.glb/.gltf → 应用内 ModelLightbox;.fbx → Finder 定位。
@@ -1405,7 +1414,7 @@ async function activateResolvedLocalTarget(
     if (remoteOrigin) {
       // 3D 远程本期不做(xdt-model:// 无远程管线):下载缓存副本并在文件管理
       // 器定位,不误开本机同路径文件。
-      await revealRemoteChatFile(remoteOrigin, ctx.workingDir, target.absPath);
+      await revealRemoteChatFile(remoteOrigin, ctx.workingDir, target.absPath, isCurrent);
       return;
     }
     if (/\.fbx(\?.*)?$/i.test(target.absPath)) {
@@ -1415,7 +1424,7 @@ async function activateResolvedLocalTarget(
     setModelLightboxPath(target.absPath);
     return;
   }
-  if (!(await shouldOpenTextLightboxForOrigin(ctx, target.absPath))) return;
+  if (!(await shouldOpenTextLightboxForOrigin(ctx, target.absPath, isCurrent)) || !isCurrent()) return;
   setTextLightboxFile({
     path: target.absPath,
     name: basename(target.absPath),
@@ -1470,6 +1479,59 @@ function MarkdownTargetLink({
     return allowPrivilegedLinks ? target : stripPrivilegedMarkdownTarget(target);
   }, [href, localFileRefs, allowPrivilegedLinks]);
   const target = useResolvedMarkdownTarget(initialTarget, workingDir, isStreaming);
+  const dataOwner = getDataOwnerGeneration();
+  const activationOwner = useMemo(() => ({}), [initialTarget, fileCtx, workingDir, sessionId, sidebarTargetSessionId, dataOwner]);
+  const activeOwner = useRef<object | null>(activationOwner);
+  activeOwner.current = activationOwner;
+  const pendingClick = useRef<object | null>(null);
+  useEffect(() => {
+    activeOwner.current = activationOwner;
+    return () => { if (activeOwner.current === activationOwner) activeOwner.current = null; };
+  }, [activationOwner]);
+  const openAuthoredFile = async (viewSource = false): Promise<void> => {
+    if (isStreaming || fromBarePath || (initialTarget.kind !== 'local-candidate' && initialTarget.kind !== 'resolved-local')) return;
+    if (pendingClick.current === activationOwner) return;
+    const current = () => activeOwner.current === activationOwner && isDataOwnerGenerationCurrent(dataOwner);
+    if (!current()) return;
+    pendingClick.current = activationOwner;
+    try {
+      // Always resolve the authored target again. A cached positive may name an
+      // old monorepo match, just as a cached negative may predate a generated file.
+      const candidate = { ...initialTarget, kind: 'local-candidate' as const,
+        originalHref: initialTarget.href };
+      let result: SmartResolveResult;
+      if (isRemoteFileOrigin(fileCtx.origin)) {
+        const absPath = initialTarget.kind === 'resolved-local' ? initialTarget.absPath
+          : resolveLocalPath(candidate.href, workingDir);
+        const verdict = await verifyRemotePathCached(fileCtx.origin, workingDir, absPath, undefined, { refresh: true });
+        if (!current()) return;
+        result = verdict === 'file' || verdict === 'directory'
+          ? { status: 'unique', absPath, kind: verdict }
+          : { status: 'none', fallbackAbsPath: absPath };
+      } else {
+        result = await resolveLocalPathSmartCached(
+          initialTarget.kind === 'resolved-local' ? initialTarget.absPath : candidate.href,
+          workingDir, { refresh: true });
+      }
+      if (!current()) return;
+      const fresh = resolvedLocalFromResult(candidate, result);
+      if (!fresh) {
+        toast.error(t('chat.markdownRenderer.fileUnavailable'));
+        return;
+      }
+      if (!viewSource && fresh.localKind !== 'directory' && isHtmlFilePath(fresh.absPath) && sidebarTargetSessionId) {
+        await openHtmlFileByPreference(sidebarTargetSessionId, fresh.absPath, t, fileCtx, undefined, current);
+        return;
+      }
+      await activateResolvedLocalTarget(fresh, { ...fileCtx, workingDir, sidebarTargetSessionId },
+        setLightboxSrc, setTextLightboxFile, setModelLightboxPath, current);
+    } catch {
+      if (current()) toast.error(t('chat.markdownRenderer.fileUnavailable'));
+    } finally {
+      if (pendingClick.current === activationOwner) pendingClick.current = null;
+    }
+  };
+
 
   if (target.kind === 'audio') {
     return <InlineXdtAudioPlayer src={rewriteToRemoteMediaOrigin(target.href, remoteMediaOrigin)} />;
@@ -1483,13 +1545,11 @@ function MarkdownTargetLink({
   //   - resolved-local (path uniquely resolves to an existing file) → chip if
   //     the label reads as a file reference, underlined link if the label is
   //     freeform prose.
-  //   - local-candidate (not yet resolved, OR resolved to multiple, OR not
-  //     found) and code-reference (directory / unsupported scheme) → plain
-  //     <span>. We don't reserve a chip slot for paths that may never become
-  //     clickable; instead the chip only appears as a one-shot "lit up"
-  //     upgrade once unique resolution lands after streaming.
+  //   - authored local-candidate → retryable link, even before resolution.
+  //   - auto-detected candidates and unsupported schemes → plain text until
+  //     validation confirms a unique file. No new automatic click targets.
   if (target.kind === 'resolved-local') {
-    const openResolvedTarget = () =>
+    const openResolvedTarget = () => !fromBarePath ? openAuthoredFile(true) :
       activateResolvedLocalTarget(
         target,
         { ...fileCtx, sidebarTargetSessionId },
@@ -1510,6 +1570,7 @@ function MarkdownTargetLink({
           column={target.column}
           href={target.href}
           onOpen={openResolvedTarget}
+          onActivate={!fromBarePath ? () => openAuthoredFile() : undefined}
           anchorProps={anchorProps}
           sessionId={sessionId}
         >
@@ -1525,11 +1586,17 @@ function MarkdownTargetLink({
         column={target.column}
         title={target.href}
         onOpen={openResolvedTarget}
+        onActivate={!fromBarePath ? () => openAuthoredFile() : undefined}
         sessionId={sessionId}
       >
         {children}
       </FileTargetChip>
     );
+  }
+
+  if (target.kind === 'local-candidate' && !fromBarePath && !isStreaming) {
+    return <a {...anchorProps} href={target.originalHref} className={MARKDOWN_LINK_CLASS}
+      onClick={event => { event.preventDefault(); void openAuthoredFile(); }}>{children}</a>;
   }
 
   if (target.kind === 'code-reference' || target.kind === 'local-candidate') {

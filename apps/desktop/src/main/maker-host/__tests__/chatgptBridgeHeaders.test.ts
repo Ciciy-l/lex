@@ -16,7 +16,7 @@ describe('buildChatgptBridgeHeaders', () => {
       'openai-beta': 'responses=experimental',
       originator: 'codex_cli_rs',
       session_id: 'session-1',
-      'user-agent': 'codex_cli_rs/0.0.0 (xdt-maker bridge)',
+      'user-agent': 'Lex-ChatGPTBridge',
     });
   });
 
@@ -31,7 +31,7 @@ describe('buildChatgptBridgeHeaders', () => {
       'openai-beta': 'responses=experimental',
       originator: 'codex_cli_rs',
       session_id: '',
-      'user-agent': 'codex_cli_rs/0.0.0 (xdt-maker bridge)',
+      'user-agent': 'Lex-ChatGPTBridge',
     });
   });
 });

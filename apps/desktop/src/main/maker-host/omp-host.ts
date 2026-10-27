@@ -1,3 +1,4 @@
+import { withLexApplicationHeaders } from '@cindy/model-providers';
 import { scanLocalCustomizations } from '../skillhub/customizationScanHost';
 import { listCindyManagedSkills } from './managed-skills.js';
 /**
@@ -274,9 +275,9 @@ export function buildOmpManagedModelsYaml(params: {
     // not an OMP provider name and must not replace the models.yml key.
     providerId: OMP_CINDY_PROVIDER_ID,
     sessionId: params.sessionId,
-    headers: {
+    headers: withLexApplicationHeaders({
       [OMP_CINDY_PROVIDER_ID_HEADER]: params.providerId ?? OMP_CINDY_PROVIDER_ID,
-    },
+    }),
     models: models.map((entry) => {
       const wire =
         entry.id === params.model

@@ -247,6 +247,72 @@ describe('Sub2API Grok model discovery', () => {
 });
 
 describe('Sub2API manifest capabilities', () => {
+  it.each([false, true])('preserves canonical Fast %s over tier inference and aliases', (supportsFastMode) => {
+    const tierDeclarations = [
+      { service_tiers: [{ id: 'fast' }] },
+      { service_tiers: [{ id: 'priority' }] },
+      { additional_speed_tiers: ['fast'] },
+      { additional_speed_tiers: ['priority'] },
+      { service_tiers: [], additional_speed_tiers: [] },
+      { service_tiers: [{ id: 'default' }], additional_speed_tiers: ['fast'] },
+      { service_tiers: [null], additional_speed_tiers: [false] },
+      { supports_fast_mode: !supportsFastMode, supportsServiceTier: !supportsFastMode },
+    ];
+    for (const declaration of tierDeclarations) {
+      const discovered = parseModelsListResponse({ data: [{ id: 'gpt-5.4',
+        supportsFastMode, context_window: 128000, input_modalities: ['image'], ...declaration,
+      }] })!;
+      expect.soft(discovered[0].discoveredMetadata, JSON.stringify(declaration)).toMatchObject({
+        supportsFastMode, contextWindow: 128000, supportsImageInput: true,
+      });
+      const saved = JSON.parse(JSON.stringify(mergeDiscoveredRuntimeModels([], discovered)));
+      const refreshed = mergeDiscoveredRuntimeModels(saved,
+        parseModelsListResponse({ data: [{ id: 'gpt-5.4' }] })!);
+      expect.soft(refreshed[0].discoveredMetadata?.supportsFastMode, JSON.stringify(declaration)).toBe(supportsFastMode);
+    }
+  });
+
+  it.each([
+    [{ supportsFastMode: 'false', supports_fast_mode: false, additional_speed_tiers: ['fast'] }, false],
+    [{ supportsFastMode: 1, supports_fast_mode: true, service_tiers: [] }, true],
+    [{ supports_fast_mode: false, supportsServiceTier: true, additional_speed_tiers: ['fast'] }, false],
+    [{ supports_fast_mode: true, supportsServiceTier: false, additional_speed_tiers: [] }, true],
+    [{ supportsFastMode: null, supports_fast_mode: 'true', supportsServiceTier: false, service_tiers: [{ id: 'fast' }] }, false],
+    [{ supportsFastMode: {}, supports_fast_mode: 0, supportsServiceTier: true, additional_speed_tiers: [] }, true],
+    [{ supportsFastMode: 'false', supports_fast_mode: 'false', supportsServiceTier: 'true' }, undefined],
+    [{ supportsFastMode: 'false', additional_speed_tiers: ['fast'] }, true],
+    [{ supports_fast_mode: 'true', service_tiers: [{ id: 'priority' }] }, true],
+    [{ supportsServiceTier: 1, additional_speed_tiers: [] }, false],
+    [{ service_tiers: ['fast'] }, undefined],
+    [{ service_tiers: [{ id: 'fast' }, null], additional_speed_tiers: ['fast', false] }, undefined],
+    [{ service_tiers: 'fast', additional_speed_tiers: 'fast' }, undefined],
+    [{ service_tiers: [{ id: 'default' }], additional_speed_tiers: ['fast'] }, true],
+    [{ service_tiers: [{ id: 'fast' }], additional_speed_tiers: [] }, true],
+    [{ service_tiers: [null], additional_speed_tiers: ['fast'] }, true],
+    [{ service_tiers: [{ id: 'default' }], additional_speed_tiers: [null] }, false],
+  ])('uses validated explicit Fast booleans before valid tier declarations: %j', (fields, expected) => {
+    const discovered = parseModelsListResponse({ data: [{ id: 'gpt-5.4', ...fields }] })!;
+    expect(discovered[0].discoveredMetadata?.supportsFastMode).toBe(expected);
+  });
+
+  it.each([
+    [{ service_tiers: [{ id: 'fast' }] }, true],
+    [{ additional_speed_tiers: ['fast'] }, true],
+    [{ service_tiers: [], additional_speed_tiers: ['fast'] }, true],
+    [{ supports_fast_mode: false, additional_speed_tiers: ['fast'] }, false],
+    [{ additional_speed_tiers: ['ultrafast'] }, false],
+    [{ additional_speed_tiers: [] }, false],
+    [{ additional_speed_tiers: [null] }, undefined],
+    [{}, undefined],
+  ])('keeps declared Fast capability through account save/refresh: %j', (tiers, supported) => {
+    const discovered = parseModelsListResponse({ models: [{ slug: 'gpt-fixture', ...tiers }] })!;
+    const saved = JSON.parse(JSON.stringify(mergeDiscoveredRuntimeModels([], discovered)));
+    const refreshed = mergeDiscoveredRuntimeModels(saved, parseModelsListResponse({ data: [{ id: 'gpt-fixture' }] })!);
+    expect(refreshed[0].discoveredMetadata?.supportsFastMode).toBe(supported);
+    const other = parseModelsListResponse({ data: [{ id: 'gpt-fixture' }] })!;
+    expect(other[0].discoveredMetadata?.supportsFastMode).toBeUndefined();
+  });
+
   it('preserves vision, Fast and capacity separately through save and refresh for every engine', () => {
     const discovered = parseModelsListResponse({ models: [{ slug: 'private-model',
       context_window: 272000, max_context_window: 1050000,

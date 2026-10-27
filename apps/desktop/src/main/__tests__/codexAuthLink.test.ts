@@ -60,10 +60,10 @@ afterEach(() => {
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 });
 
-/** 两个路径最终是否解析到同一个 inode。 */
+/** 精确比较文件身份；Windows 的 64 位 inode 可能超出 Number 的安全整数范围。 */
 function sameInode(a: string, b: string): boolean {
-  const sa = fs.statSync(a);
-  const sb = fs.statSync(b);
+  const sa = fs.statSync(a, { bigint: true });
+  const sb = fs.statSync(b, { bigint: true });
   return sa.dev === sb.dev && sa.ino === sb.ino;
 }
 
@@ -103,14 +103,14 @@ describe('relinkSharedCodexAuth', () => {
   it.skipIf(!canLinkFile)('POSIX:系统 auth 原子替换后 symlink 自动跟随新 inode', async () => {
     fs.writeFileSync(systemAuth, SYSTEM_CONTENT);
     await relinkSharedCodexAuth(systemAuth, myAuth, 'darwin');
-    const oldInode = fs.statSync(myAuth).ino;
+    const oldInode = fs.statSync(myAuth, { bigint: true }).ino;
     const replacement = `${systemAuth}.new`;
     fs.writeFileSync(replacement, JSON.stringify({ tokens: { access_token: 'rotated' } }));
 
     fs.renameSync(replacement, systemAuth);
 
     expect(fs.lstatSync(myAuth).isSymbolicLink()).toBe(true);
-    expect(fs.statSync(myAuth).ino).not.toBe(oldInode);
+    expect(fs.statSync(myAuth, { bigint: true }).ino).not.toBe(oldInode);
     expect(fs.readFileSync(myAuth, 'utf-8')).toContain('rotated');
   });
 

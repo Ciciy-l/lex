@@ -44,12 +44,14 @@ export function isHtmlFilePath(filePath: string): boolean {
 }
 
 /** 在侧边栏浏览器打开 url,失败 toast(addTab 上限 / IPC 异常等)。 */
-async function openInSidebar(sessionId: string, url: string, t: TFunction): Promise<void> {
+async function openInSidebar(sessionId: string, url: string, t: TFunction, isCurrent?: () => boolean): Promise<void> {
+  if (isCurrent?.() === false) return;
   try {
-    await openUrlInSidebarBrowser(sessionId, url);
+    if (isCurrent) await openUrlInSidebarBrowser(sessionId, url, { isCurrent });
+    else await openUrlInSidebarBrowser(sessionId, url);
   } catch {
     // store 层已 log,这里只给用户反馈。
-    toast.error(t('chat.markdownRenderer.openInSidebarFailed'));
+    if (isCurrent?.() !== false) toast.error(t('chat.markdownRenderer.openInSidebarFailed'));
   }
 }
 
@@ -77,14 +79,17 @@ export async function openHtmlFileByPreference(
     workingDir: '',
   },
   target?: 'sidebar' | 'external',
+  isCurrent?: () => boolean,
 ): Promise<void> {
+  if (isCurrent?.() === false) return;
   if (context.origin.kind === 'local') {
     if ((target ?? getLinkOpenPreference('local')) === 'sidebar' && sessionId) {
-      await openInSidebar(sessionId, pathToFileUrl(absPath), t);
+      await openInSidebar(sessionId, pathToFileUrl(absPath), t, isCurrent);
     } else {
       try {
         await window.electronAPI.openFileInBrowser(absPath);
       } catch (error) {
+        if (isCurrent?.() === false) return;
         toast.error(t(mapIpcErrorToI18nKey(error, {
           namespace: 'chat.markdownRenderer', fallback: 'chat.markdownRenderer.openInBrowserFailed',
         })));
@@ -94,6 +99,7 @@ export async function openHtmlFileByPreference(
   }
   let loading: string | null = null;
   const delayed = setTimeout(() => {
+    if (isCurrent?.() === false) return;
     loading = toast.loading(t('chat.remoteFile.previewFetching'));
   }, 600);
   try {
@@ -102,13 +108,15 @@ export async function openHtmlFileByPreference(
       workdir: context.workingDir,
       absPath,
     });
+    if (isCurrent?.() === false) return;
     if ((target ?? getLinkOpenPreference('local')) === 'sidebar' && sessionId) {
-      await openInSidebar(sessionId, result.url, t);
+      await openInSidebar(sessionId, result.url, t, isCurrent);
     } else {
       const opened = await window.electronAPI.openExternal(result.url);
-      if (!opened.success) toast.error(t('chat.markdownRenderer.openInBrowserFailed'));
+      if (isCurrent?.() !== false && !opened.success) toast.error(t('chat.markdownRenderer.openInBrowserFailed'));
     }
   } catch (error) {
+    if (isCurrent?.() === false) return;
     const code = extractIpcError(error)?.code;
     const key = code === 'HTML_PREVIEW_TOO_LARGE' ? 'previewTooLarge'
       : code === 'HTML_PREVIEW_UNSUPPORTED' ? 'previewUnsupported'

@@ -23,3 +23,5 @@ export { normalizeProviderRequest } from './request';
 export { chatCompatibilityCapabilities } from './chat';
 export { isStrictCompatibleSchema } from './cindy/strict-schema';
 export { normalizeMiniMaxResponsesReasoning } from './providers/minimax';
+
+export * from './application-headers.js';

@@ -1,3 +1,4 @@
+import { getDataOwnerGeneration, isDataOwnerGenerationCurrent, type DataOwnerGeneration } from '../contexts/dataOwnerGeneration';
 /**
  * localPathResolver
  * ---------------------------------------------------------------------------
@@ -329,6 +330,7 @@ export type SmartResolveResult =
 export async function resolveLocalPathSmart(
   href: string,
   workingDir: string,
+  options: { refresh?: boolean } = {},
 ): Promise<SmartResolveResult> {
   const fallback = resolveLocalPath(href, workingDir);
   // Main-process resolver expects a native absolute/relative path, not a
@@ -343,7 +345,7 @@ export async function resolveLocalPathSmart(
     return { status: 'none', fallbackAbsPath: fallback };
   }
   try {
-    const r = await api.resolvePath({ href: lookupHref, workingDir });
+    const r = await api.resolvePath({ href: lookupHref, workingDir, ...(options.refresh ? { refresh: true } : {}) });
     if (r.status === 'unique' && r.candidates[0]) {
       return { status: 'unique', absPath: r.candidates[0], ...(r.kind ? { kind: r.kind } : {}) };
     }
@@ -369,18 +371,17 @@ export async function resolveLocalPathSmart(
 // concurrent lookups of the same (workingDir, href) via
 // `resolveLocalPathSmartCached`.
 //
-// Keyed by `workingDir::href`, mirroring the main-process cache; line/column
-// don't affect resolution so they're intentionally excluded. No TTL on
-// purpose: switching back to a session minutes later must still paint chips
-// instantly, and files cited by chat output are effectively immutable for the
-// lifetime of the view. Capacity-bounded (oldest insertion evicted) so a
-// long-lived renderer doesn't grow without limit.
+// Keyed by data-owner generation, workingDir and href; line/column do not
+// affect resolution. Render-time lookups have no TTL to avoid chip flicker.
+// Explicit clicks refresh both this cache and Main's filesystem result.
+// Capacity-bounded (oldest insertion evicted).
 const SMART_RESOLVE_CACHE_CAP = 500;
 const smartResolveCache = new Map<string, SmartResolveResult>();
 const smartResolveInflight = new Map<string, Promise<SmartResolveResult>>();
 
 function smartResolveCacheKey(workingDir: string, href: string): string {
-  return `${workingDir}::${href}`;
+  const owner = getDataOwnerGeneration();
+  return JSON.stringify([owner.dataOwnerId, owner.generation, workingDir, href]);
 }
 
 /**
@@ -403,10 +404,13 @@ export function peekResolveLocalPathSmart(
 // per workingDir — the main process answers them all in a single async walk.
 
 interface PendingBatchEntry {
+  key: string;
+  owner: DataOwnerGeneration;
+  promise?: Promise<SmartResolveResult>;
   resolvers: Array<(result: SmartResolveResult) => void>;
 }
-// workingDir → (href → waiters). Swapped for a fresh Map on each flush.
-let pendingBatch = new Map<string, Map<string, PendingBatchEntry>>();
+// (owner generation, workingDir) → (href → waiters). Swapped on each flush.
+let pendingBatch = new Map<string, { workingDir: string; hrefMap: Map<string, PendingBatchEntry> }>();
 let flushScheduled = false;
 
 /** Convert one main-process batch entry into a SmartResolveResult. */
@@ -426,6 +430,14 @@ function smartResultFromBatch(
   return { status: 'none', fallbackAbsPath: resolveLocalPath(href, workingDir) };
 }
 
+function cacheSmartResult(key: string, result: SmartResolveResult): void {
+  if (smartResolveCache.size >= SMART_RESOLVE_CACHE_CAP) {
+    const oldest = smartResolveCache.keys().next().value;
+    if (oldest !== undefined) smartResolveCache.delete(oldest);
+  }
+  smartResolveCache.set(key, result);
+}
+
 /** Cache a resolved result, evict if over capacity, and wake every waiter. */
 function settleSmartResult(
   workingDir: string,
@@ -433,23 +445,31 @@ function settleSmartResult(
   hrefMap: Map<string, PendingBatchEntry>,
   result: SmartResolveResult,
 ): void {
-  const key = smartResolveCacheKey(workingDir, href);
-  // Capacity eviction: drop oldest insertion (Map preserves order).
-  if (smartResolveCache.size >= SMART_RESOLVE_CACHE_CAP) {
-    const oldest = smartResolveCache.keys().next().value;
-    if (oldest !== undefined) smartResolveCache.delete(oldest);
-  }
-  smartResolveCache.set(key, result);
-  smartResolveInflight.delete(key);
   const entry = hrefMap.get(href);
-  if (entry) for (const resolve of entry.resolvers) resolve(result);
+  if (!entry) return;
+  if (!isDataOwnerGenerationCurrent(entry.owner)) {
+    result = { status: 'none', fallbackAbsPath: resolveLocalPath(href, workingDir) };
+  }
+  if (smartResolveInflight.get(entry.key) === entry.promise) {
+    if (isDataOwnerGenerationCurrent(entry.owner)) cacheSmartResult(entry.key, result);
+    smartResolveInflight.delete(entry.key);
+  }
+  for (const resolve of entry.resolvers) resolve(result);
 }
 
 async function runBatchForDir(
   workingDir: string,
   hrefMap: Map<string, PendingBatchEntry>,
 ): Promise<void> {
+  for (const [href, entry] of hrefMap) {
+    if (isDataOwnerGenerationCurrent(entry.owner) && smartResolveInflight.get(entry.key) === entry.promise) continue;
+    settleSmartResult(workingDir, href, hrefMap, {
+      status: 'none', fallbackAbsPath: resolveLocalPath(href, workingDir),
+    });
+    hrefMap.delete(href);
+  }
   const hrefs = [...hrefMap.keys()];
+  if (hrefs.length === 0) return;
   const api = (typeof window !== 'undefined' ? window.electronAPI : undefined) as
     | { resolvePathBatch?: typeof window.electronAPI.resolvePathBatch }
     | undefined;
@@ -493,7 +513,7 @@ function flushSmartResolveBatch(): void {
   flushScheduled = false;
   const batches = pendingBatch;
   pendingBatch = new Map();
-  for (const [workingDir, hrefMap] of batches) {
+  for (const { workingDir, hrefMap } of batches.values()) {
     void runBatchForDir(workingDir, hrefMap);
   }
 }
@@ -514,26 +534,44 @@ function scheduleSmartResolveFlush(): void {
 export async function resolveLocalPathSmartCached(
   href: string,
   workingDir: string,
+  options: { refresh?: boolean } = {},
 ): Promise<SmartResolveResult> {
   const key = smartResolveCacheKey(workingDir, href);
+  if (options.refresh) {
+    smartResolveCache.delete(key);
+    const owner = getDataOwnerGeneration();
+    const promise = resolveLocalPathSmart(href, workingDir, options).then(result => {
+      if (smartResolveInflight.get(key) === promise) {
+        if (isDataOwnerGenerationCurrent(owner)) cacheSmartResult(key, result);
+        smartResolveInflight.delete(key);
+      }
+      return isDataOwnerGenerationCurrent(owner) ? result
+        : { status: 'none' as const, fallbackAbsPath: resolveLocalPath(href, workingDir) };
+    });
+    smartResolveInflight.set(key, promise);
+    return promise;
+  }
   const cached = smartResolveCache.get(key);
   if (cached) return cached;
   const inflight = smartResolveInflight.get(key);
   if (inflight) return inflight;
 
+  const groupKey = smartResolveCacheKey(workingDir, '');
+  let group = pendingBatch.get(groupKey);
+  if (!group) {
+    group = { workingDir, hrefMap: new Map() };
+    pendingBatch.set(groupKey, group);
+  }
+  const { hrefMap } = group;
   const promise = new Promise<SmartResolveResult>((resolve) => {
-    let hrefMap = pendingBatch.get(workingDir);
-    if (!hrefMap) {
-      hrefMap = new Map();
-      pendingBatch.set(workingDir, hrefMap);
-    }
     let entry = hrefMap.get(href);
     if (!entry) {
-      entry = { resolvers: [] };
+      entry = { key, owner: getDataOwnerGeneration(), resolvers: [] };
       hrefMap.set(href, entry);
     }
     entry.resolvers.push(resolve);
   });
+  hrefMap.get(href)!.promise = promise;
   smartResolveInflight.set(key, promise);
   scheduleSmartResolveFlush();
   return promise;

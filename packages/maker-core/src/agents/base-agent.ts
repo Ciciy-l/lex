@@ -707,6 +707,8 @@ export interface PiSubagentRunnerLaunchRequest {
 }
 
 export interface AgentDeps {
+  /** Actual embedding application build, separate from the native CLI version. */
+  getAppVersion?: () => string;
   /** Host-only dual-frontend service. Control-plane probes and SSH keep their own transports. */
   createLocalCodexNativeService?: (options: StdioTransportOptions) => CodexNativeService;
   /** Optional task-owned frontend; requires the same concrete native service. */
@@ -1848,6 +1850,16 @@ export class TurnDispatchRejectedError extends Error {
 }
 
 export interface StartSessionOptions {
+  /** Trusted Host coordinates a full native-history replacement with its task DB. */
+  [NATIVE_HISTORY_HANDOFF]?: {
+    replace(source: string, instanceId: string, operation: (checkpoint: {
+      target(nativeId: string): Promise<void>;
+      commit(): Promise<void>;
+    }) => Promise<void>, writerPid?: number): Promise<void>;
+    starting?(writerPid: number | undefined): Promise<void>;
+    recover(nativeId: string, providerId: string | undefined): Promise<void>;
+    isPersisted(nativeId: string): boolean;
+  };
   /** Host-only recovery: the history projection transaction owns resume identity. */
   [NATIVE_HISTORY_RESUME]?: { source: string; target: string };
   /** Host-owned GUI/TUI capability for this task, frozen before service lookup. */
@@ -2040,6 +2052,7 @@ export interface OrcaNativeBodySource {
   readonly workerId?: string;
 }
 export const NATIVE_HISTORY_RESUME = Symbol('lex.native-history-resume');
+export const NATIVE_HISTORY_HANDOFF = Symbol('lex.native-history-handoff');
 /** Optional question replies must never be queued for a later execution. */
 export const ASYNC_QUESTION_ANSWER = Symbol('cindy.async-question-answer');
 
@@ -2318,6 +2331,13 @@ export interface AgentSessionHandle {
   /** Native menus share the product runtime-selection transaction. */
   setNativeRuntimeResolver?(resolver: AgentNativeRuntimeResolver): void;
   setNativeStopResolver?(resolver: AgentNativeStopResolver): void;
+  /** Host-only manual compaction admission; never a vendor option or prompt. */
+  startManualCompact?(instructions?: string, signal?: AbortSignal): {
+    accepted: Promise<void>;
+    completed: Promise<ManualCompactResult>;
+  };
+  setNativeCompactResolver?(resolver: (request: { nativeSessionId: string; signal: AbortSignal;
+    accept(): Promise<Record<string, never>> }) => Promise<Record<string, never>>): void;
   /** Native UI of this running task; attaching a view must never start another agent. */
   readonly presentation?: AgentSessionPresentation;
   /** Main calls only after account, DB, input, controls and interactions are bound. */

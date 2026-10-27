@@ -52,6 +52,8 @@ export interface XtermEntry {
    * 否则 PTY 输出仍推给旧窗口。见 TerminalTabBody effect #2。
    */
   ptyAttached: boolean;
+  /** Latest view attachment; late replies cannot detach or update its successor. */
+  attachGeneration?: number;
 }
 
 const pool = new Map<string, XtermEntry>();

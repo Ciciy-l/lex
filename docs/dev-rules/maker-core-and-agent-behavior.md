@@ -179,10 +179,32 @@ Codex 已选远端压缩的本地任务，在原生 `contextCompaction` 生命�
 仅接替一次。明确的账号／任务额度耗尽、鉴权与已有密文硬失败交接分类保持原处理。
 这不是换窗交接：native fork 保留完整历史，Cindy 业务任务不变，不改模型或全局压缩设置。
 Codex 0.153 的 unsubscribe 会延迟卸载 30 分钟，不能靠立即 resume 假称 provider 已更新。
-接替身份保存在原生任务的 modelProvider 中，重新打开继续沿用，无 UI 开关、无自动切回。
+接替身份保存在原生任务的 modelProvider 中。同一个已加载的原生执行器继续沿用摘要路径；
+准确旧执行器退出后，下次打开在当前路由仍符合远程能力时，以同一原生 ID 恢复并再次优先远程。
+恢复以原生返回的实际 provider 为准，不把 resume ACK 或配置请求当成已应用；同一次失败、
+未知结果或自动续接内不反复切回。存在待落库交接时先按摘要 provider 读回目标并完成持久化，
+不能提前 rearm。无新增 UI 开关。
 已有本轮模型/工具输出时以空输入续接，不重放用户请求；尚未进入生成的 pre-turn 失败才重投
 冻结输入。本地摘要再失败即正常报错，不循环切换。尚未结算的原生 exec continuation 无法跨
 线程迁移，不得重建后声称它仍可恢复。普通生成 502 与 stderr 文案不得触发此路径。
+
+固定 Codex 0.162.1 通过正式 capabilities.remote_compaction=v2 启用远程压缩，
+仅用于已有 ChatGPT/OpenAI 与兼容的 codex 路由；普通自定义供应商不因支持 Responses
+自动获得该能力。独立子代理路由不兼容时保留原限制。V2 在普通 Responses 请求内携带
+compaction_trigger，由原生维护完整 output、密文与历史，不由 Host 调用 standalone compact。
+上下文环的手动入口和 TUI /compact 共用 thread/compact/start，ACK 仅表示接受；
+匹配的 contextCompaction 和成功 turn 终态才表示完成。自动压缩仍由原生阈值驱动，
+Host 不增加定时压缩。手动自定义摘要指令暂不支持；旧远端未声明能力时不展示入口。
+手动控制 RPC 派发后丢失 ACK 时，沿现有 TurnDispatchUnconfirmedError 关闭准确的
+Session 绑定，不回退轮次后继续消费迟到终态，也不自动再次压缩或发送正文。
+用户显式重开读取原生已保存历史；已在回执丢失前投影的真实终态仍归其原轮次。
+
+普通 RPC 的摘要回退将 fork 意图、已知目标、精确 owner/配置/clear 边界记入既有历史日志，
+落库确认后才采用新 ID 并续接。未知不重复 fork；已知结果失败后只读回恢复。准确执行器
+退出确认才允许显式 clear 退役未决操作，保留附件与工作区。原生 GUI/TUI 前端绑定旧 ID
+且不能无损迁移其未发送草稿，因此该前端暂不自动 fork 回退；保留远程成功路径与真实失败，
+不关闭前端或伪造它已切换。服务端明确 invalid_request_error 的结构化拒绝可作为一次
+摘要回退依据；鉴权、额度、密文错误及超时/断链继续排除。
 
 Codex 的 120 秒 reconnect watchdog 只是 fallback 收口，不是根因诊断。stderr 仍只作诊断日志，
 不得用 `remote compaction v2` 文案驱动恢复动作。普通 timeout、纯文本大历史和网络失败
@@ -432,3 +454,21 @@ OMP 通过现有原生 host-tool 通道显式提供 `mcp__cindy_helper__ask_user
 此入口不扩展普通 helper 工具面，不改 `select` / `confirm` 权限审批桥的判定；
 SSH 使用当前远程任务的原生通道，主机不代造授权。相关 OMP、共享 Session、
 MCP 与循环检测回归随源码提交，由 CI 执行，不能把测试文件存在当作实测通过。
+
+### Lex 模型请求标识
+
+模型请求的应用标识由共享 withLexApplicationHeaders 处理，不参与鉴权、模型、
+reasoning effort、Fast 档位或正文组装。共享 HTTP/SSE 代理和 WebSocket 握手在
+保留实际原生 User-Agent 的基础上追加一次 Lex product token；明确配置的路由
+User-Agent 优先，大小写无关的删除规则最后执行。原生直连 Claude、Pi 与 OMP
+在可组合的 X-Title 中标识 Lex，原生 SDK 的 User-Agent 保持不变，已有自定义值优先。
+
+Codex initialize 自报 Lex 与实际应用构建版本，原生仍生成 CLI 版本和平台片段。
+此名称同时影响原生 originator，不只是展示；不使用保留的 Codex Desktop/TUI 身份。
+ChatGPT HTTP bridge 仍保留其必需的 originator=codex_cli_rs，其宿主生成的
+User-Agent 标明实际 Lex bridge，不伪造原生 CLI 版本。Responses chat bridge、
+标题、图片与语音文本辅助调用同样使用各自真实的 Lex 应用标识。
+
+这些标识不改变供应商权限或准入规则，也不保证第三方接纳。Cindy 专用服务协议、
+内部 provider/session identity 与凭证字段保持原合同。SSH 与设备互联仍由实际执行
+任务的主机生成请求，不把远端失败回落成本机调用。

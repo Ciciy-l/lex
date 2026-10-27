@@ -1,3 +1,4 @@
+import { appendLexUserAgent } from '@cindy/model-providers';
 import { resolveConversationSessionHeaders, withChatBridgeUserAgent, overrideHeadersCaseInsensitive } from '@cindy/responses-chat-bridge';
 import { providerModelRecord, providerCatalogId, isOfficialXaiApiHost, type CatalogModel, type Effort, type Provider } from '@cindy/model-providers';
 import { reconcileOutboundReasoningEffort } from './outbound-reasoning-effort.js';
@@ -1337,7 +1338,7 @@ function claudeOAuthHeaders(
     ...base,
     authorization: `Bearer ${token}`,
     'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20',
-    'user-agent': '@anthropic-ai/sdk/0.74.0',
+    'user-agent': appendLexUserAgent('@anthropic-ai/sdk/0.74.0'),
     'x-app': 'cli',
     'x-stainless-retry-count': '0',
     'x-stainless-runtime': 'node',

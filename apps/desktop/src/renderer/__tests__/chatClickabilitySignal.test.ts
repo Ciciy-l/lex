@@ -83,9 +83,11 @@ describe('聊天正文的可点性信号(DESIGN.md §14.5)', () => {
     // `and/or`)不得乐观升级成 resolved-local —— 否则加了常显下划线后,普通行内 code
     // 会被展示成可点文件、点了必失败(PR #1144 review 实捉桌面侧漏了这道门槛)。
     // 判据已收敛进 lib/markdownTarget.decideRemoteLit(行为用例在 markdownTarget.test.ts),
-    // 这里只守「本文件不再自己判 verdict」。
-    expect(src, '点亮判据不再经 decideRemoteLit').toMatch(/decideRemoteLit\(/);
-    expect(src, '本文件又开始自己拿 verdict 做点亮判断了 —— 判据必须单点')
+    // 这里只守点亮判据。显式点击另需确认 file/directory，不能拿 unknown 乐观点亮
+    // 当成已验证可打开；实际点击链由 markdownFileRetry.test.tsx 覆盖。
+    const renderResolution = src.slice(src.indexOf('function useResolvedMarkdownTarget('), src.indexOf('async function activateResolvedLocalTarget('));
+    expect(renderResolution, '点亮判据不再经 decideRemoteLit').toMatch(/decideRemoteLit\(/);
+    expect(renderResolution, '本文件又开始自己拿 verdict 做点亮判断了 —— 判据必须单点')
       .not.toMatch(/verdict === '(file|directory|nonfile|unknown)'/);
   });
 

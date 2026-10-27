@@ -344,12 +344,19 @@ function normalizePane(raw: unknown, id: string): TerminalPaneState {
     title: typeof obj.title === 'string' ? obj.title.slice(0, 120) : '',
     shellId: typeof obj.shellId === 'string' ? obj.shellId : '',
     shellDisplayName: typeof obj.shellDisplayName === 'string' ? obj.shellDisplayName : '',
-    // PTYs are process-local. Persisted lifecycle flags may describe a
-    // previous app process, so hydration must always perform an idempotent
-    // create/attach against Main before presenting a pane as live.
+    // Always reconcile against Main, but retain an observed exit so an ended
+    // shell is not automatically relaunched after the Main process restarts.
     created: false,
-    exited: null,
+    exited: normalizeExit(obj.exited),
   };
+}
+
+function normalizeExit(value: unknown): TerminalExitInfo | null {
+  if (!value || typeof value !== 'object') return null;
+  const exit = value as Record<string, unknown>;
+  if (exit.code !== null && !(typeof exit.code === 'number' && Number.isFinite(exit.code))) return null;
+  if (exit.signal !== undefined && exit.signal !== null && typeof exit.signal !== 'string') return null;
+  return { code: exit.code as number | null, signal: typeof exit.signal === 'string' ? exit.signal : null };
 }
 
 function isProfile(value: unknown): value is TerminalProfile {

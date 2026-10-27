@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { TabKindHostContext } from '../../../types';
 import type { TerminalCreateResult } from '../../../../../../shared/terminal-bridge';
-import { createInitialTerminalState, createPaneState, splitTerminalPane } from '../terminal-layout';
+import { createInitialTerminalState, createPaneState, hydrateTerminalState, splitTerminalPane } from '../terminal-layout';
+import { setDataOwnerGeneration } from '@/contexts/dataOwnerGeneration';
 
 const xtermMocks = vi.hoisted(() => ({
   disposeXterm: vi.fn(),
@@ -97,6 +98,7 @@ function renderSplitWorkbench(direction: 'horizontal' | 'vertical' = 'horizontal
 }
 
 beforeEach(() => {
+  setDataOwnerGeneration('terminal-test-owner');
   actionMocks.confirm.mockReset().mockResolvedValue(false);
   actionMocks.destroy.mockReset().mockResolvedValue(undefined);
   linkMocks.openDirectory.mockClear();
@@ -126,6 +128,7 @@ beforeEach(() => {
       terminal: {
         resolveFile: vi.fn(),
         create: vi.fn(() => new Promise(() => undefined)),
+        list: vi.fn(async () => []),
         dispose: vi.fn(async () => undefined),
         detach: vi.fn(async () => undefined),
         onData: vi.fn(() => vi.fn()),
@@ -135,6 +138,135 @@ beforeEach(() => {
         write: vi.fn(async () => undefined),
       },
     },
+  });
+});
+
+describe('persisted shell recovery', () => {
+  const result: TerminalCreateResult = { shellId: 'pwsh', shellDisplayName: 'PowerShell',
+    profile: 'shell', profileDisplayName: 'PowerShell', pid: 42, exit: null };
+  const missing = () => new Error('[TERMINAL_NOT_FOUND] terminal is no longer available');
+  function saved() {
+    const state = createInitialTerminalState();
+    state.cwd = 'C:\\saved-project';
+    Object.assign(state.panes['pane-1'], { runtimeStarted: true, terminalId: 'saved-pty', shellId: 'pwsh' });
+    return hydrateTerminalState(state);
+  }
+
+  it('restores an absent shell once with saved cwd and shell, then reattaches without replay', async () => {
+    const state = saved();
+    const patch = vi.fn();
+    const ctx = makeContext(patch);
+    vi.mocked(window.electronAPI.terminal.create).mockRejectedValueOnce(missing()).mockResolvedValue(result);
+    const view = render(<TerminalTabBody state={state} ctx={ctx} active />);
+    await waitFor(() => expect(patch).toHaveBeenCalled());
+    expect(window.electronAPI.terminal.create).toHaveBeenCalledTimes(2);
+    expect(window.electronAPI.terminal.create).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      id: 'saved-pty', sessionId: 'session-1', cwd: state.cwd, profile: 'shell', shellPref: 'pwsh', attachOnly: false,
+    }));
+    const next = patch.mock.calls.at(-1)![0];
+    expect(next.panes['pane-1']).toMatchObject({ created: true, shellPref: 'pwsh', runtimeStarted: true });
+    view.rerender(<TerminalTabBody state={next} ctx={ctx} active />);
+    expect(screen.queryByText('rightSidebar.terminal.spawnFailed')).toBeNull();
+    expect(window.electronAPI.terminal.create).toHaveBeenCalledTimes(2);
+    expect(window.electronAPI.terminal.write).not.toHaveBeenCalled();
+    expect(window.electronAPI.terminal.restart).not.toHaveBeenCalled();
+    expect(window.electronAPI.terminal.dispose).not.toHaveBeenCalled();
+  });
+
+  it.each(['[PERMISSION_DENIED] wrong owner', 'timeout', 'terminal is no longer available'])(
+    'does not infer absence from %s', async message => {
+      vi.mocked(window.electronAPI.terminal.create).mockRejectedValue(new Error(message));
+      render(<TerminalTabBody state={saved()} ctx={makeContext(vi.fn())} active />);
+      await screen.findByText('rightSidebar.terminal.spawnFailed');
+      expect(window.electronAPI.terminal.create).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(['claude', 'codex', 'pi'] as const)('does not automatically relaunch saved %s tasks', async profile => {
+    const state = saved(); state.panes['pane-1'].profile = profile;
+    vi.mocked(window.electronAPI.terminal.create).mockRejectedValue(missing());
+    render(<TerminalTabBody state={state} ctx={makeContext(vi.fn())} active />);
+    await screen.findByText('rightSidebar.terminal.spawnFailed');
+    expect(window.electronAPI.terminal.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not restart a saved ended shell after Main has restarted', async () => {
+    const raw = saved();raw.panes['pane-1'].exited = { code: 0, signal: null };
+    const state = hydrateTerminalState(raw);
+    expect(state.panes['pane-1'].exited).toEqual({ code: 0, signal: null });
+    vi.mocked(window.electronAPI.terminal.create).mockRejectedValue(missing());
+    render(<TerminalTabBody state={state} ctx={makeContext(vi.fn())} active />);
+    await act(async () => {});
+    expect(window.electronAPI.terminal.create).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('rightSidebar.terminal.processExited')).toBeTruthy();
+    expect(screen.queryByText('rightSidebar.terminal.spawnFailed')).toBeNull();
+  });
+
+  it.each(['unmount', 'hidden', 'task', 'owner', 'remote'])(
+    'does not recreate after %s changes while absence is in flight', async change => {
+      let reject!: (e: Error) => void;
+      vi.mocked(window.electronAPI.terminal.create).mockImplementationOnce(() => new Promise((_, r) => { reject = r; }));
+      const state = saved(), patch = vi.fn(), ctx = makeContext(patch);
+      const view = render(<TerminalTabBody state={state} ctx={ctx} active />);
+      if (change === 'unmount') view.unmount();
+      if (change === 'hidden') view.rerender(<TerminalTabBody state={{ ...state, viewHidden: true }} ctx={ctx} active />);
+      if (change === 'task') view.rerender(<TerminalTabBody state={createInitialTerminalState()} ctx={{ ...ctx, sessionId: 'other', tabId: 'other-tab' }} active />);
+      if (change === 'owner') setDataOwnerGeneration('another-owner');
+      if (change === 'remote') view.rerender(<TerminalTabBody state={state} ctx={{ ...ctx, remoteHostId: 'ssh' }} active />);
+      await act(async () => reject(missing()));
+      expect(vi.mocked(window.electronAPI.terminal.create).mock.calls.filter(([p]) => p.id === 'saved-pty')).toHaveLength(1);
+      expect(patch).not.toHaveBeenCalled();
+    },
+  );
+
+  it('does not detach a newer view when an old attach finishes late', async () => {
+    let finish!: (r: TerminalCreateResult) => void;
+    const create = vi.mocked(window.electronAPI.terminal.create);
+    create.mockImplementationOnce(() => new Promise(r => { finish = r; })).mockResolvedValue(result);
+    const state = saved();
+    const old = render(<TerminalTabBody state={state} ctx={makeContext(vi.fn())} active />);
+    old.unmount();
+    const patch = vi.fn();
+    render(<TerminalTabBody state={state} ctx={makeContext(patch)} active />);
+    await waitFor(() => expect(patch).toHaveBeenCalled());
+    await act(async () => finish(result));
+    expect(window.electronAPI.terminal.detach).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledTimes(2);
+  });
+
+  it('honors hiding immediately, before the parent has persisted the new view', async () => {
+    let reject!: (e: Error) => void;
+    vi.mocked(window.electronAPI.terminal.create).mockImplementationOnce(() => new Promise((_, r) => { reject = r; }));
+    const patch = vi.fn();
+    render(<TerminalTabBody state={saved()} ctx={makeContext(patch)} active />);
+    fireEvent.click(screen.getByRole('button', { name: 'rightSidebar.terminal.hidePane' }));
+    await act(async () => reject(missing()));
+    expect(window.electronAPI.terminal.create).toHaveBeenCalledTimes(1);
+    expect(patch.mock.calls.at(-1)![0].viewHidden).toBe(true);
+  });
+
+  it('keeps a failed replacement visible without retrying it', async () => {
+    vi.mocked(window.electronAPI.terminal.create).mockRejectedValueOnce(missing())
+      .mockRejectedValueOnce(new Error('[TERMINAL_SPAWN_FAILED] cannot start'));
+    render(<TerminalTabBody state={saved()} ctx={makeContext(vi.fn())} active />);
+    await screen.findByText('rightSidebar.terminal.spawnFailed');
+    expect(window.electronAPI.terminal.create).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not recreate if the pane closes while explicit restart is checking Main', async () => {
+    const state = saved(); state.panes['pane-1'].exited = { code: 0, signal: null };
+    vi.mocked(window.electronAPI.terminal.create).mockRejectedValue(missing());
+    let finish!: (rows: []) => void;
+    vi.mocked(window.electronAPI.terminal.list).mockImplementationOnce(() => new Promise(r => { finish = r; }));
+    const patch = vi.fn();
+    const view = render(<TerminalTabBody state={state} ctx={makeContext(patch)} active />);
+    await act(async () => {});
+    fireEvent.click(screen.getAllByRole('button', { name: 'rightSidebar.terminal.restart' })[0]);
+    view.unmount();
+    await act(async () => finish([]));
+    expect(window.electronAPI.terminal.create).toHaveBeenCalledTimes(1);
+    expect(window.electronAPI.terminal.restart).not.toHaveBeenCalled();
+    expect(patch).not.toHaveBeenCalled();
   });
 });
 
@@ -712,5 +844,99 @@ describe('TerminalTabBody remote ownership', () => {
     expect(screen.getByText('rightSidebar.terminal.remoteUnavailableDescription')).toBeTruthy();
     expect(window.electronAPI.terminal.create).not.toHaveBeenCalled();
     expect(xtermMocks.getOrCreateXterm).not.toHaveBeenCalled();
+  });
+});
+
+describe('destroy confirmation and attachment admission', () => {
+  const result: TerminalCreateResult = { shellId: 'pwsh', shellDisplayName: 'PowerShell',
+    profile: 'shell', profileDisplayName: 'PowerShell', pid: 42, exit: null };
+  function deferred<T>() {
+    let resolve!: (value: T) => void, reject!: (error: Error) => void;
+    const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+    return { promise, resolve, reject };
+  }
+  function fixture() {
+    const raw = splitTerminalPane(createInitialTerminalState(), 'pane-1', 'horizontal', createPaneState('pane-2'))!;
+    for (const pane of Object.values(raw.panes)) Object.assign(pane, { terminalId: `saved-${pane.id}`, runtimeStarted: true, shellId: 'pwsh', shellPref: 'pwsh' });
+    raw.activePaneId = 'pane-1';
+    const initial = hydrateTerminalState(raw);
+    const attach = deferred<TerminalCreateResult>(), confirm = deferred<boolean>();
+    actionMocks.confirm.mockReturnValue(confirm.promise);
+    const create = vi.mocked(window.electronAPI.terminal.create);
+    create.mockImplementationOnce(() => attach.promise).mockResolvedValue(result);
+    let publish!: (state: typeof initial) => void;
+    let replaceContext!: (context: TabKindHostContext) => void;
+    const patch = vi.fn((next: typeof initial) => publish(next));
+    const ctx = makeContext(patch);
+    function Host() {
+      const [state, setState] = useState(initial); publish = setState;
+      const [context, setContext] = useState(ctx); replaceContext = setContext;
+      return <TerminalTabBody state={state} ctx={context} active />;
+    }
+    const view = render(<Host />);
+    const open = (id: string) => fireEvent.click(view.container.querySelector(`[data-terminal-pane-id="${id}"] [aria-label="rightSidebar.terminal.destroyPane"]`)!);
+    return { ...view, attach, confirm, create, patch, ctx, initial, publish: (state: typeof initial) => publish(state), replaceContext: (context: TabKindHostContext) => replaceContext(context), open };
+  }
+  it.each([
+    ['pane-1', 'missing'], ['pane-1', 'live'], ['pane-2', 'missing'], ['pane-2', 'live'],
+  ])('keeps %s cancellation independent from a pending %s attach', async (target, completion) => {
+    const f = fixture(); await act(async () => {}); f.open(target);
+    await act(async () => {
+      if (completion === 'missing') f.attach.reject(new Error('[TERMINAL_NOT_FOUND] terminal is no longer available'));
+      else f.attach.resolve(result);
+    });
+    await act(async () => f.confirm.resolve(false));
+    expect(f.patch.mock.calls.at(-1)![0].panes['pane-1'].created).toBe(true);
+    expect(f.create.mock.calls.filter(([p]) => p.id === 'saved-pane-1')).toHaveLength(completion === 'missing' ? 2 : 1);
+    expect(window.electronAPI.terminal.detach).not.toHaveBeenCalled();
+    expect(window.electronAPI.terminal.write).not.toHaveBeenCalled();
+    expect(actionMocks.destroy).not.toHaveBeenCalled();
+    expect(screen.queryByText('rightSidebar.terminal.spawnFailed')).toBeNull();
+  });
+  it.each([['pane-1', 'missing'], ['pane-1', 'live'], ['pane-2', 'missing'], ['pane-2', 'live']])('fences only confirmed %s, including a late %s reply', async (target, completion) => {
+    const f = fixture(), destroying = deferred<void>();
+    actionMocks.destroy.mockReturnValue(destroying.promise);
+    await act(async () => {}); f.open(target);
+    await act(async () => f.confirm.resolve(true));
+    await act(async () => {
+      if (completion === 'missing') f.attach.reject(new Error('[TERMINAL_NOT_FOUND] terminal is no longer available'));
+      else f.attach.resolve(result);
+    });
+    expect(actionMocks.destroy).toHaveBeenCalledExactlyOnceWith('session-1', `saved-${target}`);
+    expect(f.create.mock.calls.filter(([p]) => p.id === 'saved-pane-1')).toHaveLength(target !== 'pane-1' && completion === 'missing' ? 2 : 1);
+    expect(f.patch.mock.calls.some(([s]) => s.panes['pane-1'].created)).toBe(target !== 'pane-1');
+    await act(async () => destroying.resolve());
+    expect(window.electronAPI.terminal.write).not.toHaveBeenCalled();
+  });
+  it.each(['owner', 'hidden', 'identity', 'task', 'tab', 'unmount'])('does not apply a confirmation after %s changed', async boundary => {
+    const f = fixture(); await act(async () => {}); f.open('pane-1');
+    if (boundary === 'owner') setDataOwnerGeneration('new-owner');
+    if (boundary === 'unmount') f.unmount();
+    if (boundary === 'hidden') await act(async () => f.publish({ ...f.initial, viewHidden: true }));
+    if (boundary === 'identity') await act(async () => f.publish({ ...f.initial, panes: { ...f.initial.panes, 'pane-1': { ...f.initial.panes['pane-1'], terminalId: 'replacement' } } }));
+    if (boundary === 'task') await act(async () => f.replaceContext({ ...f.ctx, sessionId: 'other-task' }));
+    if (boundary === 'tab') await act(async () => f.replaceContext({ ...f.ctx, tabId: 'other-tab' }));
+    await act(async () => f.confirm.resolve(true));
+    expect(actionMocks.destroy).not.toHaveBeenCalled();
+    await act(async () => f.attach.resolve(result));
+    expect(window.electronAPI.terminal.write).not.toHaveBeenCalled();
+  });
+  it('shows a failed confirmed destroy without replaying its invalidated attach', async () => {
+    const f = fixture(), destroying = deferred<void>(); actionMocks.destroy.mockReturnValue(destroying.promise);
+    await act(async () => {}); f.open('pane-1'); await act(async () => f.confirm.resolve(true));
+    await act(async () => f.attach.resolve(result));
+    await act(async () => destroying.reject(new Error('destroy result unknown')));
+    expect(screen.getByText('rightSidebar.terminal.actionFailed')).toBeTruthy();
+    expect(f.create.mock.calls.filter(([p]) => p.id === 'saved-pane-1')).toHaveLength(1);
+    expect(f.patch.mock.calls.some(([s]) => s.panes['pane-1'].created)).toBe(false);
+    expect(window.electronAPI.terminal.write).not.toHaveBeenCalled();
+    // An explicit retry remains usable, after a fresh authoritative list.
+    fireEvent.click(screen.getByText('rightSidebar.terminal.restart'));
+    await act(async () => {});
+    expect(window.electronAPI.terminal.list).toHaveBeenCalledExactlyOnceWith('session-1');
+    expect(f.create.mock.calls.filter(([p]) => p.id === 'saved-pane-1')).toHaveLength(2);
+    expect(f.patch.mock.calls.at(-1)![0].panes['pane-1'].created).toBe(true);
+    expect(screen.queryByText('rightSidebar.terminal.actionFailed')).toBeNull();
+    expect(window.electronAPI.terminal.write).not.toHaveBeenCalled();
   });
 });

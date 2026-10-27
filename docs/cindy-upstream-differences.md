@@ -17,6 +17,25 @@
 
 其他排除：共享任务及其 0114 migration（含 e2dd262c6 静态 media guard）、插件远程 OAuth／私密卡、Cindy Make、个人版标识与品牌视觉、SkillHub 对话管理、SSH Codex 路由、Pi 订阅发现及未知图片能力默认、模型价格与思考档位更新。不得改变 Lex OMP／SSH／四引擎平等、品牌、数据／协议／安全／更新路径。
 
+## 0.1.12 选择性适配（2026-10-27）
+
+- 消息引用去重与预算保护参考 [Cindy 5ed1aa4f](https://github.com/makecindy/cindy/commit/5ed1aa4f3ef59dc8b52cf2e6721cd53a2257257c)。
+  Lex 仅合并同来源设备、同任务、同消息且完整正文一致的重复引用；保留每处引用身份和当前指令。
+  已在正文完整展开的锚点不再重复放入补充历史，同文的其它消息仍保留。失效位置、缺失正文和
+  截断引用不参与去重。桌面本地、控制端出方向和手机发送／追加沿既有授权历史读取链执行。
+  补充历史仍共享 20 条／约 8k token 预算，按最终 JSON（含转义与元数据）核算，优先裁剪
+  邻近消息，必要时才裁剪选中消息；不改变 system 前缀、附件、原始持久消息或原生输入身份。
+  实现与回归见 maker-shared 的 agentInputProjection、Desktop sessionReferenceResolver 和
+  Mobile sessionReferences。本轮未整体合并上游，也未引入伙伴功能。
+
+- 文件链接刷新参考 [6930250c](https://github.com/makecindy/cindy/commit/6930250c4315ead6f29f355b17267d1813442ad3)：
+  Desktop 显式文件链接即使暂时无法解析也保留可点击、可复制的文字。点击同时刷新 Renderer
+  与 Main 的缓存；失败提示再次点击重试，成功只打开一次。自动识别的裸路径和行内代码仍需
+  原有验证。迟到查询不能覆盖更新结果，账号、任务、来源、工作目录或视图变化后不再激活旧
+  文件；远端 unknown 不转成本地路径。沿既有路径权限和预览通道，仅给现有 IPC 增加可选
+  refresh 字段；旧端不提供刷新能力时准确显示失败。相关回归见 markdownFileRetry、
+  localPathResolver、pathResolver 和 remotePathVerdictCache 测试。
+
 ## 后续候选
 
 ### v0.1.108 已选行为与 Lex 适配（2026-10-15）

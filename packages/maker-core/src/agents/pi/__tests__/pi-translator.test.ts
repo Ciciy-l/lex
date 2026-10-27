@@ -1461,7 +1461,7 @@ describe('pi translator', () => {
       .toEqual([expect.objectContaining({ inputTokens: 20, outputTokens: 5, cacheReadTokens: 10, priceVariant })]);
   });
 
-  it('locks the Pi price variant from bridge usage metadata at each provider request boundary', () => {
+  it.each(['priority', 'fast'])('locks the Pi price variant from the actual %s receipt at each request boundary', tier => {
     const ctx = createPiTranslateContext(noopLogger);
     let fast = false;
     ctx.getPriceVariant = () => (fast ? 'priority' : 'standard');
@@ -1488,8 +1488,9 @@ describe('pi translator', () => {
       ctx,
     );
 
+    fast = false; // The actual tier, not a later preference, determines billing.
     translatePiEvent(
-      ev({ type: 'message_start', message: { usage: { service_tier: 'priority' } } }),
+      ev({ type: 'message_start', message: { usage: { service_tier: tier } } }),
       queue,
       ctx,
     );
@@ -1500,7 +1501,7 @@ describe('pi translator', () => {
           role: 'assistant',
           model: 'gpt-5.6-sol',
           content: [{ type: 'text', text: 'priority request' }],
-          usage: { input: 20, output: 3, service_tier: 'priority' },
+          usage: { input: 20, output: 3, service_tier: tier },
         },
       }),
       queue,

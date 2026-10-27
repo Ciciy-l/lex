@@ -680,6 +680,25 @@ export class Session {
     this.handle.setNativeInputResolver?.(input => this.resolveNativeInput(input), input => this.resolveNativeMedia(input));
     this.handle.setNativeRuntimeResolver?.(request => this.nativeRuntimeBinding.resolve(request));
     this.handle.setNativeStopResolver?.(request => this.nativeStopBinding.resolve(request));
+    this.handle.setNativeCompactResolver?.(async request => {
+      const binding = this.nativeInputBinding;
+      const check = () => {
+        this.ensureActive();
+        this.assertHistoryConfigurationReady();
+        if (!binding || this.nativeInputBinding !== binding || binding.controller.signal.aborted
+          || request.signal.aborted || request.nativeSessionId !== this.sdkSessionId)
+          throw new Error('Native compaction owner changed');
+      };
+      check();
+      if (this.isTurnRunning()) throw this.createSessionRunningError();
+      // Use the existing turn reservation/usage/terminal owner, without sending
+      // an input message. The callback dispatches only the native control RPC.
+      const result = await this.dispatchSend({ type: 'user', content: [] }, {
+        signal: request.signal, beforeProviderStart: async () => check(),
+      }, false, async () => { check(); await request.accept(); });
+      if (!result.accepted) throw new Error('Native compaction was not accepted');
+      return {};
+    });
     if (this.handle.activatePresentation) {
       let complete!: (result: AgentPresentationInitialization) => void;
       const settled = new Promise<AgentPresentationInitialization>(resolve => { complete = resolve; });
@@ -2269,6 +2288,7 @@ export class Session {
   /** 手动压缩会话上下文(capability 见 Capabilities.manualCompact)。 */
   async compactSession(instructions?: string): Promise<ManualCompactResult> {
     this.ensureActive();
+    this.assertHistoryConfigurationReady();
     if (!this.capabilities.manualCompact?.supported) {
       throw new NotSupportedError(
         'manualCompact',
@@ -2278,6 +2298,33 @@ export class Session {
     if (!this.handle.compactSession) {
       throw new NotSupportedError('manualCompact', { supported: false, reason: 'not-implemented' });
     }
+    if (this.handle.startManualCompact) {
+      let completion: Promise<ManualCompactResult> | undefined;
+      let generation: number | undefined, observed!: () => void, reject!: (error: Error) => void;
+      const terminal = new Promise<void>((ok, fail) => { observed = ok; reject = fail; });
+      void terminal.catch(() => {});
+      const stop = this.onEvent(event => {
+        if (generation !== undefined && event.sessionTurnGeneration === generation && event.type === 'done') observed();
+      });
+      const stopStatus = this.onStatusChange(status => {
+        if (status === 'closed' || status === 'error') reject(new Error('Task closed before compaction projection'));
+      });
+      try {
+        const result = await this.dispatchSend({ type: 'user', content: [] }, {
+          onTurnReserved: value => { generation = value; },
+        }, false, async (_message, options) => {
+          const operation = this.handle.startManualCompact!(instructions, options.signal);
+          completion = operation.completed; void completion.catch(() => {});
+          await operation.accepted;
+        });
+        if (!result.accepted || !completion) throw new Error('Native compaction was not accepted');
+        const compacted = await completion;
+        // Drain this same terminal through Session before the GUI may submit
+        // its next turn. Native completion alone precedes the queued projection.
+        await terminal; return compacted;
+      } finally { stop(); stopStatus(); }
+    }
+    this.startEventLoopIfNeeded();
     return this.handle.compactSession(instructions);
   }
 
@@ -2380,6 +2427,29 @@ export class Session {
     if ((record.targetNativeId ?? record.nativeId) !== this.sdkSessionId || this.historyHandoff || this.isTurnRunning())
       throw new Error('History recovery does not belong to this idle native task');
     this.historyHandoff = { ...record, busy: false, release: this.presentation?.suspendInput?.() ?? (() => {}) };
+  }
+
+  /** A full-history native replacement retains the existing history/input hold.
+   * Failure leaves it fenced until exact executor retirement or durable recovery. */
+  async replaceNativeHistoryAndPersist(operation: (target: (id: string) => void) => Promise<void>): Promise<void> {
+    this.ensureActive();
+    this.assertHistoryConfigurationReady();
+    if (this.historyConfigurationChanges > 0 || this.planModeChangesInFlight > 0) throw this.createSessionRunningError();
+    const handoff: NonNullable<Session['historyHandoff']> = { entryId: 'codex-summary',
+      nativeId: this.sdkSessionId, busy: true, release: this.presentation?.suspendInput?.() ?? (() => {}) };
+    this.historyHandoff = handoff;
+    try {
+      await operation(id => {
+        this.ensureActive();
+        if (this.historyHandoff !== handoff || (handoff.targetNativeId && handoff.targetNativeId !== id))
+          throw new Error('Native history replacement changed');
+        handoff.targetNativeId = id;
+      });
+      this.ensureActive();
+      if (this.historyHandoff !== handoff || this.sdkSessionId !== handoff.targetNativeId)
+        throw new Error('Native history replacement was not applied');
+      this.historyHandoff = undefined; handoff.release();
+    } finally { handoff.busy = false; }
   }
 
   readNativeEditorDraft(): Promise<string | undefined> {

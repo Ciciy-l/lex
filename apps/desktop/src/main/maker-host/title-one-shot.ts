@@ -371,6 +371,7 @@ async function fetchCodexTitle(
       'chatgpt-account-id': creds.accountId,
       'OpenAI-Beta': 'responses=experimental',
       originator: 'codex_cli_rs',
+      'user-agent': 'Lex-TitleBridge',
       session_id: randomUUID(),
       'content-type': 'application/json',
       accept: 'text/event-stream',

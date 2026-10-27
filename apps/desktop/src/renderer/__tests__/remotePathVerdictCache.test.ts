@@ -19,6 +19,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { setDataOwnerGeneration } from '../contexts/dataOwnerGeneration';
 
 import {
   _clearRemotePathVerdictCache,
@@ -44,14 +45,57 @@ const verify = () => verifyRemotePathCached(ORIGIN, WORKDIR, ABS);
 const peek = () => peekRemotePathVerdict(ORIGIN, WORKDIR, ABS);
 
 beforeEach(() => {
+  setDataOwnerGeneration('remote-fixture');
   _clearRemotePathVerdictCache();
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-07-31T00:00:00Z'));
 });
 
 afterEach(() => {
+  _clearRemotePathVerdictCache();
+  setDataOwnerGeneration(null);
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+describe('explicit remote retry', () => {
+  it.each(['unknown', 'nonfile'] as const)('refresh bypasses %s without waiting for the render cache', async verdict => {
+    const stat = stubChatStat(async () => ({ verdict }));
+    await verify();
+    stat.mockResolvedValue({ verdict: 'file' });
+    expect(await verify()).toBe(verdict);
+    expect(await verifyRemotePathCached(ORIGIN, WORKDIR, ABS, undefined, { refresh: true })).toBe('file');
+    expect(peek()).toBe('file');
+    expect(stat).toHaveBeenCalledTimes(2);
+  });
+
+  it('an old inflight result cannot overwrite or remove the current refresh', async () => {
+    let oldFinish!: (result: { verdict: string }) => void;
+    let freshFinish!: (result: { verdict: string }) => void;
+    const stat = stubChatStat(() => new Promise(resolve => { oldFinish = resolve; }));
+    const old = verify();
+    stat.mockImplementationOnce(() => new Promise(resolve => { freshFinish = resolve; }));
+    const fresh = verifyRemotePathCached(ORIGIN, WORKDIR, ABS, undefined, { refresh: true });
+    oldFinish({ verdict: 'nonfile' }); await old;
+    expect(peek()).toBeUndefined();
+    expect(verify()).toBe(fresh);
+    freshFinish({ verdict: 'file' }); await fresh;
+    expect(peek()).toBe('file');
+    expect(stat).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not publish a prior owner result or reuse another endpoint verdict', async () => {
+    let oldFinish!: (result: { verdict: string }) => void;
+    const stat = stubChatStat(() => new Promise(resolve => { oldFinish = resolve; }));
+    const old = verify();
+    setDataOwnerGeneration('next-owner');
+    stat.mockResolvedValue({ verdict: 'nonfile' });
+    await verify();
+    oldFinish({ verdict: 'file' }); await old;
+    expect(peek()).toBe('nonfile');
+    expect(await verifyRemotePathCached({ kind: 'device', deviceId: 'other' }, WORKDIR, ABS)).toBe('nonfile');
+    expect(stat).toHaveBeenCalledTimes(3);
+  });
 });
 
 describe('unknown 的生命周期(不变量 A)', () => {

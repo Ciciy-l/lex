@@ -90,6 +90,14 @@ function invokeCreate(params: Record<string, unknown>): unknown {
 }
 
 describe('terminal CREATE shell preference', () => {
+  it('validates the shell restoration flag and reports retired identities distinctly from absence', () => {
+    expect(() => invokeCreate({ id: 'a', cwd: '/tmp', restore: 'true' })).toThrow('INVALID_PARAMS');
+    expect(mocks.managerCreate).not.toHaveBeenCalled();
+    invokeCreate({ id: 'a', cwd: '/tmp', restore: true, profile: 'shell' });
+    expect(mocks.managerCreate).toHaveBeenCalledWith(expect.objectContaining({ restore: true }));
+    mocks.managerCreate.mockImplementationOnce(() => { throw new Error('TERMINAL_RETIRED:a'); });
+    expect(() => invokeCreate({ id: 'a', cwd: '/tmp', restore: true })).toThrow('PRECONDITION_FAILED');
+  });
   it('awaits confirmed destruction and enforces ownership before killing', async () => {
     const sender = { isDestroyed: () => false } as unknown as WebContents;
     const event = { sender } as IpcMainInvokeEvent;

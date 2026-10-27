@@ -34,16 +34,18 @@ interface CodexModelRaw {
   default_reasoning_level?: unknown;
   supported_reasoning_levels?: unknown;
   priority?: unknown;
-  /** [{id:'priority', name:'Fast', ...}] —— 含 priority 即支持 Fast(bridge 映射 service_tier)。 */
+  /** Account-declared tiers; Fast also uses the legacy priority spelling. */
   service_tiers?: unknown;
+  additional_speed_tiers?: unknown;
 }
 
-/** service_tiers 里是否声明了 priority(=Fast)档。 */
-function hasPriorityTier(tiers: unknown): boolean {
-  return (
-    Array.isArray(tiers) &&
-    tiers.some((t) => t && typeof t === 'object' && (t as { id?: unknown }).id === 'priority')
-  );
+function declaredFastMode(model: CodexModelRaw): boolean | undefined {
+  if (!Array.isArray(model.service_tiers) && !Array.isArray(model.additional_speed_tiers)) return undefined;
+  const tiers = [
+    ...(Array.isArray(model.service_tiers) ? model.service_tiers.map(tier => tier?.id) : []),
+    ...(Array.isArray(model.additional_speed_tiers) ? model.additional_speed_tiers : []),
+  ];
+  return tiers.some(tier => tier === 'priority' || tier === 'fast');
 }
 
 /**
@@ -159,9 +161,7 @@ export function mapCodexModelsToCatalog(raw: unknown): CatalogModel[] {
           inputModalities !== undefined ? inputModalities.includes('image') : undefined,
         efforts: Array.isArray(m.supported_reasoning_levels) ? efforts : undefined,
         defaultEffort: m.default_reasoning_level,
-        supportsFastMode: Array.isArray(m.service_tiers)
-          ? hasPriorityTier(m.service_tiers)
-          : undefined,
+        supportsFastMode: declaredFastMode(m),
       }),
       name: displayName,
       group: 'gpt',
@@ -181,7 +181,8 @@ export function mapCodexModelsToCatalog(raw: unknown): CatalogModel[] {
       defaultEnabled: !DEFAULT_HIDDEN_SLUGS.has(slug),
     };
     if (efforts.includes('xhigh')) model.effortDisplayNames = { xhigh: 'Extra High' };
-    if (Array.isArray(m.service_tiers)) model.supportsFastMode = hasPriorityTier(m.service_tiers);
+    const fastMode = declaredFastMode(m);
+    if (fastMode !== undefined) model.supportsFastMode = fastMode;
     out.push(model);
   }
   return out;

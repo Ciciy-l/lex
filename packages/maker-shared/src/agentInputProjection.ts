@@ -110,6 +110,45 @@ export function boundAgentReferenceText(
   return { text: text.slice(0, cap), truncated: true };
 }
 
+/** Identity is scoped to the source device, not to matching prose or timestamps. */
+export function agentInputMessageReferenceKey(sessionId: string, messageClientId: string, deviceId?: string): string {
+  return JSON.stringify([deviceId ?? '', sessionId, messageClientId]);
+}
+
+export type InlineMessageReferenceBodies = ReadonlyMap<string, ReadonlySet<string>>;
+
+function messageReferenceKey(
+  reference: AgentInputMessageReference,
+  sourceDeviceForHref?: (href: string) => string | undefined,
+): string | null {
+  // Reuse the deep-link query decoding contract (not URLSearchParams' form
+  // decoding, which would silently turn a literal '+' into a space).
+  const query = reference.href.split('#', 1)[0].split('?')[1] ?? '';
+  const explicitDevice = queryValue(query, 'device', 256);
+  if (query.split('&').some(pair => pair.startsWith('device=')) && explicitDevice === null) return null;
+  const deviceId = explicitDevice ?? sourceDeviceForHref?.(reference.href);
+  return agentInputMessageReferenceKey(reference.sessionId, reference.messageClientId, deviceId);
+}
+
+/** Only validated spans whose complete body is actually projected can replace a history anchor. */
+export function collectInlineMessageReferenceBodies(
+  source: AgentFacingTextSource,
+  sourceDeviceForHref?: (href: string) => string | undefined,
+): InlineMessageReferenceBodies {
+  const bodies = new Map<string, Set<string>>();
+  for (const reference of readAgentInputReferences(source.agentReferences, source.text)) {
+    if (reference.kind !== 'message' || reference.truncated === true) continue;
+    const bounded = boundAgentReferenceText(reference.text ?? '');
+    if (!bounded.text || bounded.truncated) continue;
+    const key = messageReferenceKey(reference, sourceDeviceForHref);
+    if (key === null) continue;
+    const values = bodies.get(key) ?? new Set<string>();
+    values.add(bounded.text);
+    bodies.set(key, values);
+  }
+  return bodies;
+}
+
 function nonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
@@ -431,7 +470,7 @@ function quotedMetadata(value: string): string {
     .replace(/\u2029/g, '\\u2029');
 }
 
-function formatReference(reference: AgentInputReference): string {
+function formatReference(reference: AgentInputReference, bodyAlreadyIncluded = false): string {
   if (reference.kind === 'message') {
     const bounded = boundAgentReferenceText(reference.text ?? '');
     const truncated = reference.truncated === true || bounded.truncated;
@@ -440,7 +479,7 @@ function formatReference(reference: AgentInputReference): string {
       `Session ID: ${reference.sessionId}`,
       `Message ID: ${reference.messageClientId}`,
       'Content:',
-      bounded.text || '(message content unavailable)',
+      bodyAlreadyIncluded ? '(same referenced content included above)' : bounded.text || '(message content unavailable)',
       ...(truncated ? ['[Content truncated]'] : []),
       '[/Referenced message]',
     ].join('\n');
@@ -511,10 +550,24 @@ export function projectAgentFacingText(source: AgentFacingTextSource): string {
   if (references.length === 0) return projectLiteralText(source.text, stripMarkers);
 
   const parts: string[] = [];
+  const includedMessages = new Map<string, Set<string>>();
   let cursor = 0;
   for (const reference of references) {
     parts.push(projectLiteralText(source.text.slice(cursor, reference.start), stripMarkers));
-    parts.push(formatReference(reference));
+    let bodyAlreadyIncluded = false;
+    if (reference.kind === 'message' && reference.truncated !== true) {
+      const bounded = boundAgentReferenceText(reference.text ?? '');
+      if (bounded.text && !bounded.truncated) {
+        const key = messageReferenceKey(reference);
+        if (key !== null) {
+          const bodies = includedMessages.get(key) ?? new Set<string>();
+          bodyAlreadyIncluded = bodies.has(bounded.text);
+          bodies.add(bounded.text);
+          includedMessages.set(key, bodies);
+        }
+      }
+    }
+    parts.push(formatReference(reference, bodyAlreadyIncluded));
     cursor = reference.end;
   }
   parts.push(projectLiteralText(source.text.slice(cursor), stripMarkers));

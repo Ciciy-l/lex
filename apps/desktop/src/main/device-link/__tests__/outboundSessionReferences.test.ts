@@ -44,6 +44,20 @@ function queued(sessionRefs?: AgentInputQueuedMessage['sessionRefs']): AgentInpu
 describe('rewriteOutboundSessionReferences', () => {
   beforeEach(() => resolveSessionReferences.mockReset());
 
+  it('binds the inline body to the controller source before remote enqueue', async () => {
+    const href = 'cindy://session/source?message=anchor&device=dev-source';
+    const item = queued([{ sessionId: 'source', messageClientId: 'anchor', deviceId: 'dev-source' }]);
+    item.text = href;
+    item.agentReferences = [{ kind: 'message', href, start: 0, end: href.length, sessionId: 'source',
+      messageClientId: 'anchor', text: '完整正文' }];
+    resolveSessionReferences.mockResolvedValueOnce([]);
+    await rewriteOutboundSessionReferences('maker:input:enqueue', ['remote-target', item]);
+    expect(resolveSessionReferences).toHaveBeenCalledWith(item.sessionRefs, {
+      inlineMessages: new Map([[JSON.stringify(['dev-source', 'source', 'anchor']), new Set(['完整正文'])]]),
+    });
+    expect(item.text).toBe(href);
+  });
+
   it.each([
     ['controller-local source', [{ sessionId: 'on-a' }]],
     ['controlled-device source', [{ sessionId: 'on-b', deviceId: 'device-b' }]],
@@ -69,7 +83,7 @@ describe('rewriteOutboundSessionReferences', () => {
       queued(refs),
     ]);
 
-    expect(resolveSessionReferences).toHaveBeenCalledWith(refs);
+    expect(resolveSessionReferences).toHaveBeenCalledWith(refs, { inlineMessages: new Map() });
     expect((rewritten[1] as AgentInputQueuedMessage).trustedSessionReferenceContexts).toEqual(
       snapshot,
     );
@@ -184,7 +198,7 @@ describe('rewriteOutboundSessionReferences', () => {
       'client-1',
       queued(refs),
     ]);
-    expect(resolveSessionReferences).toHaveBeenCalledWith(refs);
+    expect(resolveSessionReferences).toHaveBeenCalledWith(refs, { inlineMessages: new Map() });
     expect((rewritten[2] as AgentInputQueuedMessage).trustedSessionReferenceContexts).toHaveLength(
       1,
     );

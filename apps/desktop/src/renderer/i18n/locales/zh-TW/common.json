@@ -7108,7 +7108,6 @@
       "defaultTitle": "終端",
       "workbenchTitle": "終端（{{count}} 個窗格）",
       "profileShell": "Shell",
-      "agentSection": "Agent",
       "defaultShellBadge": "預設",
       "detectingShells": "正在偵測終端…",
       "profileClaude": "Claude",
@@ -8198,7 +8197,7 @@
         "recommendedConfig": "推薦設定",
         "customized": "已自訂",
         "reset": "恢復推薦",
-        "fastTip": "Fast · 插隊加速 · 用量更多",
+        "fastTip": "Fast 可能增加費用或用量，實際速度取決於供應商",
         "effortEndFast": "更高效",
         "effortEndSmart": "更聰明",
         "railSameEngine": "僅 {{agent}}",
@@ -9334,6 +9333,7 @@
       }
     },
     "markdownRenderer": {
+      "fileUnavailable": "暫時無法開啟此檔案。再次點擊連結可重新整理並重試。",
       "codeCopied": "已複製",
       "copyCode": "複製程式碼",
       "annotateImage": "標註圖片",

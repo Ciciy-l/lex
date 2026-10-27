@@ -1,3 +1,4 @@
+import { withLexCustomHeaders } from '@cindy/model-providers';
 import { normalizeAutoReviewUserIntent, createAutoReviewActionContext, type AutoReviewUserIntent } from '../shared/auto-review-decision.js';
 /**
  * ClaudeCodeAgent — Claude Code 的 maker-core 一等公民实现。
@@ -1534,6 +1535,7 @@ export class ClaudeCodeAgent extends BaseAgent {
     if (remoteEnv && remoteRoute) {
       for (const key of REMOTE_ROUTE_OVERRIDE_ENV_KEYS) delete remoteEnv[key];
       Object.assign(remoteEnv, remoteRoute.env);
+      remoteEnv.ANTHROPIC_CUSTOM_HEADERS = withLexCustomHeaders(remoteEnv.ANTHROPIC_CUSTOM_HEADERS);
       remoteEnv.ANTHROPIC_BASE_URL = remoteRoute.endpoint;
       // 订阅 token 续命回调的 entrypoint 闸门:route 覆盖后才出现 CLAUDE_CODE_OAUTH_TOKEN
       // 的场景(如显式 anthropic 的 oauth-bearer 形态,buildClaudeEnv 期不注入 token)

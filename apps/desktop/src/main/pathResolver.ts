@@ -37,6 +37,8 @@ export interface ResolvePathResult {
 }
 
 export interface ResolveOptions {
+  /** Explicit user retry bypasses positive and negative cache entries. */
+  refresh?: boolean;
   /** Optional path-allowlist guard, applied to every candidate. */
   isPathAllowed?: (absPath: string) => boolean;
   /** Stop BFS after this many file matches. Default 10. */
@@ -250,14 +252,25 @@ const CACHE_TTL_MS = 30_000;
 const CACHE_CAP = 200;
 
 interface CacheEntry {
-  result: ResolvePathResult;
+  result?: ResolvePathResult;
   expireAt: number;
 }
 
 const cache = new Map<string, CacheEntry>();
 
 function makeCacheKey(workingDir: string, href: string): string {
-  return `${workingDir}::${href}`;
+  return JSON.stringify([workingDir, href]);
+}
+
+function reserveCacheEntry(key: string): CacheEntry {
+  cache.delete(key);
+  if (cache.size >= CACHE_CAP) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+  const entry: CacheEntry = { expireAt: 0 };
+  cache.set(key, entry);
+  return entry;
 }
 
 /**
@@ -271,19 +284,17 @@ export async function resolveWorkspacePathCached(
   options: ResolveOptions = {},
 ): Promise<ResolvePathResult> {
   const key = makeCacheKey(workingDir, href);
-  const now = Date.now();
   const hit = cache.get(key);
-  if (hit && hit.expireAt > now) return hit.result;
-  if (hit) cache.delete(key);
-
+  if (!options.refresh && hit?.result && hit.expireAt > Date.now()
+    && hit.result.candidates.every(candidate => options.isPathAllowed?.(candidate) ?? true)) return hit.result;
+  const entry = reserveCacheEntry(key);
   const result = await resolveWorkspacePath(href, workingDir, options);
-
-  // Capacity eviction: drop oldest insertion (Map preserves insertion order).
-  if (cache.size >= CACHE_CAP) {
-    const firstKey = cache.keys().next().value;
-    if (firstKey !== undefined) cache.delete(firstKey);
+  // A refresh/eviction owns a new entry. An earlier filesystem read cannot
+  // repopulate it after a newer result (or explicit cache clear).
+  if (cache.get(key) === entry) {
+    entry.result = result;
+    entry.expireAt = Date.now() + CACHE_TTL_MS;
   }
-  cache.set(key, { result, expireAt: now + CACHE_TTL_MS });
   return result;
 }
 
@@ -460,34 +471,26 @@ export async function resolveWorkspacePathBatchCached(
   workingDir: string,
   options: ResolveOptions = {},
 ): Promise<Record<string, ResolvePathResult>> {
-  const now = Date.now();
   const out: Record<string, ResolvePathResult> = {};
-  const miss: string[] = [];
-  const seen = new Set<string>();
-
-  for (const href of hrefs) {
-    if (seen.has(href)) continue;
-    seen.add(href);
+  const pending = new Map<string, CacheEntry>();
+  for (const href of new Set(hrefs)) {
     const key = makeCacheKey(workingDir, href);
     const hit = cache.get(key);
-    if (hit && hit.expireAt > now) {
+    if (!options.refresh && hit?.result && hit.expireAt > Date.now()
+      && hit.result.candidates.every(candidate => options.isPathAllowed?.(candidate) ?? true)) {
       out[href] = hit.result;
     } else {
-      if (hit) cache.delete(key);
-      miss.push(href);
+      pending.set(href, reserveCacheEntry(key));
     }
   }
-
-  if (miss.length > 0) {
-    const resolved = await resolveWorkspacePathBatch(miss, workingDir, options);
-    for (const href of miss) {
+  if (pending.size > 0) {
+    const resolved = await resolveWorkspacePathBatch([...pending.keys()], workingDir, options);
+    for (const [href, entry] of pending) {
       const result = resolved[href] ?? { status: 'none', candidates: [] };
-      // Capacity eviction: drop oldest insertion (Map preserves order).
-      if (cache.size >= CACHE_CAP) {
-        const firstKey = cache.keys().next().value;
-        if (firstKey !== undefined) cache.delete(firstKey);
+      if (cache.get(makeCacheKey(workingDir, href)) === entry) {
+        entry.result = result;
+        entry.expireAt = Date.now() + CACHE_TTL_MS;
       }
-      cache.set(makeCacheKey(workingDir, href), { result, expireAt: now + CACHE_TTL_MS });
       out[href] = result;
     }
   }

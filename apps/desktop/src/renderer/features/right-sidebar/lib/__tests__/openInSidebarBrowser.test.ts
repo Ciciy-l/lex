@@ -83,6 +83,18 @@ describe('openUrlInSidebarBrowser', () => {
     vi.mocked(routeSidebarCommand).mockResolvedValue('attached');
   });
 
+  it('does not create a tab after an awaited hydration retires the requesting view', async () => {
+    let finish!: () => void;
+    vi.mocked(ensureHydrated).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    let current = true;
+    const pending = openUrlInSidebarBrowser('s1', 'file:///fixture.html', { isCurrent: () => current });
+    await Promise.resolve();
+    current = false;
+    finish(); await pending;
+    expect(addTab).not.toHaveBeenCalled();
+    expect(requestRightSidebarVisibility).not.toHaveBeenCalled();
+  });
+
   it('adds a fresh web-browser tab with the canonical initial state, then requests visibility', async () => {
     await openUrlInSidebarBrowser('s1', 'https://example.com/');
     // hydrate 竞态防护:addTab 前必须先 ensureHydrated(同一 session)。

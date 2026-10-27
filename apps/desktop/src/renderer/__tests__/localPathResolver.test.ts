@@ -1,3 +1,4 @@
+import { setDataOwnerGeneration } from '../contexts/dataOwnerGeneration';
 /**
  * localPathResolver.test.ts
  * ---------------------------------------------------------------------------
@@ -540,5 +541,77 @@ describe('toLocalFileUrl', () => {
     expect(toLocalFileUrl('/abs/icon image.png', '12:34.5')).toBe(
       'xdt-file://local/?path=%2Fabs%2Ficon%20image.png&v=12%3A34.5',
     );
+  });
+});
+
+describe('explicit file retry across renderer cache generations', () => {
+  afterEach(() => { _clearSmartResolveCache(); setDataOwnerGeneration(null); });
+
+  it('bypasses cached negative answers and requests Main refresh', async () => {
+    const resolvePathBatch = vi.fn().mockResolvedValue({ 'new.ts': { status: 'none', candidates: [] } });
+    const resolvePath = vi.fn().mockResolvedValue({ status: 'unique', candidates: ['/repo/new.ts'], kind: 'file' });
+    vi.stubGlobal('window', { electronAPI: { resolvePathBatch, resolvePath } });
+    expect((await resolveLocalPathSmartCached('new.ts', '/repo')).status).toBe('none');
+    expect(await resolveLocalPathSmartCached('new.ts', '/repo', { refresh: true }))
+      .toEqual({ status: 'unique', absPath: '/repo/new.ts', kind: 'file' });
+    expect(resolvePath).toHaveBeenCalledWith({ href: 'new.ts', workingDir: '/repo', refresh: true });
+    expect((await resolveLocalPathSmartCached('new.ts', '/repo')).status).toBe('unique');
+    expect(resolvePath).toHaveBeenCalledTimes(1);
+    expect(resolvePathBatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let an earlier batch replace a fresh click result', async () => {
+    let finish!: (value: unknown) => void;
+    const resolvePathBatch = vi.fn(() => new Promise(resolve => { finish = resolve; }));
+    const resolvePath = vi.fn().mockResolvedValue({ status: 'unique', candidates: ['/repo/current.ts'] });
+    vi.stubGlobal('window', { electronAPI: { resolvePathBatch, resolvePath } });
+    const old = resolveLocalPathSmartCached('current.ts', '/repo');
+    await Promise.resolve();
+    const fresh = await resolveLocalPathSmartCached('current.ts', '/repo', { refresh: true });
+    finish({ 'current.ts': { status: 'none', candidates: [] } }); await old;
+    expect(peekResolveLocalPathSmart('current.ts', '/repo')).toEqual(fresh);
+  });
+
+  it('ignores late cache writes across data owners', async () => {
+    let finishOld!: (value: unknown) => void;
+    const resolvePathBatch = vi.fn()
+      .mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve; }))
+      .mockResolvedValue({ 'same.ts': { status: 'none', candidates: [] } });
+    vi.stubGlobal('window', { electronAPI: { resolvePathBatch } });
+    setDataOwnerGeneration('first');
+    const old = resolveLocalPathSmartCached('same.ts', '/repo');
+    await Promise.resolve();
+    setDataOwnerGeneration('second');
+    const current = resolveLocalPathSmartCached('same.ts', '/repo');
+    await Promise.resolve();
+    finishOld({ 'same.ts': { status: 'unique', candidates: ['/repo/first-private.ts'] } }); await old;
+    expect((await current).status).toBe('none');
+    expect(peekResolveLocalPathSmart('same.ts', '/repo')?.status).toBe('none');
+    expect(resolvePathBatch).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not dispatch a queued lookup after its data owner has changed', async () => {
+    const resolvePathBatch = vi.fn().mockResolvedValue({ 'same.ts': { status: 'none', candidates: [] } });
+    vi.stubGlobal('window', { electronAPI: { resolvePathBatch } });
+    setDataOwnerGeneration('first');
+    const old = resolveLocalPathSmartCached('same.ts', '/repo');
+    setDataOwnerGeneration('second');
+    const current = resolveLocalPathSmartCached('same.ts', '/repo');
+    expect((await old).status).toBe('none');
+    expect((await current).status).toBe('none');
+    expect(resolvePathBatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not send an obsolete render batch after a same-tick explicit refresh', async () => {
+    const resolvePathBatch = vi.fn();
+    const resolvePath = vi.fn().mockResolvedValue({ status: 'unique', candidates: ['/repo/new.ts'] });
+    vi.stubGlobal('window', { electronAPI: { resolvePathBatch, resolvePath } });
+    const old = resolveLocalPathSmartCached('new.ts', '/repo');
+    const fresh = resolveLocalPathSmartCached('new.ts', '/repo', { refresh: true });
+    expect((await old).status).toBe('none');
+    expect((await fresh).status).toBe('unique');
+    expect(peekResolveLocalPathSmart('new.ts', '/repo')?.status).toBe('unique');
+    expect(resolvePathBatch).not.toHaveBeenCalled();
+    expect(resolvePath).toHaveBeenCalledOnce();
   });
 });

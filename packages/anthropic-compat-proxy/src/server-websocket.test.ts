@@ -196,6 +196,7 @@ describe('anthropic-compat-proxy websocket upgrades', () => {
         'Authorization: Bearer test-token',
         'OpenAI-Beta: responses_websockets=2026-02-06',
         'X-Codex-Turn-Metadata: test-metadata',
+        'User-Agent: native/7 (fixture)',
       ],
     );
     expect(response.head).toContain('HTTP/1.1 101 Switching Protocols');
@@ -224,6 +225,8 @@ describe('anthropic-compat-proxy websocket upgrades', () => {
       'responses_websockets=2026-02-06',
     );
     expect(upstream.requests[0].headers['x-codex-turn-metadata']).toBe('test-metadata');
+    expect(upstream.requests[0].headers['user-agent']).toBe('native/7 (fixture) Lex');
+    expect(upstream.requests[0].headers['x-title']).toBe('Lex');
     expect(upstream.received.join('')).toContain('CLIENT_HEAD');
     expect(upstream.received.join('')).toContain('PING');
   });
@@ -269,6 +272,7 @@ describe('anthropic-compat-proxy websocket upgrades', () => {
     });
     const handshakeHeaders = [
       'Thread-Id: thread-proven',
+      'User-Agent: native/7 (fixture) Lex',
       'Sec-WebSocket-Extensions: permessage-deflate',
     ];
 
@@ -327,6 +331,10 @@ describe('anthropic-compat-proxy websocket upgrades', () => {
     ).resolves.toContain('PONG');
     expect(upstream.requests).toHaveLength(2);
     expect(upstream.received.join('')).toContain('PING_AFTER_RECONNECT');
+    for (const request of upstream.requests) {
+      expect(request.headers['user-agent']).toBe('native/7 (fixture) Lex');
+      expect(request.headers['x-title']).toBe('Lex');
+    }
   });
 
   it('forgets one thread proof so a provider switch cannot reuse its websocket recovery', async () => {

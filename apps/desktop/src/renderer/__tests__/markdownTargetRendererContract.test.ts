@@ -25,12 +25,11 @@ describe('Markdown target rendering contract', () => {
     expect(markdownRenderer).toContain('<InlineCodeWithTarget');
   });
 
-  it('only renders a chip for uniquely-resolved local files — everything else is plain text', () => {
+  it('only renders a chip for uniquely-resolved local files; unresolved authored links remain retryable', () => {
     // Design (chosen 2026-05-29 after follow-up review): the chip visual is
-    // ONLY a confirmation that the path resolved to a single existing file
-    // in workingDir. Unresolved / ambiguous / not-found / directory /
-    // unsupported-scheme cases render as plain <span> or vanilla <code>, not
-    // as a non-interactive chip. The chip is always interactive when shown.
+    // ONLY a confirmation that the path resolved to a single existing target.
+    // Authored links can retry resolution; automatic candidates remain plain
+    // text until verified. Neither becomes a non-interactive chip.
     expect(markdownRenderer).toContain('FileTargetChip');
     expect(markdownRenderer).toContain("target.kind === 'resolved-local'");
     expect(markdownRenderer).toContain('shouldRenderCodeReferenceLabel');
@@ -42,8 +41,8 @@ describe('Markdown target rendering contract', () => {
     expect(markdownRenderer).not.toContain('cursor-default');
     expect(markdownRenderer).not.toContain('interactive: boolean');
     expect(markdownRenderer).not.toContain('interactive={interactive}');
-    // Non-resolved local kinds fall through to plain text — assert MarkdownTargetLink
-    // explicitly handles code-reference / local-candidate as <span>.
+    // After the authored-link branch, automatic candidates and unsupported
+    // targets fall through to plain text.
     expect(markdownRenderer).toContain(
       "if (target.kind === 'code-reference' || target.kind === 'local-candidate')",
     );
@@ -132,9 +131,8 @@ describe('Markdown target rendering contract', () => {
   it('wraps long markdown link text instead of widening the message column', () => {
     expect(markdownRenderer).toContain('[overflow-wrap:anywhere]');
     expect(markdownRenderer).toContain('const MARKDOWN_LINK_CLASS');
-    // 2 处:anchor 链接 + MarkdownTargetLink;xdt-maker://session/ 分支已升级为
-    // SessionLinkChip(自带 chip 样式),不再计入。
-    expect(markdownRenderer.match(/className=\{MARKDOWN_LINK_CLASS\}/g) ?? []).toHaveLength(2);
+    // Existing resolved/external links plus the explicit unresolved retry link.
+    expect(markdownRenderer.match(/className=\{MARKDOWN_LINK_CLASS\}/g) ?? []).toHaveLength(3);
   });
 
   it('passes parsed line numbers into TextLightbox and TextLightbox scrolls on open', () => {

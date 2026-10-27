@@ -762,3 +762,13 @@ describe('applySubagentModelEnv', () => {
     expect('CLAUDE_CODE_SUBAGENT_MODEL' in env).toBe(false);
   });
 });
+
+describe('Claude application attribution after auth configuration', () => {
+  it.each(['local', 'remote'] as const)('preserves explicit headers in %s mode', async mode => {
+    const custom = 'authorization: Bearer fixture\nx-tItLe: Chosen\nUser-Agent: explicit/2';
+    const env = await buildClaudeEnv(createAuthAdapter({ ANTHROPIC_CUSTOM_HEADERS: custom }), {}, { mode });
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe(custom);
+    const absent = await buildClaudeEnv(createAuthAdapter({ ANTHROPIC_CUSTOM_HEADERS: 'x-tenant: chosen' }), {}, { mode });
+    expect(absent.ANTHROPIC_CUSTOM_HEADERS).toBe('x-tenant: chosen\nX-Title: Lex');
+  });
+});

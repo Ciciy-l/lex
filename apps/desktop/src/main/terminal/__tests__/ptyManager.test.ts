@@ -19,6 +19,7 @@ import type { WebContents } from 'electron';
 
 import { PtyManager, type DataPayload, type ExitPayload } from '../ptyManager';
 import type { TerminalRuntimeRecord } from '../../../shared/terminal-bridge';
+import * as shellResolver from '../shellResolver';
 
 // ---------- Fake IPty ----------
 
@@ -177,6 +178,48 @@ afterEach(() => {
 });
 
 describe('PtyManager.destroy', () => {
+  it.each(['dispose', 'forget', 'destroy'] as const)('does not restore an identity explicitly removed by %s', async action => {
+    const mgr = makeManager(), owner = makeFakeWebContents() as unknown as WebContents;
+    const options = { id: 'retired', sessionId: 'lead', cwd: '/tmp', owner };
+    mgr.create(options);
+    lastSpawn!.__triggerExit({ exitCode: 0 });
+    await mgr[action](options.id, owner);
+    expect(() => mgr.create({ ...options, restore: true })).toThrow('TERMINAL_RETIRED');
+    expect(allSpawns).toHaveLength(1);
+    expect(allSpawns[0].__writes).toEqual([]);
+    mgr.create({ ...options, id: 'new-pane', restore: true });
+    expect(allSpawns).toHaveLength(2);
+  });
+
+  it('fences missing identities removed before an in-flight create arrives', async () => {
+    const mgr = makeManager(), owner = makeFakeWebContents() as unknown as WebContents;
+    await mgr.destroy('gone', owner);
+    expect(() => mgr.create({ id: 'gone', cwd: '/tmp', owner, restore: true })).toThrow('TERMINAL_RETIRED');
+    expect(allSpawns).toHaveLength(0);
+  });
+
+  it('recovers once, preserves live and ended PTYs, and enforces task/owner gates', () => {
+    const mgr = makeManager({ canTransferOwner: () => false });
+    const owner = makeFakeWebContents() as unknown as WebContents;
+    const opts = { id: 'restored', sessionId: 'lead', cwd: '/tmp', owner, restore: true };
+    const first = mgr.create(opts);
+    expect(mgr.create(opts)).toEqual(first);
+    expect(allSpawns).toHaveLength(1);
+    expect(() => mgr.create({ ...opts, sessionId: 'other' })).toThrow('SESSION_MISMATCH');
+    expect(() => mgr.create({ ...opts, owner: makeFakeWebContents() as unknown as WebContents })).toThrow('OWNER_MISMATCH');
+    lastSpawn!.__triggerExit({ exitCode: 5 });
+    expect(mgr.create(opts).exit).toEqual({ code: 5, signal: null });
+    expect(allSpawns).toHaveLength(1);
+    expect(allSpawns[0].__writes).toEqual([]);
+    expect(() => mgr.create({ ...opts, id: 'agent', profile: 'pi' })).toThrow('TERMINAL_RETIRED');
+  });
+
+  it('does not silently substitute another shell if the saved shell is unavailable', () => {
+    const mgr = makeManager(), owner = makeFakeWebContents() as unknown as WebContents;
+    vi.spyOn(shellResolver, 'resolveShellForCreate').mockReturnValue({ id: 'sh', displayName: 'sh', command: '/bin/sh', args: [] });
+    expect(() => mgr.create({ id: 'saved', cwd: '/tmp', owner, restore: true, shellPref: 'pwsh' })).toThrow('shell not found');
+    expect(allSpawns).toHaveLength(0);
+  });
   it('waits for real exit, deduplicates destruction and leaves siblings running', async () => {
     const mgr = makeManager();
     const owner = makeFakeWebContents() as unknown as WebContents;

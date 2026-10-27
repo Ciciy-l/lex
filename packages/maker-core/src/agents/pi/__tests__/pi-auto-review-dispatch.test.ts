@@ -3448,6 +3448,7 @@ describe('pi auto-review dispatch & spawn config (mocked pi process)', () => {
       cacheWrite: 3.75,
     });
     expect(config.providers.cindy.headers).toEqual({
+      'X-Title': 'Lex',
       'x-cindy-pi-session-id': '$CINDY_PI_SESSION_ID',
       'x-cindy-pi-session-token': '$CINDY_PI_SESSION_TOKEN',
     });
