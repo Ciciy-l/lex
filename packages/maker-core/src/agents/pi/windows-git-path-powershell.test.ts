@@ -26,6 +26,34 @@ const GROUPED_PROBE_STARTUP_HEADROOM_MS = 15_000;
 const GROUPED_PROBE_EXEC_TIMEOUT_MS =
   GROUPED_PROBE_COORDINATOR_BUDGET_MS + GROUPED_PROBE_STARTUP_HEADROOM_MS;
 
+function buildOwnedProbeScript(processId: number, startTimeTicks: string, operation: string[]): string {
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    `try { $process = [Diagnostics.Process]::GetProcessById(${processId}) } catch [ArgumentException] { exit 0 }`,
+    'try {',
+    '  if ($process.HasExited) { exit 0 }',
+    // Pin the OS process handle before checking its creation time. Wait/Kill
+    // below must act on this incarnation even if Windows reuses its PID.
+    '  try { [void]$process.Handle } catch [InvalidOperationException] {',
+    '    if ($process.HasExited) { exit 0 }',
+    '    throw',
+    '  }',
+    `  if ($process.StartTime.ToUniversalTime().Ticks.ToString() -ne '${startTimeTicks}') { exit 0 }`,
+    ...operation,
+    '} finally { $process.Dispose() }',
+    'exit 0',
+  ].join('\n');
+}
+
+function buildProbeExitWaitScript(processId: number, startTimeTicks: string): string {
+  return buildOwnedProbeScript(processId, startTimeTicks, [
+    '  if (-not $process.WaitForExit(8000)) {',
+    `    [Console]::Out.WriteLine('owned-probe-exit-timeout pid=${processId} ticks=${startTimeTicks}')`,
+    '    exit 1',
+    '  }',
+  ]);
+}
+
 describe('Windows Git PATH PowerShell probes', () => {
   it('locks the registry probe command and distinguishes missing keys from real failures', () => {
     const script = buildWindowsRegistryProbeScript([
@@ -225,13 +253,16 @@ describe('Windows Git PATH PowerShell probes', () => {
         '$process = New-Object System.Diagnostics.Process',
         '$process.StartInfo = $startInfo',
         '[void]$process.Start()',
-        '[Console]::Out.WriteLine($process.Id)',
+        '[Console]::Out.WriteLine((ConvertTo-Json -Compress -InputObject @{ childPid=$process.Id; childTicks=$process.StartTime.ToUniversalTime().Ticks.ToString(); coordinatorTicks=[Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime().Ticks.ToString() }))',
         '[Console]::Out.Flush()',
         'Start-Sleep -Seconds 30',
       ].join('\n');
       let childPid: number | undefined;
+      let childStartTimeTicks: string | undefined;
+      let coordinatorStartTimeTicks: string | undefined;
       let coordinatorPid: number | undefined;
       let coordinator: ReturnType<typeof spawn> | undefined;
+      let coordinatorClosed = false;
       try {
         coordinator = spawn(
           powershell,
@@ -242,6 +273,7 @@ describe('Windows Git PATH PowerShell probes', () => {
           },
         );
         coordinatorPid = coordinator.pid;
+        coordinator.once('close', () => { coordinatorClosed = true; });
         expect(Number.isInteger(coordinatorPid) && (coordinatorPid ?? 0) > 0).toBe(true);
 
         let output = '';
@@ -251,11 +283,38 @@ describe('Windows Git PATH PowerShell probes', () => {
         });
         await vi.waitFor(
           () => {
-            childPid = Number(output.trim().split(/\r?\n/).at(-1));
+            const identity = JSON.parse(output.trim().split(/\r?\n/).at(-1) ?? '') as {
+              childPid: number; childTicks: string; coordinatorTicks: string;
+            };
+            childPid = identity.childPid;
+            childStartTimeTicks = identity.childTicks;
+            coordinatorStartTimeTicks = identity.coordinatorTicks;
             expect(Number.isInteger(childPid) && childPid > 0).toBe(true);
+            expect(childStartTimeTicks).toMatch(/^\d+$/);
+            expect(coordinatorStartTimeTicks).toMatch(/^\d+$/);
+            expect(childStartTimeTicks).not.toBe(coordinatorStartTimeTicks);
           },
           { timeout: 5_000, interval: 50 },
         );
+
+        // Substitute a known different incarnation at the same lookup PID. This models
+        // PID reuse without relying on the OS to recycle a particular PID during CI.
+        const replacedIdentity = spawnSync(powershell, [
+          '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+          buildProbeExitWaitScript(childPid!, coordinatorStartTimeTicks!),
+        ], { encoding: 'utf8', timeout: 15_000, windowsHide: true });
+        expect(replacedIdentity.error).toBeUndefined();
+        expect(replacedIdentity.status, replacedIdentity.stderr).toBe(0);
+
+        // The same live owned identity must still fail the original eight-second
+        // deadline; accepting a replacement must not hide a real leaked child.
+        const liveIdentity = spawnSync(powershell, [
+          '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+          buildProbeExitWaitScript(childPid!, childStartTimeTicks!),
+        ], { encoding: 'utf8', timeout: 15_000, windowsHide: true });
+        expect(liveIdentity.error).toBeUndefined();
+        expect(liveIdentity.status).toBe(1);
+        expect(liveIdentity.stdout).toContain('owned-probe-exit-timeout');
 
         const coordinatorExit = new Promise<void>((resolve) => {
           coordinator?.once('exit', () => resolve());
@@ -263,7 +322,9 @@ describe('Windows Git PATH PowerShell probes', () => {
         expect(coordinator.kill()).toBe(true);
         await coordinatorExit;
 
-        terminateWindowsPowerShellDescendants(powershell, coordinatorPid);
+        const warn = vi.fn();
+        terminateWindowsPowerShellDescendants(powershell, coordinatorPid, { warn });
+        expect(warn).not.toHaveBeenCalled();
 
         execFileSync(
           powershell,
@@ -272,35 +333,36 @@ describe('Windows Git PATH PowerShell probes', () => {
             '-NoProfile',
             '-NonInteractive',
             '-Command',
-            [
-              '$deadline = [DateTime]::UtcNow.AddSeconds(8)',
-              `while (Get-Process -Id ${childPid} -ErrorAction SilentlyContinue) {`,
-              '  if ([DateTime]::UtcNow -ge $deadline) { exit 1 }',
-              '  Start-Sleep -Milliseconds 50',
-              '}',
-            ].join('\n'),
+            buildProbeExitWaitScript(childPid!, childStartTimeTicks!),
           ],
-           // PowerShell startup can exceed five seconds on a busy hosted Windows runner;
-           // the in-script deadline (8s) plus startup must fit the exec timeout.
-           { stdio: 'ignore', timeout: 15_000, windowsHide: true },
+          // PowerShell startup can exceed five seconds on a busy hosted Windows runner;
+          // the in-script deadline (8s) plus startup must fit the exec timeout.
+          { stdio: 'pipe', timeout: 15_000, windowsHide: true },
         );
       } finally {
-        if (coordinatorPid) {
-          spawnSync('taskkill.exe', ['/PID', String(coordinatorPid), '/F'], {
-            stdio: 'ignore',
-            windowsHide: true,
-          });
-        }
-        if (childPid) {
-          spawnSync('taskkill.exe', ['/PID', String(childPid), '/F'], {
-            stdio: 'ignore',
-            windowsHide: true,
-          });
+        try {
+          if (childPid && childStartTimeTicks) {
+            execFileSync(powershell, [
+              '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+              buildOwnedProbeScript(childPid, childStartTimeTicks, [
+                '  try { $process.Kill() } catch { if (-not $process.HasExited) { throw } }',
+                "  if (-not $process.WaitForExit(5000)) { throw 'Owned probe cleanup did not finish' }",
+              ]),
+            ], { stdio: 'pipe', timeout: 15_000, windowsHide: true });
+          }
+        } finally {
+          if (coordinator && coordinator.exitCode === null && coordinator.signalCode === null) {
+            // If readiness failed, the still-live owned root is the only trusted
+            // handle available to scope descendant cleanup before terminating it.
+            if (!childStartTimeTicks) terminateWindowsPowerShellDescendants(powershell, coordinatorPid);
+            coordinator.kill();
+          }
+          if (coordinator) await vi.waitFor(() => expect(coordinatorClosed).toBe(true), { timeout: 5_000 });
         }
       }
     },
-    // waitFor(5s) + descendant cleanup exec(10s) + liveness probe exec(15s) already
-    // sum to 30s; leave headroom for coordinator exit, taskkill, and scheduling.
+    // Keep the original test ceiling and each subprocess budget. The live-identity
+    // control deliberately spends the original eight-second exit deadline.
      45_000,
   );
 

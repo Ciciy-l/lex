@@ -560,6 +560,8 @@ const flush = async () => {
   }
 };
 
+const harnessDisposers = new Set<() => void>();
+
 function makeItem(
   clientId: string,
   text: string,
@@ -674,6 +676,7 @@ function unsupportedChatBridgeImageError(feature = "input content part 'input_im
 function createHarness(opts?: {
   getRecoveryContextSnapshot?: (sessionId: string, userClientId: string) => Promise<RecoveryContextSnapshot>;
 }) {
+  const sessionIds = new Set<string>();
   let running = false;
   let liveRunningOverride: boolean | null | 'unknown' = null;
   let liveSessionPresentOverride: boolean | null | 'unknown' = null;
@@ -770,6 +773,7 @@ function createHarness(opts?: {
     NonNullable<AgentInputCoordinatorDeps['refreshAgentReferencesBeforeDispatch']>
   >(async () => {});
   const emitProjection = vi.fn((projection: AgentInputProjection) => {
+    sessionIds.add(projection.sessionId);
     projections.push(projection);
   });
 
@@ -877,14 +881,24 @@ function createHarness(opts?: {
     onUserMessageRewritten,
     emitProjection,
     persistQueueSnapshot,
-    loadClearBoundary: (sessionId) =>
-      loadClearBoundary ? loadClearBoundary(sessionId) : Promise.resolve(null),
-    loadQueueSnapshot: (sessionId) =>
-      loadQueueSnapshot ? loadQueueSnapshot(sessionId) : Promise.resolve([]),
+    loadClearBoundary: (sessionId) => {
+      sessionIds.add(sessionId);
+      return loadClearBoundary ? loadClearBoundary(sessionId) : Promise.resolve(null);
+    },
+    loadQueueSnapshot: (sessionId) => {
+      sessionIds.add(sessionId);
+      return loadQueueSnapshot ? loadQueueSnapshot(sessionId) : Promise.resolve([]);
+    },
     getPersistedClientIds: (sessionId, clientIds) =>
       getPersistedClientIds
         ? getPersistedClientIds(sessionId, clientIds)
         : Promise.resolve(new Set()),
+  });
+  harnessDisposers.add(() => {
+    // Retire fixture generations before vi.restoreAllMocks restores successful senders.
+    // This also fences late preparation/restore promises, instead of only clearing timers.
+    for (const sessionId of sessionIds) coordinator.clearSession(sessionId);
+    sessionIds.clear();
   });
 
   return {
@@ -1498,10 +1512,14 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-afterEach(() => {
+function cleanupHarnessesAfterTest() {
+  for (const dispose of harnessDisposers) dispose();
+  harnessDisposers.clear();
   vi.useRealTimers();
   vi.restoreAllMocks();
-});
+}
+
+afterEach(cleanupHarnessesAfterTest);
 
 describe('AgentInputCoordinator trusted session reference snapshots', () => {
   const trustedContext = {
@@ -2092,6 +2110,77 @@ describe('AgentInputCoordinator send transaction', () => {
     // 旧 wait 目标已被顶走；drain 会为新队首重建 wait（仍 busy）。
     expect(projection.credentialSwitchWait?.clientId).toBe('q-continue');
   });
+
+  it.each(['credential-retry', 'pre-send'] as const)(
+    'retires an earlier harness at teardown before its late %s can persist in a new test',
+    async (phase) => {
+      vi.useFakeTimers();
+      const previous = createHarness();
+      const previousSid = `previous-fixture-${phase}`;
+      const gate = deferred<void>();
+      let completePrevious: () => void;
+      if (phase === 'credential-retry') {
+        const timers = vi.spyOn(globalThis, 'setTimeout');
+        previous.sendToAgent.mockImplementation(async () =>
+          hostSendFailure('CREDENTIAL_SWITCH_BUSY', 'busy', { busySessionIds: ['blocker'] }),
+        );
+        previous.coordinator.enqueue(previousSid, makeItem('previous-message', 'previous'));
+        await flush();
+        expect(latestProjection(previous.projections).credentialSwitchWait?.clientId).toBe(
+          'previous-message',
+        );
+        expect(timers).toHaveBeenCalledTimes(1);
+        // Keep a callback already admitted by the timer, even if teardown cancels its handle.
+        const retry = timers.mock.calls[0]![0] as () => void;
+        completePrevious = () => retry();
+      } else {
+        const preparing = deferred<void>();
+        previous.refreshAgentReferencesBeforeDispatch.mockImplementationOnce(async () => {
+          preparing.resolve();
+          await gate.promise;
+        });
+        previous.coordinator.enqueue(previousSid, makeItem('previous-message', 'previous'));
+        await preparing.promise;
+        expect(previous.sendToAgent).not.toHaveBeenCalled();
+        completePrevious = () => gate.resolve();
+      }
+
+      // Use the real file hooks: restoring vi.fn implementations alone leaves the old
+      // coordinator alive, with a default successful sender instead of its busy override.
+      cleanupHarnessesAfterTest();
+      vi.clearAllMocks();
+      vi.useFakeTimers();
+      const h = createHarness();
+      const sid = `current-fixture-${phase}`;
+      h.sendToAgent.mockImplementationOnce(async () => {
+        h.setRunning(true);
+        throw sessionRunningError();
+      });
+      h.coordinator.enqueue(sid, makeItem('current-message', 'current'));
+      await flush();
+      expect(h.sendToAgent).toHaveBeenCalledTimes(1);
+      expect(mocks.createMessage).not.toHaveBeenCalled();
+
+      completePrevious();
+      h.setRunning(false);
+      await vi.advanceTimersByTimeAsync(300);
+      await flush();
+
+      const writes = mocks.createMessage.mock.calls.map(([task, message]) => ({ task, message }));
+      expect(mocks.createMessage, JSON.stringify(writes)).toHaveBeenCalledTimes(1);
+      expect(mocks.createMessage.mock.calls[0]).toEqual([
+        sid,
+        expect.objectContaining({ clientId: 'current-message', role: 'user', content: 'current' }),
+        expect.anything(),
+      ]);
+      expect(previous.sendToAgent).not.toHaveBeenCalled();
+      expect(h.sendToAgent).toHaveBeenCalledTimes(2);
+      expect(h.sendToAgent.mock.calls[1]?.[1]).toEqual({ type: 'user', content: 'current' });
+      expect(latestProjection(h.projections).pendingQueue).toEqual([]);
+      expect(latestProjection(h.projections).error).toBeNull();
+      expect(latestProjection(h.projections).recovery).toBeNull();
+    },
+  );
 
   it('retries a restored queue head when SESSION_RUNNING clears without a done event', async () => {
     vi.useFakeTimers();

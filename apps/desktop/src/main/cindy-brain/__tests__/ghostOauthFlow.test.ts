@@ -484,44 +484,117 @@ describe('startGhostOauthFlow', () => {
   });
 
   it('钉死端口:第二单还在排队时第三单进场——前两单 CANCELLED,最后一单赢', async () => {
-    const neverOpen = vi.fn();
-    let secondDone: Promise<unknown> = Promise.resolve();
-    let thirdDone: Promise<unknown> = Promise.resolve();
-    const firstResult = await startGhostOauthFlow({
-      config: { ...BASE_CONFIG, pkce: false },
-      fetchImpl: vi.fn() as unknown as typeof fetch,
-      openExternal: (url) => {
-        const redirectUri = new URL(url).searchParams.get('redirect_uri');
-        if (!redirectUri) throw new Error('authorize URL 缺 redirect_uri');
-        const fixedPort = Number(new URL(redirectUri).port);
-        if (!fixedPort) throw new Error('redirect_uri 缺端口');
-
-        // 第一单已由系统分配并占住端口;第二单进场(排队等第一单收尾),
-        // 紧接着第三单进场顶掉排队中的第二单,两单都显式复用第一单的实际端口。
-        secondDone = startGhostOauthFlow({
-          config: { ...BASE_CONFIG, pkce: false, redirectPort: fixedPort },
-          fetchImpl: vi.fn() as unknown as typeof fetch,
-          openExternal: neverOpen,
+    // Keep failures actionable without printing authorize URLs, state, codes or
+    // token bundles. These observations never gate or reorder flow admission.
+    const trace: object[] = [];
+    const started = performance.now();
+    const record = (event: string, data: Record<string, string | number> = {}) => {
+      if (trace.length < 64) trace.push({ ms: Math.round(performance.now() - started), event, ...data });
+    };
+    const listeners = new WeakMap<http.Server, number>();
+    let listenerCount = 0;
+    const originalListen = http.Server.prototype.listen;
+    const originalClose = http.Server.prototype.close;
+    const listen = vi.spyOn(http.Server.prototype, 'listen').mockImplementation(function (this: http.Server, ...args) {
+      let id = listeners.get(this);
+      if (id === undefined) {
+        id = ++listenerCount;
+        listeners.set(this, id);
+        this.on('listening', () => {
+          const address = this.address();
+          record('listening', { id: id!, port: typeof address === 'object' && address ? address.port : 0 });
         });
-        thirdDone = startGhostOauthFlow({
-          config: { ...BASE_CONFIG, pkce: false, redirectPort: fixedPort },
-          fetchImpl: vi.fn(async () => jsonResponse({ access_token: 'at-third' })) as unknown as typeof fetch,
-          openExternal: (url3) => {
-            return browserRedirect(url3, (au) => ({
-              code: 'c-third',
-              state: au.searchParams.get('state') ?? '',
-            }));
-          },
+        this.on('error', (error: NodeJS.ErrnoException) => record('listen-error', { id: id!, code: error.code ?? error.name }));
+        this.on('close', () => record('close-complete', { id: id! }));
+        this.on('request', (_request, response) => {
+          record('callback-request', { id: id! });
+          response.once('finish', () => record('callback-finish', { id: id!, status: response.statusCode }));
         });
-      },
+      }
+      record('listen-call', { id, requestedPort: typeof args[0] === 'number' ? args[0] : -1 });
+      return originalListen.apply(this, args);
     });
-    const secondResult = await secondDone;
-    const thirdResult = await thirdDone;
-    expect(firstResult).toMatchObject({ ok: false, error: 'CANCELLED' });
-    expect(secondResult).toMatchObject({ ok: false, error: 'CANCELLED' });
-    expect(thirdResult).toMatchObject({ ok: true });
-    // 排队期即被顶掉的单不该拉起浏览器(不弹无主授权页)。
-    expect(neverOpen).not.toHaveBeenCalled();
+    const close = vi.spyOn(http.Server.prototype, 'close').mockImplementation(function (this: http.Server, ...args) {
+      record('close-call', { id: listeners.get(this) ?? -1 });
+      return originalClose.apply(this, args);
+    });
+    const neverOpen = vi.fn();
+    const pending: Promise<GhostOauthFlowResult>[] = [];
+    const observe = (flow: string, promise: Promise<GhostOauthFlowResult>) => {
+      const observed = promise.then(result => {
+        record('result', { flow, result: result.ok ? 'success' : result.error });
+        return result;
+      });
+      pending.push(observed);
+      return observed;
+    };
+    let secondDone: Promise<GhostOauthFlowResult> | undefined;
+    let thirdDone: Promise<GhostOauthFlowResult> | undefined;
+    try {
+      record('admit', { flow: 'first' });
+      const firstDone = observe('first', startGhostOauthFlow({
+        config: { ...BASE_CONFIG, pkce: false },
+        fetchImpl: vi.fn() as unknown as typeof fetch,
+        openExternal: (url) => {
+          record('browser', { flow: 'first' });
+          const redirectUri = new URL(url).searchParams.get('redirect_uri');
+          if (!redirectUri) throw new Error('authorize URL 缺 redirect_uri');
+          const fixedPort = Number(new URL(redirectUri).port);
+          if (!fixedPort) throw new Error('redirect_uri 缺端口');
+
+          // 第一单已由系统分配并占住端口;第二单进场(排队等第一单收尾),
+          // 紧接着第三单进场顶掉排队中的第二单,两单都显式复用第一单的实际端口。
+          record('admit', { flow: 'second' });
+          secondDone = observe('second', startGhostOauthFlow({
+            config: { ...BASE_CONFIG, pkce: false, redirectPort: fixedPort },
+            fetchImpl: vi.fn() as unknown as typeof fetch,
+            openExternal: neverOpen,
+          }));
+          record('admit', { flow: 'third' });
+          thirdDone = observe('third', startGhostOauthFlow({
+            config: { ...BASE_CONFIG, pkce: false, redirectPort: fixedPort },
+            fetchImpl: vi.fn(async () => {
+              record('token-exchange', { flow: 'third' });
+              return jsonResponse({ access_token: 'at-third' });
+            }) as unknown as typeof fetch,
+            openExternal: (url3) => {
+              record('browser', { flow: 'third' });
+              record('redirect-start');
+              return browserRedirect(url3, (au) => ({
+                code: 'c-third',
+                state: au.searchParams.get('state') ?? '',
+              })).then(() => { record('redirect-complete'); });
+            },
+          }));
+        },
+      }));
+      const firstResult = await firstDone;
+      const secondResult = await secondDone;
+      const thirdResult = await thirdDone;
+      const summary = (result: GhostOauthFlowResult | undefined) => {
+        if (!result) return { started: false };
+        if (result.ok) return { ok: true };
+        const detail = result.detail
+          ?.replace(/https?:\/\/[^\s]+/g, '[url]')
+          .replace(/\b(state|code|access_token|refresh_token|client_secret)=[^\s&]+/gi, '$1=[redacted]')
+          .slice(0, 300);
+        return { ok: false, error: result.error, detail };
+      };
+      const diagnostic = JSON.stringify({
+        first: summary(firstResult), second: summary(secondResult), third: summary(thirdResult),
+        secondBrowserCalls: neverOpen.mock.calls.length, trace,
+      });
+      expect(firstResult, diagnostic).toMatchObject({ ok: false, error: 'CANCELLED' });
+      expect(secondResult, diagnostic).toMatchObject({ ok: false, error: 'CANCELLED' });
+      expect(thirdResult, diagnostic).toMatchObject({ ok: true });
+      // 排队期即被顶掉的单不该拉起浏览器(不弹无主授权页)。
+      expect(neverOpen, diagnostic).not.toHaveBeenCalled();
+    } finally {
+      cancelActiveGhostOauthFlow();
+      await Promise.allSettled(pending);
+      close.mockRestore();
+      listen.mockRestore();
+    }
   });
 
   it('redirectPort 被外部占用:reclaimPort 回收成功后自动重试并完成授权', async () => {
