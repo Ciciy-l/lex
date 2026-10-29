@@ -22,7 +22,54 @@ package first when switching build identity.
 
 ## Current Source Verification Contract
 
-### Lex Android development client
+### Lex iOS and Android development clients
+
+On macOS, select the project's Node version with `fnm use`, install CocoaPods,
+and boot an available iPhone in Simulator. Use the Lex variant throughout:
+Xcode 27.1 exposes the simulator in Device Hub
+(`Xcode.app/Contents/Applications/DeviceHub.app`); `simctl` still manages the
+same devices.
+
+On a fresh checkout, create the ignored local endpoint file from its public
+template (from the repository root, without overwriting an existing config).
+Metro resolves this JSON import even when the selected region is Global:
+
+```bash
+cp -n config/endpoint.dev.json.example config/endpoint.dev.json
+```
+
+```bash
+pnpm mobile:sim:rebuild -- --lex --build-only
+pnpm mobile:sim:start -- --lex
+# Keep Metro open; in another terminal:
+pnpm mobile:sim:rebuild -- --lex
+pnpm mobile:sim:whoami -- --lex --udid <booted-simulator-uuid> --json
+```
+
+The iOS development app uses `io.github.ciciyl.lex`, the checkout's Desktop
+version, and disabled OTA updates. Rebuild preserves existing simulator app data.
+Lex builds include a single-scene lifecycle adapter: iOS 27 terminates apps
+linked with its SDK that still use the legacy application-owned window. This
+is a native change and requires a new binary; merging requires the repository's
+explicit cold-update approval. Existing Expo lifecycle/link handlers are retained.
+The shared config-plugin registration also changes the Android fingerprint,
+although its native mods only touch iOS. Review both platforms for the next
+native release; do not treat this as an iOS-only OTA change.
+This local loop covers native startup and local screens; Lex Server connections
+are not yet available on iOS. Pure JS changes use Metro; restart it after source
+changes when verifying the source fingerprint with `whoami`.
+
+If another project owns 8081, choose a free port explicitly. On macOS the same
+port can now be passed to rebuild: it verifies Metro ownership, installs on the
+selected device and launches with React Native's packager argument. No other
+project's process is stopped and no native rebuild is needed just to change ports.
+
+```bash
+pnpm mobile:sim:start -- --lex --port 18081 --localhost
+# In another terminal, after Metro is ready:
+pnpm mobile:sim:rebuild -- --lex --port 18081 --udid <booted-simulator-uuid>
+pnpm mobile:sim:whoami -- --lex --port 18081 --udid <booted-simulator-uuid> --json
+```
 
 On Windows, use the explicit Lex variant of the same official lifecycle:
 

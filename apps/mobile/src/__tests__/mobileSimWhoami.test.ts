@@ -276,6 +276,18 @@ describe('mobile:sim:whoami exact Simulator target', () => {
 });
 
 describe('mobile:sim:whoami bundle identity', () => {
+  it.each(['ios', 'android'])('resolves the Lex %s target with the same build environment', (platform) => {
+    const execFile = vi.fn((_command: string, _args: string[], _options: { env: Record<string, string> }) => JSON.stringify({
+      ios: { bundleIdentifier: 'io.github.ciciyl.lex' },
+      android: { package: 'io.github.ciciyl.lex' },
+    }));
+    expect(resolveMobileSimulatorBundleId('global', { lex: true, platform, execFile, env: {} }))
+      .toBe('io.github.ciciyl.lex');
+    const env = execFile.mock.calls[0][2].env;
+    expect(env.LEX_MOBILE_BUILD).toBe('1');
+    expect(env.CINDY_USE_LOCAL_REGION_CONFIG).toBeUndefined();
+  });
+
   it.each([
     ['cn', 'com.local.cindycn'],
     ['global', 'com.local.cindy'],

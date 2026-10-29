@@ -273,7 +273,9 @@ export function resolveMobileSimulatorBundleId(region, options = {}) {
         env: { ...opts.env, ...(invocation.env ?? {}) },
       });
     });
-  const buildEnv = mobileSimulatorBuildEnv(region, { lex: options.lex, platform: options.platform === 'android' ? 'win32' : options.platform });
+  // whoami names the target OS; the build helper names the development host OS.
+  const hostPlatform = { android: 'win32', ios: 'darwin' }[options.platform] ?? options.platform;
+  const buildEnv = mobileSimulatorBuildEnv(region, { lex: options.lex, platform: hostPlatform });
   let raw;
   try {
     raw = run(
