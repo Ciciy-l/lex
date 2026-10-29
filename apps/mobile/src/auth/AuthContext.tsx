@@ -2954,8 +2954,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             },
           );
         }
+        // Lex is one app for both Cindy realms. Saved credentials already select
+        // their own validated endpoints above; only region-specific builds bind
+        // personal accounts to the build's default realm.
         if (
-          pair.membership.kind === 'personal' &&
+          !IS_LEX_MOBILE && pair.membership.kind === 'personal' &&
           (realm === 'cn' || realm === 'global') && realm !== BUILD_AUTH_REGION
         ) {
           throw authCodeError('REGION_MISMATCH');
