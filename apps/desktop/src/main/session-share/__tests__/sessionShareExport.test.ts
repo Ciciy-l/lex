@@ -1,3 +1,4 @@
+import type { SessionShareSource, SessionRow, MessageRow } from '../sessionShareExport';
 /**
  * 导出编排集成测试:mock DB / bridge / 媒体 store,用 temp projectsRoot 放真实
  * jsonl,走完整 exportSessionShare → openPayload → JSZip 解包验证内容。
@@ -171,6 +172,30 @@ async function unzipOf(filePath: string, password?: string): Promise<JSZip> {
 }
 
 describe('exportSessionShare', () => {
+  it('uses an injected source for every layer, preserving archived metadata and staged Pi identities', async () => {
+    const originalPi = '/source/pi-agent-home/sessions/original.jsonl';
+    const staged = path.join(tmpRoot, 'frozen-pi.jsonl');
+    await fsp.writeFile(staged, '{"type":"session","id":"pi-session"}\n');
+    const row = { ...baseSession(), id: 'external', agentKind: 'pi', sdkSessionId: originalPi, status: 'archived' } as unknown as SessionRow;
+    const messages = [{ ...baseMessages()[1], role: 'agent_switch', content: JSON.stringify({ toSdkSessionId: originalPi }), agentMeta: JSON.stringify({ sdkSessionId: originalPi, nativeForkAnchor: { sdkSessionId: originalPi } }) }] as unknown as MessageRow[];
+    const source: SessionShareSource = {
+      readSession: async () => row, readMessages: async () => messages, readWorkers: async () => null,
+      collectNative: async (session, messages, zipPrefix) => ({ session, messages, zipPrefix, sdkSessionIds: [], activeSdkSessionId: null, candidates: [{ sdkSessionId: originalPi, absPath: staged, zipPath: '', bytes: (await fsp.stat(staged)).size }], refs: [], codexState: null }),
+      resolveMedia: async () => null, mediaRoots: [tmpRoot], assertStillValid: () => undefined,
+    };
+    const target = path.join(tmpRoot, 'external.cshare');
+    const outcome = await exportSessionShare({ sessionId: 'external', targetPath: target, source, migration: true, externalTranscripts: { dir: tmpRoot, minBytes: 0 } });
+    expect(outcome.status).toBe('ok');
+    const zip = await unzipOf(target);
+    const manifest = validateManifest(JSON.parse(await zip.file('manifest.json')!.async('string')));
+    expect(manifest.activeSdkSessionId).toMatch(/^pi-/);
+    const snapshot = JSON.parse(await zip.file('session.json')!.async('string'));
+    expect(snapshot.status).toBe('archived'); expect(snapshot.migrationSourceId).toBe('external');
+    const content = await zip.file('messages.jsonl')!.async('string');
+    expect(content).not.toContain(originalPi); expect(content).toContain(manifest.activeSdkSessionId!);
+    expect(getActiveTeamByLeadMock).not.toHaveBeenCalled(); expect(dumpCodexThreadStateRowsMock).not.toHaveBeenCalled();
+  });
+
   beforeEach(async () => {
     sessionRowRef.row = baseSession();
     messagesRef.rows = baseMessages();

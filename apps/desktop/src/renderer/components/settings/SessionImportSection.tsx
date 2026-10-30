@@ -8,8 +8,10 @@ import { emitRefresh } from '@/lib/sessionsBus';
 import { Spinner } from '@/components/ui/spinner';
 import { formatSidebarTime, formatSidebarTimeAbsolute } from '@/features/cc-agent/lib/formatSidebarTime';
 import { SessionShareImportWizard } from './SessionShareImportWizard';
+import { CindyImportReview, CindyImportSourcePicker, useCindyImport } from './CindyImportPanel';
+import { Button } from '@/components/ui/button';
 
-type ImportSource = 'codex' | 'claude';
+type ImportSource = 'codex' | 'claude' | 'cindy';
 type SourceFilter = 'all' | ImportSource;
 type PlacementFilter = 'all' | 'project' | 'dialogue';
 
@@ -24,6 +26,8 @@ interface ImportCandidate {
   workspaceKind: 'project' | 'dialogue';
   sidebarBucket: 'project' | 'dialogue';
   projectDir: string | null;
+  imported?: boolean;
+  engine?: string;
 }
 
 interface ScanResult {
@@ -56,20 +60,33 @@ export function SessionImportSection() {
   const [scanning, setScanning] = useState(false);
   const [importing, setImporting] = useState(false);
   const [shareWizardOpen, setShareWizardOpen] = useState(false);
+  const cindy = useCindyImport();
+  const [pendingNative, setPendingNative] = useState<{ source: 'codex' | 'claude'; id: string }[]>([]);
+  const submitting = useRef(false);
+  const mounted = useRef(true);
   const initialScanStartedRef = useRef(false);
+  const busy = scanning || importing || cindy.busy;
+  const reviewing = !!cindy.preview;
+  const showCindy = sourceFilter === 'all' || sourceFilter === 'cindy';
+
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => {
+    setSelected((old) => new Set([...old].filter((key) => !key.startsWith('cindy:'))));
+  }, [cindy.sourceId, cindy.scan?.scanId]);
 
   const runScan = useCallback(async (options?: { force?: boolean }) => {
     setScanning(true);
     try {
       const result = await window.electronAPI.localDb.sessionImport.scan(options);
+      if (!mounted.current) return;
       cachedSessionImportScan = result;
       setScan(result);
-      setSelected(new Set());
+      setSelected((old) => new Set([...old].filter((key) => key.startsWith('cindy:'))));
       setExpanded(new Set());
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t('settings.sessionImport.toast.scanFailed'));
     } finally {
-      setScanning(false);
+      if (mounted.current) setScanning(false);
     }
   }, [t]);
 
@@ -79,32 +96,42 @@ export function SessionImportSection() {
     void runScan();
   }, [runScan]);
 
+  const candidates = useMemo<ImportCandidate[]>(() => [
+    ...(scan?.candidates ?? []),
+    ...(cindy.scan?.candidates ?? []).map((item): ImportCandidate => ({
+      key: `cindy:${item.id}`, source: 'cindy', id: item.id, title: item.title,
+      cwd: item.workingDir ?? '', updatedAt: new Date(item.updatedAt).toISOString(),
+      archived: item.archived, workspaceKind: item.workspaceKind, sidebarBucket: item.workspaceKind,
+      projectDir: item.workspaceKind === 'project' ? item.workingDir : null,
+      imported: item.imported, engine: { cc: 'Claude Code', codex: 'Codex', pi: 'Pi', omp: 'OMP' }[item.agentKind],
+    })),
+  ], [scan, cindy.scan]);
   const visibleCandidates = useMemo(() => {
-    if (!scan) return [];
-    return scan.candidates.filter((item) => {
+    return candidates.filter((item) => {
       const sourceMatches = sourceFilter === 'all' || item.source === sourceFilter;
       const placementMatches = placementFilter === 'all' || item.sidebarBucket === placementFilter;
       return sourceMatches && placementMatches;
     });
-  }, [placementFilter, scan, sourceFilter]);
+  }, [placementFilter, candidates, sourceFilter]);
+  const selectableCandidates = visibleCandidates.filter((item) => !item.imported);
 
   const listItems = useMemo(() => buildImportListItems(visibleCandidates), [visibleCandidates]);
 
   const selectedItems = useMemo(() => {
-    if (!scan) return [];
-    return scan.candidates
-      .filter((item) => selected.has(item.key))
+    return candidates
+      .filter((item) => !item.imported && selected.has(item.key))
       .map((item) => ({ source: item.source, id: item.id }));
-  }, [scan, selected]);
+  }, [candidates, selected]);
+  const cindySelectedCount = selectedItems.filter((item) => item.source === 'cindy').length;
 
   const toggleItem = useCallback((key: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
-      else next.add(key);
+      else if (!key.startsWith('cindy:') || cindySelectedCount < 100) next.add(key);
       return next;
     });
-  }, []);
+  }, [cindySelectedCount]);
 
   const toggleGroup = useCallback((key: string) => {
     setExpanded((prev) => {
@@ -118,17 +145,22 @@ export function SessionImportSection() {
   const toggleGroupSelection = useCallback((items: ImportCandidate[]) => {
     setSelected((prev) => {
       const next = new Set(prev);
-      const allSelected = items.every((item) => next.has(item.key));
+      items = items.filter((item) => !item.imported);
+      let cindyCount = candidates.filter((item) => item.source === 'cindy' && !item.imported && next.has(item.key)).length;
+      const allSelected = items.some((item) => next.has(item.key)) && !items.some((item) => !next.has(item.key) && (item.source !== 'cindy' || cindyCount < 100));
       for (const item of items) {
         if (allSelected) next.delete(item.key);
-        else next.add(item.key);
+        else if (!next.has(item.key) && (item.source !== 'cindy' || cindyCount < 100)) {
+          next.add(item.key);
+          if (item.source === 'cindy') cindyCount++;
+        }
       }
       return next;
     });
-  }, []);
+  }, [candidates]);
 
   const visibleSelectedCount = useMemo(
-    () => visibleCandidates.filter((item) => selected.has(item.key)).length,
+    () => visibleCandidates.filter((item) => !item.imported && selected.has(item.key)).length,
     [selected, visibleCandidates],
   );
   const hiddenSelectedCount = selectedItems.length - visibleSelectedCount;
@@ -136,35 +168,62 @@ export function SessionImportSection() {
   const toggleAllVisible = useCallback(() => {
     setSelected((prev) => {
       const next = new Set(prev);
-      const allSelected =
-        visibleCandidates.length > 0 && visibleCandidates.every((item) => next.has(item.key));
+      let cindyCount = candidates.filter((item) => item.source === 'cindy' && !item.imported && next.has(item.key)).length;
+      const allSelected = selectableCandidates.some((item) => next.has(item.key)) && !selectableCandidates.some((item) => !next.has(item.key) && (item.source !== 'cindy' || cindyCount < 100));
       for (const item of visibleCandidates) {
+        if (item.imported) continue;
         if (allSelected) next.delete(item.key);
-        else next.add(item.key);
+        else if (!next.has(item.key) && (item.source !== 'cindy' || cindyCount < 100)) {
+          next.add(item.key);
+          if (item.source === 'cindy') cindyCount++;
+        }
       }
       return next;
     });
-  }, [visibleCandidates]);
+  }, [visibleCandidates, selectableCandidates, candidates]);
 
-  const importSelected = useCallback(async () => {
-    if (selectedItems.length === 0) return;
+  const importNative = async (items: { source: 'codex' | 'claude'; id: string }[]) => {
+    if (!items.length || !mounted.current) return;
+    const result = await window.electronAPI.localDb.sessionImport.importSelected(items);
+    if (!mounted.current) return;
+    toast.success(t('settings.sessionImport.toast.imported', { inserted: result.inserted, updated: result.updated }));
+    emitRefresh();
+    await runScan({ force: true });
+  };
+  const importSelected = async () => {
+    if (selectedItems.length === 0 || submitting.current || busy) return;
+    const native = selectedItems.filter((item): item is { source: 'codex' | 'claude'; id: string } => item.source !== 'cindy');
+    const cindyIds = selectedItems.filter((item) => item.source === 'cindy').map((item) => item.id);
+    submitting.current = true;
     setImporting(true);
     try {
-      const result = await window.electronAPI.localDb.sessionImport.importSelected(selectedItems);
-      toast.success(
-        t('settings.sessionImport.toast.imported', {
-          inserted: result.inserted,
-          updated: result.updated,
-        }),
-      );
-      emitRefresh();
-      await runScan({ force: true });
+      if (cindyIds.length) { setPendingNative(native); await cindy.prepare(cindyIds); }
+      else await importNative(native);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t('settings.sessionImport.toast.importFailed'));
     } finally {
-      setImporting(false);
+      submitting.current = false;
+      if (mounted.current) setImporting(false);
     }
-  }, [runScan, selectedItems, t]);
+  };
+  const commitReviewed = async () => {
+    if (submitting.current || busy) return;
+    submitting.current = true; setImporting(true);
+    try {
+      const results = await cindy.commit();
+      if (results && !results.some((item) => item.status === 'canceled' || item.code === 'ownerChanged')) await importNative(pendingNative);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('settings.sessionImport.toast.importFailed'));
+    } finally {
+      submitting.current = false;
+      if (mounted.current) setImporting(false);
+    }
+  };
+  const scanVisibleSources = async () => {
+    if (busy || reviewing) return;
+    if (sourceFilter !== 'cindy') await runScan({ force: true });
+    if (mounted.current && showCindy && cindy.sourceId && !cindy.needsRestart) await cindy.runScan();
+  };
 
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-col gap-4">
@@ -177,34 +236,24 @@ export function SessionImportSection() {
             {t('settings.sessionImport.description')}
           </p>
         </div>
-        <div className="flex shrink-0 items-center justify-end gap-2 select-none">
-          <button
-            type="button"
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 select-none">
+          <Button
+            variant="secondary"
+            disabled={busy || reviewing}
             onClick={() => setShareWizardOpen(true)}
-            className={cn(
-              'inline-flex h-10 shrink-0 items-center gap-2 rounded-full px-4 text-13 font-medium active:scale-[0.98]',
-              'border border-[var(--settings-btn-secondary-border)]',
-              'bg-[var(--settings-btn-secondary-bg)] text-[var(--settings-btn-secondary-text)]',
-              'transition-colors hover:bg-[var(--settings-menu-bg-hover)]',
-            )}
+            className="gap-2"
           >
             <FileUp size={15} />
             {t('sessionShare.import.entryButton')}
-          </button>
-          <button
-            type="button"
-            onClick={() => runScan({ force: true })}
-            disabled={scanning}
-            className={cn(
-              'inline-flex h-10 shrink-0 items-center gap-2 rounded-full px-5 text-13 font-medium active:scale-[0.98]',
-              'border border-[var(--settings-btn-primary-border)]',
-              'bg-[var(--settings-btn-primary-bg)] text-[var(--settings-btn-primary-text)]',
-              'transition-colors hover:bg-[var(--settings-btn-primary-hover-bg)] disabled:cursor-not-allowed disabled:opacity-60',
-            )}
+          </Button>
+          <Button
+            onClick={scanVisibleSources}
+            disabled={busy || reviewing || (sourceFilter === 'cindy' && (!cindy.sourceId || cindy.needsRestart))}
+            className="gap-2"
           >
             <Spinner icon={RefreshCw} size={15} spinning={scanning} />
             {scanning ? t('settings.sessionImport.scanning') : t('settings.sessionImport.scan')}
-          </button>
+          </Button>
         </div>
       </header>
 
@@ -214,11 +263,23 @@ export function SessionImportSection() {
 
       <div
         className={cn(
-          'flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl',
+          'flex min-h-0 flex-1 flex-col overflow-y-auto rounded-xl',
           'border border-[var(--settings-theme-card-border)] bg-[var(--settings-theme-card-bg)]',
         )}
       >
-        {!scan ? (
+        <div className="flex shrink-0 flex-col gap-3 border-b border-[var(--settings-input-border)] p-4">
+          <FilterBar
+            sourceValue={sourceFilter}
+            placementValue={placementFilter}
+            onSourceChange={setSourceFilter}
+            onPlacementChange={setPlacementFilter}
+            disabled={busy || reviewing}
+          />
+          {showCindy && !reviewing && <CindyImportSourcePicker controller={cindy} disabled={busy} />}
+          {cindy.error && <p role="alert" className="text-12 text-[var(--text-secondary)]">{t(`settings.cindyImport.errors.${cindy.error}`, { defaultValue: t('settings.cindyImport.errors.importFailed') })}</p>}
+          {cindy.busy && <div className="flex flex-wrap items-center gap-2 text-12 text-[var(--text-secondary)]"><span role="status">{t('settings.cindyImport.preparing')}</span><Button variant="secondary" onClick={cindy.cancel}>{t('settings.cindyImport.cancel')}</Button></div>}
+        </div>
+        {reviewing ? <CindyImportReview controller={cindy} disabled={busy} nativeCount={pendingNative.length} onCommit={commitReviewed} /> : !scan && !cindy.scan ? (
           <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
             <Download size={24} className="text-[var(--settings-section-title)] opacity-70" />
             <div className="flex max-w-[420px] flex-col gap-1">
@@ -231,15 +292,9 @@ export function SessionImportSection() {
             </div>
           </div>
         ) : (
-          <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex min-h-[440px] flex-1 flex-col">
             <div className="flex shrink-0 flex-col gap-3 border-b border-[var(--settings-input-border)] p-4">
-              <ScanSummary scan={scan} />
-              <FilterBar
-                sourceValue={sourceFilter}
-                placementValue={placementFilter}
-                onSourceChange={setSourceFilter}
-                onPlacementChange={setPlacementFilter}
-              />
+              <ScanSummary candidates={candidates.filter((item) => !item.imported)} skipped={(scan ? scan.rejected.codex + scan.rejected.claude + scan.rejected.existing : 0) + (cindy.scan?.excluded ?? 0) + candidates.filter((item) => item.imported).length} />
             </div>
 
             <div className="flex min-h-0 flex-1 flex-col">
@@ -247,18 +302,19 @@ export function SessionImportSection() {
                 <label className="flex shrink-0 cursor-pointer items-center gap-2 border-b border-[var(--settings-input-border)] px-4 py-2.5 hover:bg-[var(--settings-menu-bg-hover)] select-none">
                   <input
                     type="checkbox"
-                    checked={visibleCandidates.length > 0 && visibleSelectedCount === visibleCandidates.length}
+                    disabled={busy || selectableCandidates.length === 0}
+                    checked={selectableCandidates.length > 0 && visibleSelectedCount === selectableCandidates.length}
                     ref={(node) => {
                       if (node) {
                         node.indeterminate =
-                          visibleSelectedCount > 0 && visibleSelectedCount < visibleCandidates.length;
+                          visibleSelectedCount > 0 && visibleSelectedCount < selectableCandidates.length;
                       }
                     }}
                     onChange={toggleAllVisible}
                     className="h-4 w-4 accent-[var(--settings-menu-text-selected)]"
                   />
                   <span className="text-12 font-medium text-[var(--settings-section-sublabel)]">
-                    {t('settings.sessionImport.selectAll', { count: visibleCandidates.length })}
+                    {t('settings.sessionImport.selectAll', { count: selectableCandidates.length })}
                   </span>
                 </label>
               )}
@@ -279,6 +335,7 @@ export function SessionImportSection() {
                           <SessionImportRow
                             item={item}
                             checked={selected.has(item.key)}
+                            disabled={busy || item.imported || (item.source === 'cindy' && !selected.has(item.key) && cindySelectedCount >= 100)}
                             onToggle={() => toggleItem(item.key)}
                           />
                         </div>
@@ -287,16 +344,18 @@ export function SessionImportSection() {
 
                     const group = listItem;
                     const isOpen = expanded.has(group.key);
-                    const selectedCount = group.items.filter((item) => selected.has(item.key)).length;
+                    const selectable = group.items.filter((item) => !item.imported);
+                    const selectedCount = selectable.filter((item) => selected.has(item.key)).length;
                     const latestUpdatedAt = group.items[0]?.updatedAt;
                     return (
                       <div key={group.key} className="border-b border-[var(--settings-input-border)] last:border-b-0">
                         <div className="grid min-h-14 grid-cols-[16px_20px_minmax(0,1fr)_auto] items-center gap-x-2 px-4 py-2">
                           <input
                             type="checkbox"
-                            checked={selectedCount === group.items.length}
+                            disabled={busy || selectable.length === 0}
+                            checked={selectable.length > 0 && selectedCount === selectable.length}
                             ref={(node) => {
-                              if (node) node.indeterminate = selectedCount > 0 && selectedCount < group.items.length;
+                              if (node) node.indeterminate = selectedCount > 0 && selectedCount < selectable.length;
                             }}
                             onChange={() => toggleGroupSelection(group.items)}
                             className="h-4 w-4 accent-[var(--settings-menu-text-selected)]"
@@ -343,6 +402,7 @@ export function SessionImportSection() {
                                 key={item.key}
                                 item={item}
                                 checked={selected.has(item.key)}
+                                disabled={busy || item.imported || (item.source === 'cindy' && !selected.has(item.key) && cindySelectedCount >= 100)}
                                 onToggle={() => toggleItem(item.key)}
                                 isProjectChild
                               />
@@ -356,27 +416,22 @@ export function SessionImportSection() {
               </div>
             </div>
 
-            <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-[var(--settings-input-border)] px-4 py-3 select-none">
+            <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[var(--settings-input-border)] px-4 py-3 select-none">
               <p className="text-12 text-[var(--settings-section-desc)]">
                 {t('settings.sessionImport.selected', { count: selectedItems.length })}
                 {hiddenSelectedCount > 0 && (
                   <span> {t('settings.sessionImport.selectedOutsideFilter', { count: hiddenSelectedCount })}</span>
                 )}
               </p>
-              <button
-                type="button"
+              <Button
                 onClick={importSelected}
-                disabled={selectedItems.length === 0 || importing}
-                className={cn(
-                  'inline-flex h-10 items-center gap-2 rounded-full px-5 text-13 font-medium active:scale-[0.98]',
-                  'border border-[var(--settings-btn-primary-border)]',
-                  'bg-[var(--settings-btn-primary-bg)] text-[var(--settings-btn-primary-text)]',
-                  'transition-colors hover:bg-[var(--settings-btn-primary-hover-bg)] disabled:cursor-not-allowed disabled:opacity-60',
-                )}
+                disabled={selectedItems.length === 0 || busy || (cindySelectedCount > 0 && cindy.needsRestart)}
+                loading={importing}
+                className="gap-2"
               >
                 <Check size={15} />
                 {importing ? t('settings.sessionImport.importing') : t('settings.sessionImport.importSelected')}
-              </button>
+              </Button>
             </footer>
           </div>
         )}
@@ -419,15 +474,15 @@ function buildImportListItems(candidates: ImportCandidate[]): ImportListItem[] {
   return listItems.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
 }
 
-function ScanSummary({ scan }: { scan: ScanResult }) {
+function ScanSummary({ candidates, skipped }: { candidates: ImportCandidate[]; skipped: number }) {
   const { t } = useTranslation();
-  const projectCount = scan.candidates.filter((item) => item.sidebarBucket === 'project').length;
-  const dialogueCount = scan.candidates.length - projectCount;
+  const projectCount = candidates.filter((item) => item.sidebarBucket === 'project').length;
+  const dialogueCount = candidates.length - projectCount;
   return (
     <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
       <SummaryCell
         label={t('settings.sessionImport.summary.total')}
-        value={scan.candidates.length}
+        value={candidates.length}
         hint={t('settings.sessionImport.summary.totalHint')}
       />
       <SummaryCell
@@ -442,7 +497,7 @@ function ScanSummary({ scan }: { scan: ScanResult }) {
       />
       <SummaryCell
         label={t('settings.sessionImport.summary.filtered')}
-        value={scan.rejected.codex + scan.rejected.claude + scan.rejected.existing}
+        value={skipped}
         hint={t('settings.sessionImport.summary.filteredHint')}
       />
     </div>
@@ -468,23 +523,26 @@ function FilterBar({
   placementValue,
   onSourceChange,
   onPlacementChange,
+  disabled,
 }: {
   sourceValue: SourceFilter;
   placementValue: PlacementFilter;
   onSourceChange: (value: SourceFilter) => void;
   onPlacementChange: (value: PlacementFilter) => void;
+  disabled: boolean;
 }) {
   const { t } = useTranslation();
-  const sourceFilters: SourceFilter[] = ['all', 'codex', 'claude'];
+  const sourceFilters: SourceFilter[] = ['all', 'codex', 'claude', 'cindy'];
   const placementFilters: PlacementFilter[] = ['all', 'project', 'dialogue'];
   return (
-    <div className="grid gap-2 xl:grid-cols-2">
+    <div className="flex flex-col gap-2">
       <SegmentedFilter
         label={t('settings.sessionImport.filters.source')}
         values={sourceFilters}
         value={sourceValue}
         labelFor={(filter) => t(`settings.sessionImport.filters.${filter}`)}
         onChange={onSourceChange}
+        disabled={disabled}
       />
       <SegmentedFilter
         label={t('settings.sessionImport.filters.placement')}
@@ -492,6 +550,7 @@ function FilterBar({
         value={placementValue}
         labelFor={(filter) => t(`settings.sessionImport.filters.${filter}`)}
         onChange={onPlacementChange}
+        disabled={disabled}
       />
     </div>
   );
@@ -503,32 +562,36 @@ function SegmentedFilter<T extends string>({
   value,
   labelFor,
   onChange,
+  disabled,
 }: {
   label: string;
   values: readonly T[];
   value: T;
   labelFor: (value: T) => string;
   onChange: (value: T) => void;
+  disabled: boolean;
 }) {
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-2 select-none">
+    <div role="group" aria-label={label} className="flex min-w-0 flex-wrap items-center gap-2 select-none">
       <span className="w-[56px] text-11 font-medium text-[var(--settings-section-desc)]">
         {label}
       </span>
       {values.map((filter) => (
-        <button
+        <Button
           key={filter}
-          type="button"
+          variant="secondary"
+          disabled={disabled}
+          aria-pressed={value === filter}
           onClick={() => onChange(filter)}
           className={cn(
-            'h-8 rounded-full border px-3 text-12 font-medium transition-colors active:scale-[0.98]',
+            'px-3 text-12',
             value === filter
               ? 'border-[var(--settings-menu-border-selected)] bg-[var(--settings-menu-bg-selected)] text-[var(--settings-menu-text-selected)]'
               : 'border-[var(--settings-input-border)] text-[var(--settings-section-sublabel)] hover:bg-[var(--settings-menu-bg-hover)]',
           )}
         >
           {labelFor(filter)}
-        </button>
+        </Button>
       ))}
     </div>
   );
@@ -539,11 +602,13 @@ function SessionImportRow({
   checked,
   onToggle,
   isProjectChild = false,
+  disabled,
 }: {
   item: ImportCandidate;
   checked: boolean;
   onToggle: () => void;
   isProjectChild?: boolean;
+  disabled?: boolean;
 }) {
   const { t } = useTranslation();
   return (
@@ -555,20 +620,22 @@ function SessionImportRow({
     >
       <input
         type="checkbox"
-        checked={checked}
+        checked={!item.imported && checked}
+        disabled={disabled}
         onChange={onToggle}
         className="mt-1 h-4 w-4 shrink-0 accent-[var(--settings-menu-text-selected)]"
       />
       <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <span className="shrink-0 whitespace-nowrap rounded-full border border-[var(--settings-input-border)] px-1.5 py-0.5 text-10 uppercase text-[var(--settings-section-desc)]">
-            {item.source === 'codex' ? 'Codex' : 'Claude'}
+            {{ codex: 'Codex', claude: 'Claude Code', cindy: 'Cindy' }[item.source]}
           </span>
           {item.archived && (
             <span className="shrink-0 whitespace-nowrap rounded-full border border-[var(--settings-input-border)] px-1.5 py-0.5 text-10 text-[var(--settings-section-desc)]">
               {t('settings.sessionImport.archived')}
             </span>
           )}
+          {item.imported && <span className="shrink-0 text-11 text-[var(--settings-section-desc)]">{t('settings.cindyImport.alreadyImported')}</span>}
           {item.workspaceKind === 'dialogue' && (
             <span className="shrink-0 whitespace-nowrap rounded-full border border-[var(--settings-input-border)] px-1.5 py-0.5 text-10 text-[var(--settings-section-desc)]">
               {t('settings.sessionImport.filters.dialogue')}
@@ -576,13 +643,13 @@ function SessionImportRow({
           )}
           <p
             title={item.title || undefined}
-            className="min-w-0 flex-1 truncate text-13 font-medium text-[var(--settings-section-sublabel)]"
+            className="min-w-0 flex-1 truncate text-13 font-medium text-[var(--settings-section-sublabel)] basis-full sm:basis-0"
           >
             {item.title || t('settings.sessionImport.untitled')}
           </p>
         </div>
         <p title={item.cwd || undefined} className="mt-1 truncate text-11 text-[var(--settings-section-desc)]">
-          {item.cwd}
+          {item.engine && `${item.engine} · `}{item.cwd || t('settings.sessionImport.noWorkingDir')}
         </p>
       </div>
       <time

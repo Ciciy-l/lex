@@ -139,12 +139,14 @@ it.each([320, 480, 800])('preserves the model slot across hydration (width=%s)',
   const slot = view.container.querySelector('[data-session-model-slot]') as HTMLElement;
   expect(slot).not.toBeNull();
   const geometry = slot.className;
+  expect(geometry).toContain('w-[148px]');
   expect(slot.textContent).toBe('');
   expect(slot.querySelector('button, [tabindex]')).toBeNull();
   expect(screen.queryByTestId('model-selector')).toBeNull();
   view.rerender(<ChatInput {...inputProps} initialModel="gpt-6-astra" />);
   expect(view.container.querySelector('[data-session-model-slot]')).toBe(slot);
-  expect(slot.className).toBe(geometry);
+  expect(slot.className).toContain('min-w-0 shrink');
+  expect(slot.className).not.toMatch(/(?:^| )w-\[/);
   expect(slot.contains(screen.getByTestId('model-selector'))).toBe(true);
   view.rerender(<ChatInput {...inputProps} />);
   expect(view.container.querySelector('[data-session-model-slot]')).toBe(slot);

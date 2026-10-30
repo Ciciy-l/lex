@@ -44,7 +44,7 @@ describe('SessionImportSection initial scan', () => {
     expect(source).toContain('grid min-h-14 grid-cols-[16px_20px_minmax(0,1fr)_auto] items-center gap-x-2 px-4 py-2');
     expect(source).toContain('className="flex h-6 w-5 items-center justify-center rounded-full');
     expect(source).toMatch(
-      /checked=\{selectedCount === group\.items\.length\}[\s\S]*onClick=\{\(\) => toggleGroup\(group\.key\)\}/,
+      /checked=\{selectable.length > 0 && selectedCount === selectable.length\}[\s\S]*onClick=\{\(\) => toggleGroup\(group\.key\)\}/,
     );
     expect(source).toMatch(
       /<SessionImportRow[\s\S]*checked=\{selected\.has\(item\.key\)\}[\s\S]*onToggle=\{\(\) => toggleItem\(item\.key\)\}[\s\S]*isProjectChild/,
@@ -64,10 +64,10 @@ describe('SessionImportSection initial scan', () => {
       /const toggleAllVisible = useCallback\(\(\) => \{[\s\S]*for \(const item of visibleCandidates\)/,
     );
     expect(source).toContain(
-      "{t('settings.sessionImport.selectAll', { count: visibleCandidates.length })}",
+      "{t('settings.sessionImport.selectAll', { count: selectableCandidates.length })}",
     );
     expect(source).toMatch(
-      /checked=\{visibleCandidates\.length > 0 && visibleSelectedCount === visibleCandidates\.length\}/,
+      /checked=\{selectableCandidates\.length > 0 && visibleSelectedCount === selectableCandidates\.length\}/,
     );
   });
 

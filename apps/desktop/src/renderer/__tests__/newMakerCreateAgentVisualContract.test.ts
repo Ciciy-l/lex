@@ -288,7 +288,10 @@ describe('NewMakerDraftRoute CREATE AGENT visual contract', () => {
     expect(modelSelectorSource).toContain('border border-transparent bg-transparent');
     expect(modelSelectorSource).toContain("'h-[30px] max-w-full shrink overflow-hidden px-2.5'");
     expect(modelSelectorSource).toContain("? 'w-[64px] min-w-[64px]'");
-    expect(modelSelectorSource).toContain("? 'w-[148px] min-w-[72px]'");
+    // Compact labels use available space, while the ultra trigger stays icon-sized.
+    expect(modelSelectorSource).toContain(": 'min-w-[72px]'");
+    expect(modelSelectorSource).not.toContain('w-[148px]');
+    expect(modelSelectorSource).not.toContain('max-w-[108px]');
     expect(modelSelectorSource).not.toContain('w-[206px] min-w-[160px] max-w-[206px] shrink');
     expect(modelSelectorSource).not.toContain('max-w-[180px] truncate');
 

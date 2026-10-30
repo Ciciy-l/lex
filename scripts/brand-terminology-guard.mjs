@@ -55,6 +55,20 @@ const LOCALE_HOST_BRAND_RE = /XDMaker|XD Maker|xdt-maker|\bLex\b/;
 const LOCALE_CINDY_RE = /\bCindy\b/;
 
 const LOCALE_CINDY_ALLOWED_KEY_PATHS = new Set([
+  // Cindy names the external import source; the destination still uses {{appName}}.
+  'settings.sessionImport.description',
+  'settings.sessionImport.filters.cindy',
+  'settings.cindyImport.entry',
+  'settings.cindyImport.title',
+  'settings.cindyImport.description',
+  'settings.cindyImport.quitFirst',
+  'settings.cindyImport.noSources',
+  'settings.cindyImport.chooseSource',
+  'settings.cindyImport.scanHint',
+  'settings.cindyImport.errors.sourceRunning',
+  'settings.cindyImport.errors.sourceUnreadable',
+  'settings.cindyImport.errors.sourceChanged',
+  'settings.cindyImport.errors.schemaUnsupported',
   // Shared-task authentication and service-region mismatch name the Cindy service.
   'sharedTask.login',
   'sharedTask.invitationDifferentServer',

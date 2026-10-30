@@ -1,3 +1,4 @@
+import { rewriteNativeMetadata } from './nativeSessionMetadata.pure';
 /**
  * 会话分享导入编排:inspect / unlock / commit / cancel 三段式 + draft registry。
  *
@@ -287,6 +288,18 @@ export interface CommitShareImportRuntimeScope {
     /** Transcript ref path → delivered file, for transcripts the exporter kept out of the zip. */
     externalTranscripts?: ReadonlyMap<string, string>;
   };
+  /** Independent local copy; never accepted from ordinary share IPC. */
+  localCopy?: {
+    sessionId: string;
+    workingDir: string;
+    workers?: Array<{ sourceSessionId: string; sessionId: string; workingDir: string }>;
+    agentPrefs?: Partial<Record<'cc' | 'codex' | 'pi' | 'omp', ShareImportDraftPrefs>>;
+    externalTranscripts?: ReadonlyMap<string, string>;
+    historyOnly: boolean;
+    receipt: { sourceKey: string; sourceSessionId: string; fidelity: string };
+    rewriteContent(content: string): string;
+    beforeCommit?(): Promise<void>;
+  };
   assertStillValid(): void;
   refCompensationScope: MediaRefCompensationScope;
   /** Persist cleanup intent before an overwrite transaction marks old sessions deleted. */
@@ -399,6 +412,8 @@ export async function commitShareImport(
   opts: CommitShareImportOptions,
   runtimeScope: CommitShareImportRuntimeScope,
 ): Promise<CommitShareImportInternalResult> {
+  const copyContext = runtimeScope.migration ?? runtimeScope.localCopy;
+  const historyOnly = runtimeScope.localCopy?.historyOnly === true;
   const dbClient = runtimeScope.dbClient;
   const mediaDb = dbClient.drizzle;
   const assertStillValid = runtimeScope.assertStillValid;
@@ -420,7 +435,7 @@ export async function commitShareImport(
   // ── 解析包内数据(仍属只读阶段) ──
   const sessionSnapshot = await guarded(() => readJsonEntry(zip, 'session.json'));
   const messages = await guarded(() => readMessagesJsonl(zip, 'messages.jsonl'));
-  if (messages.length === 0) throw codedError('SHARE_FILE_INVALID', 'bundle has no messages');
+  if (messages.length === 0 && !runtimeScope.localCopy) throw codedError('SHARE_FILE_INVALID', 'bundle has no messages');
   const mediaMap = await guarded(() => readMediaMap(zip));
 
   // 协同包:逐个读 Worker 的包内数据(Worker 允许 0 条消息——刚创建未派活)。
@@ -443,13 +458,13 @@ export async function commitShareImport(
     throw codedError('PRECONDITION_FAILED', 'Retired sessions cannot be imported');
   }
 
-  if (runtimeScope.migration) {
-    const workers = runtimeScope.migration.workers ?? [];
-    if (workers.length !== workerPlans.length || (runtimeScope.migration.workers !== undefined) !== !!manifest.orca)
+  if (copyContext) {
+    const workers = copyContext.workers ?? [];
+    if (workers.length !== workerPlans.length || (copyContext.workers !== undefined) !== !!manifest.orca)
       throw codedError('SHARE_IMPORT_FAILED', 'MIGRATION_TEAM_CHANGED');
     const matched = new Set<string>();
     for (const plan of workerPlans) {
-      if (!runtimeScope.migration.agentPrefs?.[plan.manifest.agentKind])
+      if (!copyContext.agentPrefs?.[plan.manifest.agentKind])
         throw codedError('SHARE_IMPORT_FAILED', 'MIGRATION_TARGET_MODEL_UNAVAILABLE');
       const member = workers.find(
         (worker) => worker.sourceSessionId === plan.snapshot.migrationSourceId,
@@ -466,12 +481,12 @@ export async function commitShareImport(
 
   // ── 前置校验 ──
   const draftPrefs = opts.draftPrefs ?? null;
-  assertOmpImportModelRequirements(manifest, workerPlans, draftPrefs);
+  assertOmpImportModelRequirements(manifest, copyContext?.agentPrefs?.omp?.model ? [] : workerPlans, draftPrefs);
   const now = Date.now();
-  const newId = runtimeScope.migration?.sessionId ?? randomUUID();
+  const newId = copyContext?.sessionId ?? randomUUID();
   let workingDir = '';
-  if (manifest.workspaceKind === 'project' || runtimeScope.migration) {
-    const dir = runtimeScope.migration?.workingDir ?? (typeof opts.workingDir === 'string' ? opts.workingDir.trim() : '');
+  if (manifest.workspaceKind === 'project' || copyContext) {
+    const dir = copyContext?.workingDir ?? (typeof opts.workingDir === 'string' ? opts.workingDir.trim() : '');
     if (!dir) throw codedError('INVALID_PARAMS', 'workingDir is required for project sessions');
     const stat = await guarded(() => fsp.stat(dir).catch(() => null));
     if (!stat?.isDirectory()) {
@@ -509,10 +524,10 @@ export async function commitShareImport(
     }
     return bundled;
   };
-  const originalBundledTranscripts = filterBundled(manifest.transcripts, 'transcripts');
-  const migratedContext = runtimeScope.migration
+  const originalBundledTranscripts = historyOnly ? [] : filterBundled(manifest.transcripts, 'transcripts');
+  const migratedContext = copyContext
     ? migrationNativeContext(
-        runtimeScope.migration.sessionId,
+        copyContext.sessionId,
         [manifest, ...workerPlans.map((plan) => plan.manifest)]
           .filter((member) => member.agentKind !== 'pi')
           .flatMap((member) => member.transcripts.map((t) => t.sdkSessionId)),
@@ -531,7 +546,7 @@ export async function commitShareImport(
       );
     }
     plan.bundledTranscripts = filterBundled(
-      plan.manifest.transcripts,
+      historyOnly ? [] : plan.manifest.transcripts,
       `orca.workers[${plan.manifest.index}].transcripts`,
     ).map((transcript) =>
       migratedContext && plan.manifest.agentKind !== 'pi'
@@ -540,7 +555,7 @@ export async function commitShareImport(
     );
   }
   const externalTranscripts: ReadonlyMap<string, string> =
-    runtimeScope.migration?.externalTranscripts ?? new Map();
+    (historyOnly ? undefined : copyContext?.externalTranscripts) ?? new Map();
   // A delivered file must stand for a transcript this package references.
   const referencedTranscriptPaths = new Set(
     [bundledTranscripts, ...workerPlans.map((plan) => plan.bundledTranscripts ?? [])]
@@ -571,7 +586,7 @@ export async function commitShareImport(
       if (transcriptSource(transcript.path)) {
         piTranscriptTargets.set(
           transcript.sdkSessionId,
-          path.join(piSessionsRoot, ...(runtimeScope.migration ? [runtimeScope.migration.sessionId] : []), transcript.sdkSessionId),
+          path.join(piSessionsRoot, ...(copyContext ? [copyContext.sessionId] : []), transcript.sdkSessionId),
         );
       }
     }
@@ -584,7 +599,7 @@ export async function commitShareImport(
     agentKind: XdtshareAgentKind,
     portableId: string | null,
   ): string | null =>
-    agentKind === 'omp'
+    historyOnly || agentKind === 'omp'
       ? null
       : agentKind === 'pi'
       ? portableId
@@ -1008,6 +1023,15 @@ export async function commitShareImport(
     // 3. DB 最后一步(tx 原子):message id 重新生成防撞库,content 过媒体重写;
     //    协同包把 Worker 会话 + 关系图放进同一事务。
     const rewriteRules = urlMap.size > 0 ? { urlMap } : {};
+    const rewriteImportedContent = (content: string, role: string, agentKind: XdtshareAgentKind): string => {
+      const native = role === 'agent_switch'
+        ? historyOnly ? rewriteOmpAgentMetaForImport(content) ?? content
+          : agentKind === 'pi' ? rewriteNativeMetadata(content, piTranscriptTargets) ?? content
+          : migratedContext?.metadata(content) ?? content
+        : content;
+      const media = rewriteMediaUrls(native, rewriteRules);
+      return runtimeScope.localCopy?.rewriteContent(media) ?? media;
+    };
     const toDbMessages = (
       rows: BundleMessageRow[],
       agentKind: XdtshareAgentKind,
@@ -1016,11 +1040,12 @@ export async function commitShareImport(
         id: randomUUID(),
         clientId: m.clientId,
         role: m.role,
-        content: rewriteMediaUrls(migratedContext && m.role === 'agent_switch'
-          ? migratedContext.metadata(m.content) ?? m.content : m.content, rewriteRules),
+        content: rewriteImportedContent(m.content, m.role, agentKind),
         toolUseId: m.toolUseId,
         agentMeta:
-          agentKind === 'pi'
+          historyOnly
+            ? rewriteOmpAgentMetaForImport(m.agentMeta)
+            : agentKind === 'pi'
             ? rewritePiAgentMetaForImport(m.agentMeta, piTranscriptTargets)
             : agentKind === 'omp'
               ? rewriteOmpAgentMetaForImport(m.agentMeta)
@@ -1069,30 +1094,31 @@ export async function commitShareImport(
                   plan.manifest.title ||
                   'Worker',
                 workspaceKind:
-                  runtimeScope.migration && typeof plan.snapshot.workspaceKind === 'string'
+                  copyContext && typeof plan.snapshot.workspaceKind === 'string'
                     ? plan.snapshot.workspaceKind
                     : manifest.workspaceKind,
                 orcaRole: 'worker' as const,
                 snapshot: plan.snapshot,
                 draftPrefs:
-                  runtimeScope.migration?.agentPrefs?.[plan.manifest.agentKind] ?? draftPrefs,
+                  copyContext?.agentPrefs?.[plan.manifest.agentKind] ?? draftPrefs,
                 // 导入端草稿偏好按 vendor 存,跨 vendor 的 Worker 用内置兜底模型。
                 applyDraftPrefs:
-                  !!runtimeScope.migration || plan.manifest.agentKind === manifest.agentKind,
+                  !!copyContext || plan.manifest.agentKind === manifest.agentKind,
                 // 普通分享沿用 auto；迁移不继承源机器的权限授权。
-                permissionModeOverride: runtimeScope.migration
+                permissionModeOverride: copyContext
                   ? plan.manifest.agentKind === 'cc'
                     ? 'default'
                     : 'ask'
                   : 'auto',
                 status:
-                  runtimeScope.migration && plan.snapshot.status === 'archived'
+                  copyContext && plan.snapshot.status === 'archived'
                     ? 'archived'
                     : 'active',
                 workingDir: plan.workingDir ?? workingDir,
                 worktreePath,
                 activeSdkSessionId: plan.activeSdkSessionId,
                 now,
+                preserveUpdatedAt: !!runtimeScope.localCopy,
               }),
               messages: toDbMessages(plan.messages, plan.manifest.agentKind),
             };
@@ -1103,11 +1129,12 @@ export async function commitShareImport(
       conflictExisting.map((session) => session.id),
       async () => {
         assertStillValid();
-        if (runtimeScope.migration && (manifest.exportFidelity !== 'full' || !transcriptsPlaceable || notes.includes('codexStateSkipped') ||
+        if ((runtimeScope.migration || (runtimeScope.localCopy && !historyOnly && messages.length > 0)) && (manifest.exportFidelity !== 'full' || !transcriptsPlaceable || notes.includes('codexStateSkipped') ||
           transcriptsWritten < new Set(restorePlans.flatMap((restore) =>
             restore.bundled.map((transcript) => `${restore.agentKind}:${transcript.sdkSessionId}`))).size)) {
           throw codedError('SHARE_IMPORT_FAILED', 'MIGRATION_INCOMPLETE_CONTEXT');
         }
+        if (runtimeScope.localCopy?.beforeCommit) await guarded(runtimeScope.localCopy.beforeCommit);
         finalTxState.outcome = 'in-flight';
         await dbClient.tx('session.importShare', {
           session: buildSessionRow({
@@ -1119,12 +1146,15 @@ export async function commitShareImport(
             snapshot: sessionSnapshot,
             draftPrefs,
             applyDraftPrefs: true,
+            ...(runtimeScope.localCopy ? { status: sessionSnapshot.status === 'archived' ? 'archived' as const : 'active' as const, permissionModeOverride: manifest.agentKind === 'cc' ? 'default' : 'ask' } : {}),
             workingDir,
             worktreePath,
             activeSdkSessionId,
             now,
+            preserveUpdatedAt: !!runtimeScope.localCopy,
           }),
           messages: dbMessages,
+          ...(runtimeScope.localCopy ? { importOrigin: runtimeScope.localCopy.receipt } : {}),
           ...(conflictExisting.length > 0 ? { replaceSessions: conflictExisting } : {}),
           ...(orcaTxArgs ? { orca: orcaTxArgs } : {}),
         });
@@ -1159,7 +1189,7 @@ export async function commitShareImport(
         restore.bundled.map((transcript) => `${restore.agentKind}:${transcript.sdkSessionId}`),
       ),
     );
-    const fidelity = resolveFinalFidelity({
+    const fidelity = historyOnly ? 'db-only' : resolveFinalFidelity({
       exportFidelity: manifest.exportFidelity,
       bundledCount: bundledKeys.size,
       transcriptsWritten,
@@ -1202,7 +1232,7 @@ export async function commitShareImport(
       await rollback();
     }
     const code = (err as { code?: unknown }).code;
-    if (typeof code === 'string' && code !== 'ALREADY_EXISTS') throw err;
+    if (typeof code === 'string' && (code !== 'ALREADY_EXISTS' || runtimeScope.localCopy)) throw err;
     throw codedError('SHARE_IMPORT_FAILED', err instanceof Error ? err.message : String(err));
   }
 }
@@ -1313,19 +1343,7 @@ function rewritePiAgentMetaForImport(
   agentMeta: string | null,
   transcriptTargets: ReadonlyMap<string, string>,
 ): string | null {
-  if (!agentMeta) return agentMeta;
-  try {
-    const parsed = JSON.parse(agentMeta) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    const meta = parsed as Record<string, unknown>;
-    if (typeof meta.sdkSessionId !== 'string') return agentMeta;
-    const target = transcriptTargets.get(meta.sdkSessionId);
-    if (target) meta.sdkSessionId = target;
-    else delete meta.sdkSessionId;
-    return JSON.stringify(meta);
-  } catch {
-    return null;
-  }
+  return rewriteNativeMetadata(agentMeta, transcriptTargets);
 }
 
 /**
@@ -1356,7 +1374,7 @@ function stripSdkSessionIds(value: Record<string, unknown> | unknown[]): void {
     return;
   }
   for (const [key, child] of Object.entries(value)) {
-    if (key === 'sdkSessionId') {
+    if (key === 'sdkSessionId' || key === 'fromSdkSessionId' || key === 'toSdkSessionId' || key === 'sourceSdkSessionId' || key === 'nativeForkAnchor') {
       delete value[key];
       continue;
     }
@@ -1581,6 +1599,7 @@ function buildSessionRow(params: {
   worktreePath: string | null;
   activeSdkSessionId: string | null;
   now: number;
+  preserveUpdatedAt?: boolean;
 }): SessionImportShareSessionRow {
   const {
     newId,
@@ -1647,7 +1666,7 @@ function buildSessionRow(params: {
         : null,
     userSendAt: num(snapshot.userSendAt, now),
     createdAt: num(snapshot.createdAt, now),
-    updatedAt: now,
+    updatedAt: params.preserveUpdatedAt ? num(snapshot.updatedAt, now) : now,
   };
 }
 

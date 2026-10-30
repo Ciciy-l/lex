@@ -545,6 +545,7 @@ export interface SessionImportShareMessageRow {
  * 同一事务:任一子会话失败整包回滚,不留半截协同。
  */
 export interface SessionImportShareArgs {
+  importOrigin?: { sourceKey: string; sourceSessionId: string; fidelity: string };
   session: SessionImportShareSessionRow;
   messages: SessionImportShareMessageRow[];
   /**

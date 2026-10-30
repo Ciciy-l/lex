@@ -1631,7 +1631,7 @@
     },
     "sessionImport": {
       "title": "Local Session Import",
-      "description": "Read-only scan of local Claude Code and Codex history. Only checked sessions in the list will be imported; skipped internal sessions are hidden and cannot be imported.",
+      "description": "Scan local Codex, Claude Code and Cindy tasks read-only, then select tasks to import. Companion-related tasks are excluded.",
       "scan": "Scan",
       "scanning": "Scanning",
       "emptyTitle": "Scan local history first",
@@ -1653,7 +1653,7 @@
         "projects": "Project sessions",
         "projectsHint": "Sessions that will appear under project groups",
         "dialogue": "Chat",
-        "dialogueHint": "Codex projectless sessions",
+        "dialogueHint": "Regular tasks outside projects",
         "filtered": "Skipped",
         "filteredHint": "Internal or already in app"
       },
@@ -1662,9 +1662,10 @@
         "placement": "Placement",
         "all": "All",
         "codex": "Codex",
-        "claude": "Claude",
+        "claude": "Claude Code",
         "project": "Existing projects",
-        "dialogue": "Chat"
+        "dialogue": "Chat",
+        "cindy": "Cindy"
       },
       "toast": {
         "scanFailed": "Scan failed",
@@ -6070,6 +6071,71 @@
         "disk": "Could not write the package to disk. Check free space and retry.",
         "permission": "Could not write to the runtime directory. Check directory permissions and retry."
       }
+    },
+    "cindyImport": {
+      "entry": "From Cindy",
+      "title": "Import Cindy tasks",
+      "description": "Create independent task copies using this {{appName}} account’s model settings. Cindy data stays unchanged.",
+      "quitFirst": "Quit Cindy before scanning and keep it closed until import finishes.",
+      "noSources": "No Cindy account databases found. Choose its application data directory.",
+      "chooseSource": "Choose Cindy data directory",
+      "scan": "Scan selected account",
+      "selectHint": "Select up to 100 tasks. Workers are imported with their lead.",
+      "excluded": "Excluded tasks: {{count}}",
+      "selectAll": "Select first 100 available",
+      "empty": "No supported local tasks found.",
+      "untitled": "Untitled task",
+      "archived": "Archived",
+      "alreadyImported": "Already imported",
+      "standalone": "No project",
+      "projectWarning": "Project files remain shared when both apps use the same directory. Imported tasks do not start automatically.",
+      "historyOnly": "Conversation records only. The next message starts fresh model context.",
+      "fullCopy": "Copy task and available native history",
+      "missingFiles": "Missing or unavailable files",
+      "needsDirectory": "Choose a local project directory before importing.",
+      "newDirectory": "Create a new {{appName}} working directory",
+      "chooseProject": "Choose project directory",
+      "allowIncomplete": "Import despite the listed missing items; use conversation records only when native history is incomplete.",
+      "importing": "Importing tasks…",
+      "preparing": "Preparing…",
+      "cancel": "Stop remaining work",
+      "close": "Close",
+      "preview": "Preview {{count}} tasks",
+      "import": "Import copies",
+      "errors": {
+        "sourceRunning": "Cindy is still running. Quit it and scan again.",
+        "sourceUnreadable": "The source could not be read or its process state could not be verified. Check permissions, quit Cindy and scan again.",
+        "sourceMissing": "The source is no longer available. Choose it again.",
+        "sourceChanged": "Source data changed. Keep Cindy closed and scan again.",
+        "schemaUnsupported": "This database schema is not supported. Update {{appName}} or use a Cindy share file.",
+        "unsafePath": "The path is outside the permitted source directories.",
+        "tooLarge": "The selected data exceeds the import limit. Import fewer tasks or use a smaller share file.",
+        "teamIncomplete": "The collaboration team is incomplete and cannot be imported.",
+        "nativeMissing": "Native history is missing or incomplete.",
+        "historyOnly": "This engine supports importing conversation records only.",
+        "mediaMissing": "Some media files are unavailable.",
+        "attachmentMissing": "Some file attachments are unavailable or outside permitted directories.",
+        "workspaceMissing": "Some working directory files are unavailable or cannot be copied.",
+        "ownerChanged": "The {{appName}} account changed. Reopen the importer.",
+        "canceled": "Import stopped. Completed tasks remain imported. Reopen the importer to retry.",
+        "busy": "Another import operation is in progress.",
+        "invalidSelection": "The selection expired. Reopen the importer and scan again.",
+        "confirmationRequired": "Choose the required directory and confirm missing items first.",
+        "alreadyImported": "This task already has a copy in this {{appName}} account.",
+        "importFailed": "Import failed. Check the source and local model settings, then reopen the importer to retry.",
+        "diskFull": "Not enough free disk space to safely prepare this import. Free space and try again."
+      },
+      "results": {
+        "imported": "Imported",
+        "skipped": "Skipped",
+        "failed": "Failed",
+        "canceled": "Canceled"
+      },
+      "account": "Account {{count}}",
+      "restart": "Choose a source again",
+      "scanHint": "Click Scan to read the selected Cindy account.",
+      "alsoImportNative": "Confirming will also import the {{count}} selected Codex / Claude Code tasks.",
+      "backToList": "Back to list"
     }
   },
   "remoteDevice": {
@@ -8210,6 +8276,11 @@
         "layoutTryUnified": "Try the new picker",
         "layoutOriginal": "Back to old picker",
         "favoritesSyncFailed": "Favorites could not sync. Reopen the picker to retry; the remote computer may need an update."
+      },
+      "fastShortcut": {
+        "enable": "Enable Fast mode",
+        "disable": "Disable Fast mode",
+        "unavailable": "Model settings are temporarily unavailable. Try again shortly."
       }
     },
     "permissionSelector": {

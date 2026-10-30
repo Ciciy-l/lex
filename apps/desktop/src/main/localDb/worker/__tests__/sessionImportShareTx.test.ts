@@ -44,6 +44,12 @@ function createTables(db: Database.Database): void {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
+    CREATE TABLE session_import_origins (
+      source_key TEXT NOT NULL, source_session_id TEXT NOT NULL,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      fidelity TEXT NOT NULL, imported_at INTEGER NOT NULL,
+      PRIMARY KEY(source_key, source_session_id)
+    );
     CREATE TABLE messages (
       id TEXT PRIMARY KEY,
       client_id TEXT NOT NULL,
@@ -224,11 +230,38 @@ describe('tx session.importShare', () => {
       const bot = validArgs();
       bot.args.session.source = 'bot';
       await expect(transport.send('tx', bot)).rejects.toThrow('Retired session');
-      await expect(transport.send('tx', validArgs())).resolves.toEqual({ messageCount: 3 });
+      const request = validArgs();
+      const imported = { ...request, args: { ...request.args, importOrigin: { sourceKey: 'a', sourceSessionId: 's', fidelity: 'full' } } };
+      await expect(transport.send('tx', imported)).resolves.toEqual({ messageCount: 3 });
+      await expect(transport.send('tx', { ...imported, args: { ...imported.args, session: { ...imported.args.session, id: 'second' } } })).rejects.toThrow('already imported');
+      expect(await transport.send('query', { sql: 'SELECT session_id FROM session_import_origins' })).toEqual([{ session_id: 'new-session-1' }]);
     } finally {
       if (transport) await transport.close();
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('deduplicates a source atomically, permits another account and reimports a deleted copy', () => {
+    const origin = { sourceKey: 'source-a', sourceSessionId: 'source-session', fidelity: 'full' };
+    const request = validArgs();
+    const apply = (id: string, key = origin.sourceKey) => tx(db, { ...request, args: { ...request.args,
+      session: { ...request.args.session, id }, messages: [], importOrigin: { ...origin, sourceKey: key } } });
+    apply('first');
+    expect(() => apply('duplicate')).toThrow('already imported');
+    expect(db.prepare('SELECT id FROM sessions').all()).toEqual([{ id: 'first' }]);
+    apply('other-account', 'source-b');
+    db.exec("UPDATE sessions SET status = 'deleted' WHERE id = 'first'");
+    apply('replacement');
+    expect(db.prepare("SELECT session_id FROM session_import_origins WHERE source_key = 'source-a'").get()).toEqual({ session_id: 'replacement' });
+  });
+
+  it('rolls back the origin and whole team together when a worker insert fails', () => {
+    const request = orcaArgs();
+    (request.args.orca.workers[0].session as Record<string, unknown>).title = 42;
+    expect(() => tx(db, { ...request, args: { ...request.args, importOrigin: { sourceKey: 'a', sourceSessionId: 's', fidelity: 'full' } } })).toThrow();
+    expect(db.prepare('SELECT * FROM session_import_origins').all()).toEqual([]);
+    expect(db.prepare('SELECT * FROM sessions').all()).toEqual([]);
+    expect(db.prepare('SELECT * FROM messages').all()).toEqual([]);
   });
 
   it('inserts session and all messages (including rewound rows) atomically', () => {

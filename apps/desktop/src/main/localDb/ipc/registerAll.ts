@@ -21,6 +21,7 @@ import {
 import { registerMessageIpc } from './messages';
 import { registerOrcaWorkflowIpc } from './orcaTeams';
 import { registerSessionImportIpc } from './session-import';
+import { registerCindyImportIpc } from './cindy-import';
 import { registerSessionShareIpc } from './session-share';
 import { registerRecentWorkdirsIpc } from './recentWorkdirs';
 import { registerProjectAliasesIpc } from './projectAliases';
@@ -263,6 +264,7 @@ export function registerLocalDbIpc(opts: RegisterLocalDbIpcOpts = {}): void {
     },
   );
   registerSessionImportIpc();
+  registerCindyImportIpc();
   registerSessionShareIpc();
   registerOrcaWorkflowIpc();
   registerRecentWorkdirsIpc();

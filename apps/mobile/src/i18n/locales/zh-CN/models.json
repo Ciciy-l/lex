@@ -37,7 +37,10 @@
       "xhigh": "超高",
       "max": "最高",
       "ultra": "极致"
-    }
+    },
+    "fastEnable": "开启 Fast 模式",
+    "fastDisable": "关闭 Fast 模式",
+    "fastUnavailable": "模型设置暂时不可用，请稍后重试"
   },
   "contextWindowSwitch": {
     "title": "这个模型装不下当前对话",

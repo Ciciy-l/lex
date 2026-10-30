@@ -14,6 +14,24 @@ import { BRAND_NAME } from '@cindy/maker-shared/branding';
 import { i18n } from '../i18n';
 
 describe('locale 品牌名插值', () => {
+  it.each(['en', 'zh-CN', 'zh-TW', 'ja', 'ko'])('%s distinguishes the Cindy import source from the local destination', (lng) => {
+    for (const key of [
+      'settings.cindyImport.description',
+      'settings.cindyImport.newDirectory',
+      'settings.cindyImport.errors.schemaUnsupported',
+      'settings.cindyImport.errors.ownerChanged',
+      'settings.cindyImport.errors.alreadyImported',
+    ]) {
+      const rendered = i18n.t(key, { lng, appName: 'Import destination' });
+      expect(rendered).toContain('Import destination');
+      expect(rendered).not.toContain('{{appName}}');
+      expect(rendered).not.toContain('Lex');
+    }
+    expect(i18n.t('settings.sessionImport.filters.cindy', { lng })).toBe('Cindy');
+    expect(i18n.t('settings.cindyImport.description', { lng })).toContain('Cindy');
+    expect(i18n.t('settings.cindyImport.errors.schemaUnsupported', { lng })).toContain('Cindy');
+  });
+
   it.each(['en', 'zh-CN', 'zh-TW', 'ja', 'ko'])('%s keeps new upstream host copy separate from Cindy services', (lng) => {
     for (const key of [
       'sharedTask.inviteBoxHint',

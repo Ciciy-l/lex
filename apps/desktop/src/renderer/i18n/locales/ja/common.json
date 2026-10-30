@@ -1631,7 +1631,7 @@
     },
     "sessionImport": {
       "title": "ローカルセッションのインポート",
-      "description": "ローカルの Claude Code / Codex 履歴を読み取り専用でスキャンします。リストでチェックしたセッションのみインポートされ、スキップされた内部セッションは表示されず、インポートもされません。",
+      "description": "ローカルの Codex、Claude Code、Cindy の通常タスクを読み取り専用でスキャンし、選択してインポートします。パートナー関連のタスクは除外されます。",
       "scan": "スキャン",
       "scanning": "スキャン中",
       "emptyTitle": "まずローカル履歴をスキャン",
@@ -1653,7 +1653,7 @@
         "projects": "既存プロジェクトのセッション",
         "projectsHint": "現在のサイドバーのプロジェクトに属するセッション",
         "dialogue": "新規フォルダーのセッション",
-        "dialogueHint": "プロジェクトグループを作成するセッション",
+        "dialogueHint": "プロジェクトに属さない通常タスク",
         "filtered": "スキップ済み",
         "filteredHint": "内部セッション、または既にアプリ内に存在"
       },
@@ -1662,9 +1662,10 @@
         "placement": "配置",
         "all": "すべて",
         "codex": "Codex",
-        "claude": "Claude",
+        "claude": "Claude Code",
         "project": "既存プロジェクト",
-        "dialogue": "新規フォルダー"
+        "dialogue": "新規フォルダー",
+        "cindy": "Cindy"
       },
       "toast": {
         "scanFailed": "スキャンに失敗しました",
@@ -6068,6 +6069,71 @@
         "disk": "パッケージをディスクに書き込めませんでした。空き容量を確認して再試行してください。",
         "permission": "ランタイムディレクトリに書き込めませんでした。権限を確認して再試行してください。"
       }
+    },
+    "cindyImport": {
+      "entry": "Cindy からインポート",
+      "title": "Cindy のタスクをインポート",
+      "description": "この {{appName}} アカウントのモデル設定で独立したタスクのコピーを作成します。Cindy のデータは変更されません。",
+      "quitFirst": "スキャン前に Cindy を終了し、インポート完了まで閉じたままにしてください。",
+      "noSources": "Cindy のアカウントデータベースが見つかりません。アプリのデータディレクトリを選択してください。",
+      "chooseSource": "Cindy のデータディレクトリを選択",
+      "scan": "選択したアカウントをスキャン",
+      "selectHint": "最大 100 件を選択できます。Worker はリードのタスクと一緒にインポートされます。",
+      "excluded": "除外されたタスク: {{count}}",
+      "selectAll": "先頭の利用可能な 100 件を選択",
+      "empty": "対応するローカルタスクがありません。",
+      "untitled": "無題のタスク",
+      "archived": "アーカイブ済み",
+      "alreadyImported": "インポート済み",
+      "standalone": "プロジェクトなし",
+      "projectWarning": "同じプロジェクトディレクトリを使う場合、両方のアプリがプロジェクトファイルを共有します。タスクは自動開始されません。",
+      "historyOnly": "チャット履歴のみ。次のメッセージは新しいモデルコンテキストで開始します。",
+      "fullCopy": "タスクと利用可能なネイティブ履歴をコピー",
+      "missingFiles": "見つからない、または読めないファイル",
+      "needsDirectory": "インポート前にローカルプロジェクトディレクトリを選択してください。",
+      "newDirectory": "新しい {{appName}} 作業ディレクトリを作成",
+      "chooseProject": "プロジェクトディレクトリを選択",
+      "allowIncomplete": "表示された不足項目を了承し、ネイティブ履歴が不完全なタスクはチャット履歴のみインポートする。",
+      "importing": "タスクをインポート中…",
+      "preparing": "準備中…",
+      "cancel": "残りの処理を停止",
+      "close": "閉じる",
+      "preview": "{{count}} 件を事前確認",
+      "import": "コピーをインポート",
+      "errors": {
+        "sourceRunning": "Cindy が起動中です。終了して再スキャンしてください。",
+        "sourceUnreadable": "ソースの読み取り、または実行状態の確認に失敗しました。権限を確認し、Cindy を終了して再スキャンしてください。",
+        "sourceMissing": "ソースが利用できません。選択し直してください。",
+        "sourceChanged": "ソースが変更されました。Cindy を閉じたまま再スキャンしてください。",
+        "schemaUnsupported": "このデータベース構造には未対応です。{{appName}} を更新するか Cindy の共有ファイルを使用してください。",
+        "unsafePath": "許可されたソースディレクトリ外のパスです。",
+        "tooLarge": "データが上限を超えています。選択数を減らすか、小さい共有ファイルを使用してください。",
+        "teamIncomplete": "協同チームが不完全なためインポートできません。",
+        "nativeMissing": "ネイティブ履歴が欠落または不完全です。",
+        "historyOnly": "このエンジンはチャット履歴のみインポートできます。",
+        "mediaMissing": "一部のメディアファイルが利用できません。",
+        "attachmentMissing": "一部の添付ファイルが利用できないか、許可されたディレクトリ外にあります。",
+        "workspaceMissing": "作業ディレクトリの一部のファイルをコピーできません。",
+        "ownerChanged": "{{appName}} アカウントが変更されました。インポート画面を開き直してください。",
+        "canceled": "停止しました。完了済みのタスクは保持されます。画面を開き直して再試行してください。",
+        "busy": "別のインポート処理中です。",
+        "invalidSelection": "選択が期限切れです。画面を開き直して再スキャンしてください。",
+        "confirmationRequired": "必要なディレクトリを選択し、不足項目を確認してください。",
+        "alreadyImported": "この {{appName}} アカウントにコピーが存在します。",
+        "importFailed": "インポートに失敗しました。ソースとローカルモデル設定を確認し、画面を開き直して再試行してください。",
+        "diskFull": "安全にインポートを準備するための空き容量が不足しています。空き容量を確保して再試行してください。"
+      },
+      "results": {
+        "imported": "インポート済み",
+        "skipped": "スキップ",
+        "failed": "失敗",
+        "canceled": "キャンセル"
+      },
+      "account": "アカウント {{count}}",
+      "restart": "ソースを選び直す",
+      "scanHint": "「スキャン」で選択した Cindy アカウントを読み取ります。",
+      "alsoImportNative": "確認すると、選択した Codex / Claude Code の {{count}} 件のタスクもインポートされます。",
+      "backToList": "一覧に戻る"
     }
   },
   "remoteDevice": {
@@ -8208,6 +8274,11 @@
         "layoutTryUnified": "新しいセレクターを試す",
         "layoutOriginal": "旧版に戻す",
         "favoritesSyncFailed": "お気に入りを同期できません。選択画面を開き直してください。接続先の更新が必要な場合があります。"
+      },
+      "fastShortcut": {
+        "enable": "Fast モードを有効にする",
+        "disable": "Fast モードを無効にする",
+        "unavailable": "モデル設定は一時的に利用できません。しばらくしてから再試行してください。"
       }
     },
     "permissionSelector": {

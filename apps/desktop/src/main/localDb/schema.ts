@@ -1039,6 +1039,15 @@ export const migrationMeta = sqliteTable('migration_meta', {
   value: text('value'),
 });
 
+/** Source-to-copy identity is target-owner local; the receipt commits atomically with its session graph. */
+export const sessionImportOrigins = sqliteTable('session_import_origins', {
+  sourceKey: text('source_key').notNull(),
+  sourceSessionId: text('source_session_id').notNull(),
+  sessionId: text('session_id').notNull().references(() => sessions.id, { onDelete: 'cascade' }),
+  fidelity: text('fidelity').notNull(),
+  importedAt: integer('imported_at').notNull(),
+}, (t) => ({ pk: primaryKey({ columns: [t.sourceKey, t.sourceSessionId] }) }));
+
 /** Host-only bounded authority projections; transcript mutations invalidate their revision. */
 export const autoReviewProjections = sqliteTable('auto_review_projections', {
   sessionId: text('session_id').notNull().references(() => sessions.id, { onDelete: 'cascade' }),

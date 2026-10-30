@@ -1,3 +1,4 @@
+import type { CindyImportApi } from '../shared/cindyImport';
 import type { HarnessKind, HarnessSource, HarnessRuntimeState, OmpHarnessSettings } from '../shared/harnessSettings.js';
 import { TASK_MIGRATION_LOCAL_CHANNEL } from '@cindy/device-link';
 import { FAVORITE_HOST_READY, FAVORITE_HOST_REQUEST, FAVORITE_HOST_REPLY, FAVORITE_HOST_CHANGED, type ModelFavoritesHostApi } from '../shared/modelFavoritesSync';
@@ -5401,6 +5402,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('local-db:project-aliases:delete', projectKey),
       onChanged: (cb: () => void) => fanOutProjectAliasesChanged(cb as IpcCallback),
     },
+    cindyImport: {
+      discover: () => ipcRenderer.invoke('local-db:cindy-import:discover'),
+      chooseSource: () => ipcRenderer.invoke('local-db:cindy-import:choose-source'),
+      scan: (sourceId) => ipcRenderer.invoke('local-db:cindy-import:scan', sourceId),
+      preview: (scanId, ids) => ipcRenderer.invoke('local-db:cindy-import:preview', { scanId, ids }),
+      chooseProject: (previewId, id) => ipcRenderer.invoke('local-db:cindy-import:choose-project', { previewId, id }),
+      commit: (input) => ipcRenderer.invoke('local-db:cindy-import:commit', input),
+      cancel: () => ipcRenderer.invoke('local-db:cindy-import:cancel'),
+    } satisfies CindyImportApi,
     sessionImport: {
       scan: (request?: { force?: boolean }): Promise<unknown> =>
         ipcRenderer.invoke('local-db:session-import:scan', request),

@@ -71,6 +71,7 @@ import {
 import { cn } from '@/lib/utils';
 import { Spinner } from '@/components/ui/spinner';
 import { toast } from '@/lib/toast';
+import { ComposerFastButton } from './ComposerFastButton';
 import { mapIpcErrorToI18nKey } from '@/utils/ipcError';
 import { buildModelWindowRecoveryToast } from './modelWindowErrorToast';
 import { Tip } from '@/components/ui/tooltip';
@@ -8182,6 +8183,7 @@ export function ChatInput({
   // 这里必须按 card 实际宽度统一切 compact，而不是只照顾 create-agent；否则普通
   // 会话仍走两组 max-content flex，长模型名会把权限入口挤进语音 / 发送固定动作区。
   const useNarrowToolbar = narrowToolbar || autoNarrowToolbar;
+  const showFastShortcut = !sessionModelLoading && !!onFastModeChange && modelFastSupported(activeModel, effectiveSourceId);
   const useCompactMiddleToolbar =
     isCreateAgentVariant && (toolbarWidthMeasured ? autoNarrowToolbar : narrowToolbar);
   const useUltraCompactToolbar =
@@ -8744,7 +8746,7 @@ export function ChatInput({
                       ? isCreateAgentVariant
                         ? 'flex min-w-0 shrink items-center justify-end gap-2'
                         : 'flex min-w-0 shrink items-center justify-end gap-1'
-                      : 'flex items-center gap-2',
+                      : 'flex min-w-0 shrink items-center gap-2',
                   // compact 模式下所有输入框工具行保持单行;权限 / 模型 pill 内部截断承压,
                   // vendor tab 与圆形操作按钮保持固定宽,避免控件重叠或掉到第二行。
                 )}
@@ -8757,13 +8759,8 @@ export function ChatInput({
                   ))}
                 <div
                   data-session-model-slot={sessionId ? '' : undefined}
-                  // A cold session has no trustworthy label yet. Keep the same geometry before
-                  // and after hydration without mounting an interactive default-model control.
-                  className={sessionId
-                    ? cn('h-[30px] shrink', useUltraCompactToolbar
-                        ? 'w-[64px] min-w-[64px]'
-                        : 'w-[148px] min-w-[72px]')
-                    : useNarrowToolbar ? 'min-w-0 shrink' : undefined}
+                  // Loading reserves a placeholder; loaded names use the actual remaining space.
+                  className={cn('min-w-0 shrink', sessionModelLoading && 'h-[30px] w-[148px]')}
                 >
                   {!sessionModelLoading && <ModelSelector
                     providersOverride={sshCodexHostId ? sshCodexProviders.providers : undefined}
@@ -8777,6 +8774,7 @@ export function ChatInput({
                     onModelChange={handleModelChange}
                     onEffortChange={handleEffortChange}
                     fastMode={composerSelection.display.fastMode}
+                    showFastIndicator={!showFastShortcut}
                     currentSelection={sessionId && runtimeAgentKind ? composerSelection.current : undefined}
                     onFastModeChange={handleFastModeChange}
                     thinkingEnabled={
@@ -8933,6 +8931,13 @@ export function ChatInput({
                     restoreFocusTarget={composerSuggestionFocusTarget}
                   />}
                 </div>
+                {showFastShortcut && (
+                  <ComposerFastButton
+                    enabled={composerSelection.display.fastMode}
+                    disabled={disabled || settingsLocked || agentSendDispatchInFlight || agentSwitchInFlight || remoteSwitchInFlight || selectedSourceDisconnected}
+                    onChange={handleFastModeChange}
+                  />
+                )}
                 <div
                   className={
                     useNarrowToolbar

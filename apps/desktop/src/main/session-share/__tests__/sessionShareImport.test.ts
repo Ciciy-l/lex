@@ -234,9 +234,11 @@ const rawCommitShareImport = sessionShareImportModule.commitShareImport;
 const commitShareImport = (
   opts: Parameters<typeof rawCommitShareImport>[0],
   migration?: Parameters<typeof rawCommitShareImport>[1]['migration'],
+  localCopy?: Parameters<typeof rawCommitShareImport>[1]['localCopy'],
 ) =>
   rawCommitShareImport(opts, {
     migration,
+    localCopy,
     dbClient: mockedDbClientModule.getDbClient(),
     assertStillValid: () => undefined,
     refCompensationScope: {
@@ -492,6 +494,55 @@ async function writeBundleFile(bytes: Buffer, password?: string): Promise<string
 }
 
 describe('sessionShareImport', () => {
+  it('Cindy copy preserves archive/timestamps, maps native IDs and commits the origin with the new task', async () => {
+    const file = await writeBundleFile(await buildBundle({ session: { status: 'archived', updatedAt: 12345 } }));
+    const draft = await inspectShareFile(file);
+    const copiedId = 'cindy-copy-1';
+    const result = await commitShareImport({ draftId: draft.draftId, projectsRootOverride: projectsRoot, sharedMediaRootOverride: sharedMediaRoot }, undefined, {
+      sessionId: copiedId, workingDir: newWorkdir, historyOnly: false,
+      receipt: { sourceKey: 'source-a', sourceSessionId: 'original', fidelity: 'full' },
+      rewriteContent: (content) => content,
+    });
+    const args = dbMock.txCalls[0].args as { session: Record<string, unknown>; importOrigin: Record<string, unknown>; messages: Array<{ agentMeta: string | null }> };
+    expect(result.sessionId).toBe(copiedId);
+    expect(args.session).toMatchObject({ status: 'archived', updatedAt: 12345, permissionMode: 'default', workingDir: newWorkdir, sdkSessionId: migrationNativeContext(copiedId, [SID]).id(SID) });
+    expect(args.importOrigin).toEqual({ sourceKey: 'source-a', sourceSessionId: 'original', fidelity: 'full' });
+    expect(args.messages[1].agentMeta).not.toContain(SID);
+  });
+
+  it('Cindy explicit history-only copy strips resume identities and never restores native files', async () => {
+    const file = await writeBundleFile(await buildBundle({ agentKind: 'codex' }));
+    const draft = await inspectShareFile(file);
+    const result = await commitShareImport({ draftId: draft.draftId, sharedMediaRootOverride: sharedMediaRoot }, undefined, {
+      sessionId: 'history-only-copy', workingDir: newWorkdir, historyOnly: true,
+      receipt: { sourceKey: 'a', sourceSessionId: 's', fidelity: 'db-only' }, rewriteContent: (content) => content,
+    });
+    expect(result.fidelity).toBe('db-only'); expect(codexMock.importCalls).toEqual([]);
+    const args = dbMock.txCalls[0].args as { session: Record<string, unknown>; messages: Array<{ agentMeta: string | null }> };
+    expect(args.session.sdkSessionId).toBeNull(); expect(args.messages[1].agentMeta).not.toContain('sdkSessionId');
+  });
+
+  it('Cindy native-copy failure never silently degrades or publishes an origin', async () => {
+    const file = await writeBundleFile(await buildBundle({ omitTranscript: true }));
+    const draft = await inspectShareFile(file);
+    await expect(commitShareImport({ draftId: draft.draftId, projectsRootOverride: projectsRoot, sharedMediaRootOverride: sharedMediaRoot }, undefined, {
+      sessionId: 'incomplete-copy', workingDir: newWorkdir, historyOnly: false,
+      receipt: { sourceKey: 'a', sourceSessionId: 's', fidelity: 'full' }, rewriteContent: (content) => content,
+    })).rejects.toThrow('MIGRATION_INCOMPLETE_CONTEXT');
+    expect(dbMock.txCalls).toEqual([]);
+  });
+
+  it('Cindy rechecks the source before the atomic publish and rolls back if it restarted', async () => {
+    const file = await writeBundleFile(await buildBundle());
+    const draft = await inspectShareFile(file);
+    await expect(commitShareImport({ draftId: draft.draftId, projectsRootOverride: projectsRoot, sharedMediaRootOverride: sharedMediaRoot }, undefined, {
+      sessionId: 'changed-copy', workingDir: newWorkdir, historyOnly: false,
+      receipt: { sourceKey: 'a', sourceSessionId: 's', fidelity: 'full' }, rewriteContent: (content) => content,
+      beforeCommit: async () => { throw Object.assign(new Error('sourceRunning'), { code: 'sourceRunning' }); },
+    })).rejects.toThrow('sourceRunning');
+    expect(dbMock.txCalls).toEqual([]);
+  });
+
   beforeEach(async () => {
     closeSharedTaskForTask.mockReset().mockResolvedValue(undefined);
     prepareSharedTaskClosureForTask.mockReset().mockResolvedValue(null);
