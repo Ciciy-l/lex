@@ -20,7 +20,7 @@ const binaryPath = process.env.CODEX_E2E_BINARY ?? path.join(repoRoot, "apps", "
 // It never uses a developer Codex configuration, authorization or provider.
 it("prepares an unknown model with the pinned runtime native fallback descriptor", async () => {
   const { stdout } = await promisify(execFile)(binaryPath, ["--version"], { timeout: 5000, windowsHide: true });
-  expect(stdout.trim()).toBe("codex-cli 0.162.1");
+  expect(stdout.trim()).toBe("codex-cli 0.166.0");
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "cindy-codex-fallback-native-"));
   let host: AppServerHost | undefined;
   try {
