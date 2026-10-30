@@ -1,16 +1,16 @@
-# 从本机 Cindy 导入任务：可行性调研
+# 从本机 Cindy 导入任务
 
-> 2026-10-30。状态：调研与建议方案，尚未实现。用户选择在「设置 → 任务导入」直接扫描本机 Cindy，并批量选择任务。分享文件导入保留为另一条已有路径。
+> 2026-10-30。状态：首版已实现。用户选择在「设置 → 任务导入」直接扫描本机 Cindy，并批量选择任务。分享文件导入保留为另一条已有路径。
 
 ## 结论
 
-可以支持，且不依赖 Lex Server / Lex Admin。Lex 保留了 Cindy 的任务、消息和分享格式，能够复用相当一部分导入逻辑。但现有「本机扫描」只接入 Codex 与 Claude 的原生历史，没有 Cindy 任务库适配器；不能通过增加一个来源标签或复制数据库完成。
+可以支持，且不依赖 Lex Server / Lex Admin。Lex 复用 Cindy 的任务、消息和分享格式，并新增只读来源适配器与独立导入向导。
 
 必须同时处理三层内容：产品任务与消息、引擎原生历史、附件及工作目录。消息可读与原任务可继续运行是两个不同的验收结果。
 
-本次只读取了仓库源码和公开上游格式源码，并运行合成数据测试；没有读取、复制或迁移本机真实 Cindy 账号、任务或凭证，也没有用实际 Cindy 导出文件做端到端验收。
+实现与自动化测试只使用合成数据；没有读取、复制或迁移本机真实 Cindy 账号、任务或凭证。尚未用真实 Cindy 安装数据做端到端验收。
 
-上游参考：[Cindy 分享格式源码](https://github.com/makecindy/cindy/blob/HEAD/apps/desktop/src/main/session-share/xdtshareFormat.pure.ts)。实施时应记录支持的上游提交与 schema 范围，不以这个会变化的链接替代兼容测试。
+兼容性按实际列与引擎能力探测，不以 Cindy 版本号推断。当前必须具备 sessions 的身份、归属、删除/归档、远程、清空边界与 Orca 角色字段，以及 messages 的任务归属、正文和时间字段；可选统计和消息元数据列缺失时使用空值。Orca lead 额外核验团队和 Worker 表。具体契约与合成 fixture 见 `main/cindy-import/source.ts` 及其测试。尚未宣称与某个外部 Cindy 发布版本完成实机兼容验收。
 
 ## 已核对的实现
 
@@ -18,7 +18,7 @@
 
 | 位置 | 现状与复用边界 |
 | --- | --- |
-| `renderer/components/settings/SessionImportSection.tsx` | 本机来源只有 Codex / Claude，已有筛选、分组、批量选择和分享文件向导入口。 |
+| `renderer/components/settings/SessionImportSection.tsx` | 保留 Codex / Claude 扫描与分享文件向导，新增独立 Cindy 导入入口。 |
 | `main/localDb/ipc/session-import.ts` | 扫描与导入分离；扫描缓存按当前 DB 用户区分。新增 Cindy 时还需校验账号代次，阻止切换账号后的迟到结果。 |
 | `main/session-share/xdtshareFormat.pure.ts` | `.cshare` 与旧 `.xdtshare` 共用 `XDTSHARE` 魔数；普通包与 Orca 协同包使用格式版本门禁，应用版本号只是描述信息。公开 Cindy 上游同样保留这些标识。 |
 | `main/session-share/sessionShareExport.ts` | 收集白名单任务字段、清空边界之后的消息、原生转录和受管媒体；依赖当前 `getDbClient()`、应用目录及账号索引，不能直接用于外部 Cindy 数据根。 |
@@ -27,10 +27,13 @@
 | `main/task-migration/` | 已有工作目录与大转录迁移基础设施；设备间交接的生命周期不能直接套在本机 Cindy 读取上。 |
 | `main/localDb/modelDefaultsProfile.ts`、`main/appSessionState.ts` | 当前主库路径仍为 `<userData>/<dbFilePrefix>-<ownerId>.db`；部分旁路资料位于 `owners/<owner摘要>/`。不能把多账号架构文档中的未来 Profile Registry 当作已运行的目录布局。 |
 | `main/maker-host/codex-thread-storage.ts`、`codex-thread-locations.ts` | Codex 多账号历史先按 thread-index 定位，不能只扫描默认 `codex-home`。 |
+| `main/cindy-import/` | 新增来源发现、停机核验、WAL 快照只读、schema 探测、历史/附件/工作目录预检和逐条导入编排。 |
+| `main/session-share/nativeSessionMetadata.pure.ts` | 只重映射已知的原生 SDK 身份字段；历史-only 导入会清除恢复身份。 |
+| `main/localDb/schema.ts`、`drizzle/0118_cindy_session_import.sql` | 目标账号库记录来源根与源任务 ID，并与任务图在同一事务写入；已删除副本可以重新导入。 |
 
 现有分享格式能为兼容导入提供基础，但这不等于所有未来 Cindy 数据库或任务类型都自动兼容。外部读取需按实际 schema、列与引擎能力探测，缺必要字段时明确提示。
 
-## 直接扫描需要补齐的部分
+## 首版行为与兼容边界
 
 ### 1. 来源发现与账号选择
 
@@ -46,13 +49,13 @@
 
 SQLite 快照必须包含已提交的 WAL 数据；不能直接复制单个 `.db` 或用忽略 WAL 的方式打开正在运行的源库。只读连接也需核对 sidecar 行为，禁止为方便读取而 checkpoint 或改变源库 journal mode。无法获得一致快照时提示关闭 Cindy 后重试。
 
-初版应在开始实际复制前要求源任务停止生成；源 DB、转录或附件在复制过程中变化时重新取快照或报告该条需重试，不能把不一致内容标为完整导入。
+首版在扫描、预检和每项任务发布前核验 Cindy 已退出。数据库/WAL、转录、媒体、附件或工作目录源文件变化时中止并要求重新扫描，不会把不一致内容标为完整导入。进程检查只读取可执行文件名与锁定 PID，不读取命令行参数。
 
 退休伙伴归属必须检查 `source = bot`、`bot_session_links`、`bot_profiles.canonical_session_id`、`bot_delegations.child_session_id` 四条关系；旧库缺表时通过 schema 探测生成固定查询。已删除、远程代理任务及不支持的引擎要有明确排除原因。Orca Worker 应随 lead 整体处理，不拆成独立普通任务。
 
 ### 3. 任务复制与原生历史
 
-建议把现有分享导出的来源读取抽成可注入接口：默认实现仍读取当前 Lex，Cindy 实现使用选定的只读来源。复用包格式与导入事务，允许内部临时包或等价快照，不要求用户手工导出。
+现有分享导出新增可注入的来源接口：默认实现仍读取当前 Lex，Cindy 实现使用选定的只读来源。复用包格式与导入事务，通过内部临时包交接，不要求用户手工导出。
 
 | 引擎 | 需要带入的内容 |
 | --- | --- |
@@ -76,24 +79,25 @@ SQLite 快照必须包含已提交的 WAL 数据；不能直接复制单个 `.db
 
 ### 5. 去重、回滚与多账号
 
-持久去重键应包含来源数据根身份、源账号、源任务 ID，不能只使用原生 SDK ID（部分任务没有该 ID，复制还会重新分配）。映射存于目标账号，并与新任务同一事务发布；优先检查能否复用既有元数据结构，确需 schema 变化时追加 migration。
+持久去重键由来源数据根、账号库文件名的摘要与源任务 ID 组成，不能只使用原生 SDK ID（部分任务没有该 ID，复制还会重新分配）。映射存于目标账号，并与新任务同一事务发布；由新增的 0118 migration 建立专用来源记录表。
 
 重复导入默认跳过已有副本，不覆盖 Lex 中继续编辑的任务。失败只清理本次新建文件与媒体引用；事务回执不确定时走已有补偿逻辑，不能误删已经提交的内容。目标账号发生 A → B → A 切换仍应中止旧操作，不能只比较最终 user ID。
 
-## 建议的落地顺序与验收
+## 自动化覆盖与仍需手工验证
 
-1. 完成只读来源发现、账号选择和候选列表；先用合成旧库与当前库验证 schema 适配、WAL 和来源隔离。
-2. 接入来源适配器及现有导入事务，同时补齐附件、目录、ID 重映射、归档保留和持久去重。
-3. 在任务导入页增加 Cindy 来源、导入预检与逐条结果；保持现有 Codex / Claude / 分享文件入口可用，补齐五语与 Light / Dark。
-4. 在隔离 Lex 环境中验证 Claude、Codex、Pi 的「打开记录 → 继续发送 → 重启后继续」，以及仅历史导入的准确提示。
+1. 来源列表到导入结果、显式部分导入确认与目录选择由设置页向导完成。
+2. 合成数据覆盖 schema/WAL、任务过滤、Orca、附件/工作目录、Pi/Codex/Claude 原生来源、重复导入、账号代次、取消、失败清理与事务回执不明。
+3. macOS 与 Windows 的真实 Cindy 数据布局、原生历史恢复、进程检测和 Light / Dark 实机效果仍需验证。
+
+资源上限：每次最多 100 个任务，单库快照 2 GiB，单任务消息 128 MiB、累计缓存消息 256 MiB，临时文件总预算 8 GiB（归档写出后的核算可能有单包大小的短暂超额）。文件副本、目录和原生 SQLite sidecar 在发布前复验；超限项显示具体失败原因。进程退出或机器崩溃时，系统临时目录可能留下副本，正常完成/失败/取消会清理；本版不提供跨进程断点恢复。
 
 必要回归包括：两个来源账号含相同任务 ID、目标切账号、重复点击、部分批量失败、数据库忙与损坏、源文件变化、附件缺失与越界、清空/rewind、退休伙伴四种归属、Orca lead/Worker 原子导入。macOS 与 Windows 都需验证中文路径、文件锁和失败清理。
 
 此功能针对当前电脑的本地 Cindy 数据。SSH 任务不读取本机同名工作目录；手机端无需新增扫描入口，也不开放远程任意路径扫描 IPC。导入后的普通任务沿用现有多端访问链路。
 
-## 本次验证范围
+## 当前验证范围
 
-- 现有分享格式、分享导入、原生 ID 重映射和流式转录写入的 4 个测试文件，共 146 项测试通过。
-- 官网及发布基础契约的 11 项测试通过。
-- `pnpm test:unit:related` 通过；本轮只修改文档与官网文案，未命中 workspace 单测，runner 为 577 项通过、2 项跳过。未进行官网 Light / Dark 实机目检。
-- 上述结果证明现有复用组件的回归状态，不是 Cindy 直接扫描导入的端到端验证；该功能尚未实现。
+- 本机导入来源适配、WAL 快照、附件/工作目录、账户代次、逐条失败和取消：合成数据自动化测试。
+- 普通分享导入、原生历史重映射、迁移事务与 Renderer 向导：相邻回归测试。
+- `db:validate` 检查 Drizzle migration 链与 schema 对齐。
+- 未读取真实 Cindy 用户数据；未在 Windows 上执行；没有实机目检 Light / Dark，也没有验证真实原生 Agent 子进程继续运行。

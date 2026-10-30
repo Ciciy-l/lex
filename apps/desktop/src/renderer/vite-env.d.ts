@@ -4764,6 +4764,7 @@ interface ElectronAPI {
       delete: (projectKey: string) => Promise<void>;
       onChanged: (cb: () => void) => () => void;
     };
+    cindyImport: import('../shared/cindyImport').CindyImportApi;
     sessionImport: {
       scan: (request?: { force?: boolean }) => Promise<{
         sources: {

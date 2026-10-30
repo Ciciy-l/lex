@@ -1318,6 +1318,14 @@ function sessionImportShare(readyDb, args) {
     return rawMessages.length;
   };
   const messageCount = readyDb.transaction(() => {
+    if (payload.importOrigin != null) {
+      const origin = asRecord(payload.importOrigin, 'importOrigin');
+      const sourceKey = expectString(origin.sourceKey, 'sourceKey');
+      const sourceSessionId = expectString(origin.sourceSessionId, 'sourceSessionId');
+      const old = readyDb.prepare("SELECT o.session_id FROM session_import_origins o JOIN sessions s ON s.id = o.session_id WHERE o.source_key = ? AND o.source_session_id = ? AND s.status != 'deleted'").get(sourceKey, sourceSessionId);
+      if (old) throw Object.assign(new Error('Cindy task already imported'), { code: 'ALREADY_EXISTS' });
+      readyDb.prepare('DELETE FROM session_import_origins WHERE source_key = ? AND source_session_id = ?').run(sourceKey, sourceSessionId);
+    }
     // 覆盖导入的替换必须与新图落库同事务:失败时旧 session 状态原子回滚。
     // 不能走带异步资源清理副作用的 patchSessionMetaInDb。
     const deleteReplacedSession = readyDb.prepare(
@@ -1366,6 +1374,13 @@ function sessionImportShare(readyDb, args) {
           expectNumber(record.updatedAt, 'orca.workers[].record.updatedAt'),
         );
       }
+    }
+    if (payload.importOrigin != null) {
+      const origin = asRecord(payload.importOrigin, 'importOrigin');
+      readyDb.prepare('INSERT INTO session_import_origins (source_key, source_session_id, session_id, fidelity, imported_at) VALUES (?, ?, ?, ?, ?)').run(
+        expectString(origin.sourceKey, 'sourceKey'), expectString(origin.sourceSessionId, 'sourceSessionId'),
+        expectString(session.id, 'session.id'), expectString(origin.fidelity, 'fidelity'), Date.now(),
+      );
     }
     return count;
   })();

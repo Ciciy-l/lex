@@ -1,3 +1,4 @@
+import { rewriteNativeMetadata } from './nativeSessionMetadata.pure';
 /**
  * 会话分享导出编排:把一个本机会话(cc / codex / pi / omp)打成 .xdtshare 文件。
  *
@@ -81,6 +82,8 @@ const log = createLogger('session-share-export');
 export const SHARE_EXPORT_SIZE_LIMIT_BYTES = 256 * 1024 * 1024;
 
 export interface SessionShareExportOptions {
+  /** Host-only external source; never accepted from share-export IPC. */
+  source?: SessionShareSource;
   sessionId: string;
   targetPath: string;
   password?: string | null;
@@ -150,7 +153,7 @@ export interface MediaMapEntry {
   filename: string;
 }
 
-interface SessionRow {
+export interface SessionRow {
   id: string;
   title: string;
   workingDir: string | null;
@@ -176,7 +179,7 @@ interface SessionRow {
   updatedAt: number;
 }
 
-interface MessageRow {
+export interface MessageRow {
   id: string;
   clientId: string;
   role: string;
@@ -213,19 +216,7 @@ function rewritePiAgentMetaForExport(
   agentMeta: string | null,
   portableIds: ReadonlyMap<string, string>,
 ): string | null {
-  if (!agentMeta) return agentMeta;
-  try {
-    const parsed = JSON.parse(agentMeta) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    const meta = parsed as Record<string, unknown>;
-    if (typeof meta.sdkSessionId !== 'string') return agentMeta;
-    const portable = portableIds.get(meta.sdkSessionId);
-    if (portable) meta.sdkSessionId = portable;
-    else delete meta.sdkSessionId;
-    return JSON.stringify(meta);
-  } catch {
-    return null;
-  }
+  return rewriteNativeMetadata(agentMeta, portableIds);
 }
 
 /**
@@ -326,7 +317,7 @@ async function stageTranscript(
 }
 
 /** 单会话的阶段 A 收集结果(lead 与协同 Worker 复用同一套流程)。 */
-interface SessionPhaseA {
+export interface SessionPhaseA {
   session: SessionRow;
   messages: MessageRow[];
   /** zip 内前缀:lead 为 '',Worker 为 `orca/workers/<i>/`。 */
@@ -348,10 +339,21 @@ interface SessionPhaseB {
 }
 
 /** 协同 Worker 的导出来源(orca_workers 记录 + 会话行 + 可见消息)。 */
-interface OrcaWorkerSource {
+export interface OrcaWorkerSource {
   record: { status: string; label: string | null; role: string; focused: number };
   session: SessionRow;
   messages: MessageRow[];
+}
+
+/** All external reads stay bound to one frozen source, without changing app globals. */
+export interface SessionShareSource {
+  readSession(id: string): Promise<SessionRow | null>;
+  readMessages(id: string, clearedAt: number | null): Promise<MessageRow[]>;
+  readWorkers(id: string): Promise<{ teamStatus: XdtshareOrcaManifest['teamStatus']; workers: OrcaWorkerSource[] } | null>;
+  collectNative(session: SessionRow, messages: MessageRow[], prefix: string): Promise<SessionPhaseA>;
+  resolveMedia(scheme: MediaScheme, url: string): Promise<ReturnType<typeof resolveMediaFile>>;
+  mediaRoots: string[];
+  assertStillValid(): void;
 }
 
 /**
@@ -523,7 +525,7 @@ async function readSessionPhaseB(
           'buffer' in content
             ? portablePiSessionId(content.buffer)
             : piSessionIdFromDigest(content.sha256);
-        piPortableIds.set(candidate.absPath, portableId);
+        piPortableIds.set(candidate.sdkSessionId, portableId);
         if (!seenPiPortableIds.has(portableId)) {
           seenPiPortableIds.add(portableId);
           const zipPath = `${zipPrefix}transcripts/pi/${portableId}`;
@@ -552,6 +554,7 @@ async function readSessionPhaseB(
     bundleMessages = a.messages.map((message) => ({
       ...message,
       agentMeta: rewritePiAgentMetaForExport(message.agentMeta, piPortableIds),
+      ...(message.role === 'agent_switch' ? { content: rewriteNativeMetadata(message.content, piPortableIds) ?? message.content } : {}),
     }));
   } else if (session.agentKind === 'omp') {
     bundleMessages = a.messages.map((message) => ({
@@ -627,7 +630,11 @@ export async function exportSessionShare(
   // 会话行、消息与 Codex thread-index 都按当前账号读取;中途换账号会把两个账号
   // 的数据拼进同一个包,落盘前复核(scope 含代次,A→B→A 同样能识别)。
   const ownerScope = activeOwnerScopeKey();
-  const session = await readSessionRow(opts.sessionId);
+  const readSession = opts.source?.readSession.bind(opts.source) ?? readSessionRow;
+  const readMessages = opts.source?.readMessages.bind(opts.source) ?? readMessageRows;
+  const collectNative = opts.source?.collectNative.bind(opts.source) ?? collectSessionPhaseA;
+  opts.source?.assertStillValid();
+  const session = await readSession(opts.sessionId);
   if (!session) throw codedError('NOT_FOUND', `session not found: ${opts.sessionId}`);
   if (session.status === 'deleted') {
     throw codedError('NOT_FOUND', 'session is deleted');
@@ -653,23 +660,25 @@ export async function exportSessionShare(
     throw codedError('PRECONDITION_FAILED', `unsupported agentKind: ${session.agentKind}`);
   }
 
-  const messages = await readMessageRows(opts.sessionId, session.clearedAt);
-  if (messages.length === 0) {
+  const messages = await readMessages(opts.sessionId, session.clearedAt);
+  if (messages.length === 0 && !opts.source) {
     throw codedError('SHARE_EXPORT_FAILED', 'session has no messages to share');
   }
 
   // ── 协同收集:lead 的 active team 全部 Worker 随包(stale lead 无 active
   //    team 时按普通会话导出)。Worker 允许 0 条消息(刚创建未派活)。──
   const orcaSources =
-    session.orcaRole === 'lead' ? await collectOrcaWorkerSources(session.id, opts.migration) : null;
+    session.orcaRole === 'lead'
+      ? await (opts.source ? opts.source.readWorkers(session.id) : collectOrcaWorkerSources(session.id, opts.migration))
+      : null;
   const workerSources = orcaSources?.workers ?? [];
 
   // ── 阶段 A(lead + 每个 Worker) ──
-  const leadA = await collectSessionPhaseA(session, messages, '');
+  const leadA = await collectNative(session, messages, '');
   const workersA: SessionPhaseA[] = [];
   for (let i = 0; i < workerSources.length; i += 1) {
     workersA.push(
-      await collectSessionPhaseA(
+      await collectNative(
         workerSources[i].session,
         workerSources[i].messages,
         `orca/workers/${i}/`,
@@ -708,7 +717,7 @@ export async function exportSessionShare(
     // 入仓后,?path= 指向 blobs 内路径,再导出必须放行,否则附件在二次分享时
     // 静默丢失——review P1 的闭环回归)。
     const managedMediaRoots: string[] = [];
-    for (const root of [
+    for (const root of opts.source?.mediaRoots ?? [
       path.resolve(path.join(app.getPath('userData'), 'cc-agent')),
       path.resolve(cindyMediaBlobsRoot()),
     ]) {
@@ -741,7 +750,7 @@ export async function exportSessionShare(
         for (const { scheme, url } of collectMediaUrls(message.content)) {
           if (seenUrls.has(url)) continue;
           seenUrls.add(url);
-          const resolved = resolveMediaFile(scheme, url);
+          const resolved = opts.source ? await opts.source.resolveMedia(scheme, url) : resolveMediaFile(scheme, url);
           if (!resolved) continue; // 非法 URL:不进 map,导入端原样保留
           const looseBlocked =
             resolved.entry.kind === 'loose' &&
@@ -957,6 +966,7 @@ export async function exportSessionShare(
   if (activeOwnerScopeKey() !== ownerScope) {
     throw codedError('SHARE_EXPORT_FAILED', 'account changed during export');
   }
+  opts.source?.assertStillValid();
   const tmpPath = `${opts.targetPath}.${randomBytes(8).toString('hex')}.tmp`;
   try {
     await fsp.writeFile(tmpPath, fileBytes, { flag: 'wx' });
@@ -1034,7 +1044,7 @@ function buildSessionSnapshot(
   };
 }
 
-function resolveMediaFile(
+export function resolveMediaFile(
   scheme: MediaScheme,
   url: string,
 ): { entry: MediaMapEntry; absPath: string | null; folder: string } | null {

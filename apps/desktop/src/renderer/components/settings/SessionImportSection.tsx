@@ -8,6 +8,8 @@ import { emitRefresh } from '@/lib/sessionsBus';
 import { Spinner } from '@/components/ui/spinner';
 import { formatSidebarTime, formatSidebarTimeAbsolute } from '@/features/cc-agent/lib/formatSidebarTime';
 import { SessionShareImportWizard } from './SessionShareImportWizard';
+import { CindyImportWizard } from './CindyImportWizard';
+import { Button } from '@/components/ui/button';
 
 type ImportSource = 'codex' | 'claude';
 type SourceFilter = 'all' | ImportSource;
@@ -56,6 +58,7 @@ export function SessionImportSection() {
   const [scanning, setScanning] = useState(false);
   const [importing, setImporting] = useState(false);
   const [shareWizardOpen, setShareWizardOpen] = useState(false);
+  const [cindyWizardOpen, setCindyWizardOpen] = useState(false);
   const initialScanStartedRef = useRef(false);
 
   const runScan = useCallback(async (options?: { force?: boolean }) => {
@@ -177,7 +180,8 @@ export function SessionImportSection() {
             {t('settings.sessionImport.description')}
           </p>
         </div>
-        <div className="flex shrink-0 items-center justify-end gap-2 select-none">
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 select-none">
+          <Button variant="secondary" onClick={() => setCindyWizardOpen(true)}>{t('settings.cindyImport.entry')}</Button>
           <button
             type="button"
             onClick={() => setShareWizardOpen(true)}
@@ -208,6 +212,7 @@ export function SessionImportSection() {
         </div>
       </header>
 
+      {cindyWizardOpen && <CindyImportWizard onClose={() => setCindyWizardOpen(false)} />}
       {shareWizardOpen && (
         <SessionShareImportWizard open={shareWizardOpen} onOpenChange={setShareWizardOpen} />
       )}
