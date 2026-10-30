@@ -1,47 +1,37 @@
 {
   "schemaVersion": 1,
-  "version": "0.1.12",
-  "versionCode": 1001299,
+  "version": "0.1.13",
+  "versionCode": 1001399,
   "packageName": "io.github.ciciyl.lex",
-  "size": 129587958,
-  "sha256": "d93348d50d49233f99c087114b79ecbaf514f955125543e9bf0e0adf3840ff7b",
+  "size": 129587674,
+  "sha256": "9d6aed3fd1160defe2f4276be885ae3287ce968740b951364731dd55ed3f9532",
   "certificateSha256": "86261bb1fea32e9122a7934f5f62d3b100c2248e032d148837ea997ce0b33a14",
   "platform": "android",
-  "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.12/Lex-0.1.12-Android.apk",
-  "releaseUrl": "https://github.com/Ciciy-l/lex/releases/tag/v0.1.12",
+  "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.13/Lex-0.1.13-Android.apk",
+  "releaseUrl": "https://github.com/Ciciy-l/lex/releases/tag/v0.1.13",
   "contentByLocale": {
     "zh-CN": {
-      "intro": "Lex 0.1.12 改善终端恢复、消息引用与文件链接，新增 GPT Fast 选项并完善 Codex 压缩。",
+      "intro": "Lex 0.1.13 改善 Fast 开关、移动端账号切换和 macOS 使用体验，并更新四个执行引擎。",
       "topics": [
         {
-          "id": "terminal",
-          "title": "更简洁、可靠的终端",
-          "text": "终端添加菜单移除旧的 Agent CLI 快捷启动入口，保留 Shell、远程终端与浏览器；主页同步介绍 GUI/TUI 工作台。恢复时重连仍在运行的终端，确认旧终端不存在后自动恢复对应 Shell 与工作目录，不重放之前的命令。"
-        },
-        {
           "id": "fast",
-          "title": "按连接开启 GPT Fast",
-          "text": "在模型自定义设置中主动开启，默认关闭。可用性由当前模型、连接和引擎决定，可能额外计费，实际处理档位以服务端为准。"
+          "title": "已有连接也能请求 Fast",
+          "text": "Codex 的 API 与自定义连接，以及 Claude Code、Pi 的 OpenAI 兼容路由，可以直接开启 Fast，无需重新添加供应商。默认关闭；供应商可能接受、忽略或拒绝请求，实际速度与计费以供应商为准。原生订阅与 xAI Fast 型号仍遵循账号可用范围。"
         },
         {
-          "id": "references",
-          "title": "减少重复引用",
-          "text": "完整引用不再重复加入同一条消息正文。长引用优先保留所引用消息，并控制最终发送大小；相同正文的不同消息仍保持独立。"
+          "id": "accounts",
+          "title": "修复跨区域账号切换",
+          "text": "修复移动端先登录中国大陆账号、再登录全球账号后，无法切回中国大陆账号的问题。"
         },
         {
-          "id": "files",
-          "title": "失效文件链接可重试",
-          "text": "明确的文件链接在暂时失效时仍保留入口，显示失败原因并支持刷新重试。远程链接继续在对应电脑上解析。"
+          "id": "mac",
+          "title": "改善 macOS 体验",
+          "text": "补齐 macOS 本地运行所需的路径、进程与终端兼容处理。"
         },
         {
-          "id": "compact",
-          "title": "Codex 优先服务端压缩",
-          "text": "支持手动原生压缩，在兼容连接上优先尝试服务端压缩；自动压缩仍由原生运行时管理。确认可安全回退时使用同模型摘要，TUI 任务失败时保留当前任务并提示。结果未知时不自动重复压缩，重新打开任务后可按当前连接再次尝试。"
-        },
-        {
-          "id": "identity",
-          "title": "Lex 请求标识",
-          "text": "模型请求使用 Lex 应用标识，保留原生客户端信息、必要协议字段和显式自定义请求头。"
+          "id": "engines",
+          "title": "更新执行引擎",
+          "text": "Claude Code 更新至 2.1.314，Codex 更新至 0.166.0，Pi 更新至 1.4.0，OMP 更新至 18.14.0。保留用户自行选择的引擎版本。"
         },
         {
           "id": "upgrade",
@@ -51,37 +41,27 @@
       ]
     },
     "zh-TW": {
-      "intro": "Lex 0.1.12 改善終端機恢復、訊息引用與檔案連結，新增 GPT Fast 選項並完善 Codex 壓縮。",
+      "intro": "Lex 0.1.13 改善 Fast 開關、行動版帳號切換與 macOS 使用體驗，並更新四個執行引擎。",
       "topics": [
         {
-          "id": "terminal",
-          "title": "更簡潔、可靠的終端機",
-          "text": "終端機新增選單移除舊的 Agent CLI 快速啟動入口，保留 Shell、遠端終端機與瀏覽器；首頁同步介紹 GUI/TUI 工作台。恢復時重新連線仍在執行的終端機，確認舊終端機不存在後自動恢復對應 Shell 與工作目錄，不重播先前的命令。"
-        },
-        {
           "id": "fast",
-          "title": "依連線啟用 GPT Fast",
-          "text": "在模型自訂設定中主動啟用，預設關閉。可用性取決於目前模型、連線與引擎，可能額外計費，實際處理層級以伺服器為準。"
+          "title": "現有連線也能請求 Fast",
+          "text": "Codex 的 API 與自訂連線，以及 Claude Code、Pi 的 OpenAI 相容路由，可直接啟用 Fast，無須重新新增供應商。預設關閉；供應商可能接受、忽略或拒絕請求，實際速度與計費以供應商為準。原生訂閱與 xAI Fast 型號仍依帳號可用範圍提供。"
         },
         {
-          "id": "references",
-          "title": "減少重複引用",
-          "text": "完整引用不再重複加入同一則訊息正文。長引用優先保留被引用訊息，並控制最終傳送大小；正文相同的不同訊息仍保持獨立。"
+          "id": "accounts",
+          "title": "修復跨區域帳號切換",
+          "text": "修復行動版先登入中國大陸帳號、再登入全球帳號後，無法切回中國大陸帳號的問題。"
         },
         {
-          "id": "files",
-          "title": "失效檔案連結可重試",
-          "text": "明確的檔案連結暫時失效時仍保留入口，顯示失敗原因並支援重新整理後重試。遠端連結仍在對應電腦上解析。"
+          "id": "mac",
+          "title": "改善 macOS 體驗",
+          "text": "補齊 macOS 本機執行所需的路徑、程序與終端機相容處理。"
         },
         {
-          "id": "compact",
-          "title": "Codex 優先伺服器端壓縮",
-          "text": "支援手動原生壓縮，在相容連線上優先嘗試伺服器端壓縮；自動壓縮仍由原生執行環境管理。確認可安全退回時使用同模型摘要，TUI 任務失敗時保留目前任務並提示。結果未知時不自動重複壓縮，重新開啟任務後可依目前連線再次嘗試。"
-        },
-        {
-          "id": "identity",
-          "title": "Lex 請求標識",
-          "text": "模型請求使用 Lex 應用程式標識，保留原生用戶端資訊、必要協定欄位與明確自訂的請求標頭。"
+          "id": "engines",
+          "title": "更新執行引擎",
+          "text": "Claude Code 更新至 2.1.314，Codex 更新至 0.166.0，Pi 更新至 1.4.0，OMP 更新至 18.14.0。保留使用者自行選擇的引擎版本。"
         },
         {
           "id": "upgrade",
@@ -91,37 +71,27 @@
       ]
     },
     "en": {
-      "intro": "Lex 0.1.12 improves terminal recovery, message references, and file links, adds a GPT Fast option, and improves Codex compaction.",
+      "intro": "Lex 0.1.13 improves Fast controls, mobile account switching, and macOS compatibility, and updates all four engines.",
       "topics": [
         {
-          "id": "terminal",
-          "title": "Simpler, more reliable terminals",
-          "text": "The terminal menu removes the old Agent CLI quick-launch entries while keeping shells, remote terminals, and the browser. The homepage now describes the GUI/TUI workspace. Recovery reconnects live terminals and restores the correct shell and working directory only after confirming the old terminal is gone, without replaying commands."
-        },
-        {
           "id": "fast",
-          "title": "Enable GPT Fast per connection",
-          "text": "Opt in through model customization; Fast stays off by default. Availability depends on the selected model, connection, and engine. Extra charges may apply, and the server determines the actual processing tier."
+          "title": "Request Fast on existing connections",
+          "text": "Enable Fast on Codex API and custom connections, and on OpenAI-compatible routes in Claude Code and Pi, without adding your provider again. Fast stays off by default. Providers may accept, ignore, or reject the request; actual speed and billing depend on them. Native subscriptions and xAI Fast models remain subject to account availability."
         },
         {
-          "id": "references",
-          "title": "Less duplicate reference text",
-          "text": "Complete references no longer add the same message body twice. Long references prioritize the selected message and limit the final request size. Separate messages with identical text remain distinct."
+          "id": "accounts",
+          "title": "Switch between regional accounts",
+          "text": "Fixes mobile account switching when signing in to a mainland China account, then a global account, and switching back."
         },
         {
-          "id": "files",
-          "title": "Retry unavailable file links",
-          "text": "Explicit file links remain accessible when temporarily unavailable, show a failure reason, and support refresh and retry. Remote links are still resolved on the corresponding computer."
+          "id": "mac",
+          "title": "Better macOS compatibility",
+          "text": "Improves local path, process, and terminal handling on macOS."
         },
         {
-          "id": "compact",
-          "title": "Codex prefers server-side compaction",
-          "text": "Manual native compaction is available and prefers server-side processing on compatible connections. Automatic compaction remains native-owned. Confirmed safe failures can fall back to a summary using the same model; TUI tasks retain their state and report the failure. Unknown outcomes are not retried automatically. Reopening a task allows another attempt on the current connection."
-        },
-        {
-          "id": "identity",
-          "title": "Lex request attribution",
-          "text": "Model requests identify Lex while preserving native client details, required protocol fields, and explicit custom headers."
+          "id": "engines",
+          "title": "Updated engines",
+          "text": "Updates Claude Code to 2.1.314, Codex to 0.166.0, Pi to 1.4.0, and OMP to 18.14.0. Your explicitly selected engine versions are preserved."
         },
         {
           "id": "upgrade",
@@ -131,37 +101,27 @@
       ]
     },
     "ja": {
-      "intro": "Lex 0.1.12 ではターミナルの復帰、メッセージの引用、ファイルリンクを改善し、GPT Fast オプションを追加して Codex の圧縮を改善しました。",
+      "intro": "Lex 0.1.13 では Fast 設定、モバイルのアカウント切り替え、macOS の互換性を改善し、4 つの実行エンジンを更新しました。",
       "topics": [
         {
-          "id": "terminal",
-          "title": "シンプルで安定したターミナル",
-          "text": "追加メニューから旧 Agent CLI クイック起動を削除し、Shell・リモートターミナル・ブラウザーは維持しました。ホームページも GUI/TUI ワークスペースの説明に更新しました。動作中のターミナルには再接続し、旧ターミナルの消失を確認した場合のみ Shell と作業ディレクトリを復元します。以前のコマンドは再実行しません。"
-        },
-        {
           "id": "fast",
-          "title": "接続に応じて GPT Fast を有効化",
-          "text": "モデルのカスタマイズ設定から有効にでき、初期状態はオフです。利用可否はモデル・接続・エンジンに依存し、追加料金が発生する場合があります。実際の処理ティアはサーバーが決定します。"
+          "title": "既存の接続で Fast を要求",
+          "text": "Codex の API・カスタム接続と、Claude Code・Pi の OpenAI 互換ルートで、プロバイダーを再追加せずに Fast を有効にできます。初期状態はオフです。プロバイダーは要求を受け入れ、無視、または拒否する場合があり、実際の速度と料金はプロバイダーが決定します。ネイティブのサブスクリプションと xAI Fast モデルは引き続きアカウントの利用権限に従います。"
         },
         {
-          "id": "references",
-          "title": "引用の重複を削減",
-          "text": "完全な引用では同じメッセージ本文を重複して追加しません。長い引用では対象メッセージを優先し、最終的な送信サイズを制限します。同じ本文でも別のメッセージは区別します。"
+          "id": "accounts",
+          "title": "地域間のアカウント切り替えを修正",
+          "text": "モバイルで中国本土のアカウント、グローバルアカウントの順にログインした後、中国本土のアカウントへ戻れない問題を修正しました。"
         },
         {
-          "id": "files",
-          "title": "開けないファイルリンクを再試行",
-          "text": "明示的なファイルリンクは一時的に利用できなくても残り、失敗理由を表示して更新・再試行できます。リモートリンクは引き続き対象のコンピューターで解決します。"
+          "id": "mac",
+          "title": "macOS の互換性を改善",
+          "text": "macOS のローカルパス、プロセス、ターミナルの処理を改善しました。"
         },
         {
-          "id": "compact",
-          "title": "Codex はサーバー側の圧縮を優先",
-          "text": "手動のネイティブ圧縮に対応し、互換性のある接続ではサーバー側の圧縮を優先します。自動圧縮はネイティブの実行環境が管理します。安全に切り替えられると確認できた失敗では同じモデルの要約へ移行し、TUI タスクは状態を保持して失敗を通知します。結果不明の場合は自動再試行せず、タスクを開き直すと現在の接続で再度試せます。"
-        },
-        {
-          "id": "identity",
-          "title": "Lex のリクエスト識別",
-          "text": "モデルへのリクエストに Lex の識別情報を付け、ネイティブクライアント情報、必須のプロトコル項目、明示的なカスタムヘッダーを維持します。"
+          "id": "engines",
+          "title": "実行エンジンを更新",
+          "text": "Claude Code を 2.1.314、Codex を 0.166.0、Pi を 1.4.0、OMP を 18.14.0 に更新しました。ユーザーが明示的に選択したエンジンのバージョンは保持します。"
         },
         {
           "id": "upgrade",
@@ -171,37 +131,27 @@
       ]
     },
     "ko": {
-      "intro": "Lex 0.1.12는 터미널 복원, 메시지 인용, 파일 링크를 개선하고 GPT Fast 옵션을 추가하며 Codex 압축을 개선합니다.",
+      "intro": "Lex 0.1.13은 Fast 설정, 모바일 계정 전환 및 macOS 호환성을 개선하고 네 가지 실행 엔진을 업데이트합니다.",
       "topics": [
         {
-          "id": "terminal",
-          "title": "더 간결하고 안정적인 터미널",
-          "text": "추가 메뉴에서 기존 Agent CLI 빠른 실행 항목을 제거하고 Shell, 원격 터미널, 브라우저는 유지했습니다. 홈페이지도 GUI/TUI 작업 공간 설명으로 업데이트했습니다. 실행 중인 터미널에는 다시 연결하며, 이전 터미널이 없다고 확인된 경우에만 해당 Shell과 작업 폴더를 복원합니다. 이전 명령은 다시 실행하지 않습니다."
-        },
-        {
           "id": "fast",
-          "title": "연결에 맞게 GPT Fast 켜기",
-          "text": "모델 사용자 지정 설정에서 직접 켤 수 있으며 기본값은 꺼짐입니다. 사용 가능 여부는 모델, 연결, 엔진에 따라 달라지고 추가 요금이 발생할 수 있습니다. 실제 처리 등급은 서버가 결정합니다."
+          "title": "기존 연결에서 Fast 요청",
+          "text": "Codex의 API 및 사용자 지정 연결과 Claude Code, Pi의 OpenAI 호환 경로에서 공급자를 다시 추가하지 않고 Fast를 켤 수 있습니다. 기본값은 꺼짐입니다. 공급자는 요청을 수락하거나 무시하거나 거부할 수 있으며 실제 속도와 요금은 공급자에 따라 달라집니다. 네이티브 구독 및 xAI Fast 모델은 계속 계정의 이용 권한을 따릅니다."
         },
         {
-          "id": "references",
-          "title": "중복 인용 줄이기",
-          "text": "완전한 인용은 같은 메시지 본문을 두 번 추가하지 않습니다. 긴 인용은 대상 메시지를 우선 보존하고 최종 요청 크기를 제한합니다. 본문이 같아도 서로 다른 메시지는 구분합니다."
+          "id": "accounts",
+          "title": "지역 간 계정 전환 수정",
+          "text": "모바일에서 중국 본토 계정에 로그인한 다음 글로벌 계정에 로그인한 후, 중국 본토 계정으로 다시 전환할 수 없던 문제를 수정했습니다."
         },
         {
-          "id": "files",
-          "title": "열리지 않는 파일 링크 다시 시도",
-          "text": "명시적 파일 링크는 일시적으로 사용할 수 없어도 유지되며, 실패 이유를 표시하고 새로 고침 후 다시 시도할 수 있습니다. 원격 링크는 계속 해당 컴퓨터에서 확인합니다."
+          "id": "mac",
+          "title": "macOS 호환성 개선",
+          "text": "macOS의 로컬 경로, 프로세스 및 터미널 처리를 개선했습니다."
         },
         {
-          "id": "compact",
-          "title": "Codex 서버 측 압축 우선",
-          "text": "수동 네이티브 압축을 지원하며 호환되는 연결에서는 서버 측 압축을 먼저 시도합니다. 자동 압축은 네이티브 실행 환경이 관리합니다. 안전한 전환이 확인된 실패는 같은 모델의 요약으로 대체할 수 있으며, TUI 작업은 상태를 유지하고 실패를 알립니다. 결과가 불명확하면 자동 재시도하지 않고, 작업을 다시 열면 현재 연결로 다시 시도할 수 있습니다."
-        },
-        {
-          "id": "identity",
-          "title": "Lex 요청 식별",
-          "text": "모델 요청에 Lex 식별 정보를 사용하면서 네이티브 클라이언트 정보, 필수 프로토콜 필드, 명시적으로 지정한 사용자 헤더를 유지합니다."
+          "id": "engines",
+          "title": "실행 엔진 업데이트",
+          "text": "Claude Code를 2.1.314, Codex를 0.166.0, Pi를 1.4.0, OMP를 18.14.0으로 업데이트했습니다. 사용자가 직접 선택한 엔진 버전은 유지합니다."
         },
         {
           "id": "upgrade",

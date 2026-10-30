@@ -1,0 +1,156 @@
+{
+  "version": "0.1.13",
+  "date": "2026-10-30",
+  "contentByLocale": {
+    "zh-CN": {
+      "intro": "Lex 0.1.13 改善 Fast 开关、移动端账号切换和 macOS 使用体验，并更新四个执行引擎。",
+      "topics": [
+        {
+          "id": "fast",
+          "title": "已有连接也能请求 Fast",
+          "text": "Codex 的 API 与自定义连接，以及 Claude Code、Pi 的 OpenAI 兼容路由，可以直接开启 Fast，无需重新添加供应商。默认关闭；供应商可能接受、忽略或拒绝请求，实际速度与计费以供应商为准。原生订阅与 xAI Fast 型号仍遵循账号可用范围。"
+        },
+        {
+          "id": "accounts",
+          "title": "修复跨区域账号切换",
+          "text": "修复移动端先登录中国大陆账号、再登录全球账号后，无法切回中国大陆账号的问题。"
+        },
+        {
+          "id": "mac",
+          "title": "改善 macOS 体验",
+          "text": "补齐 macOS 本地运行所需的路径、进程与终端兼容处理。"
+        },
+        {
+          "id": "engines",
+          "title": "更新执行引擎",
+          "text": "Claude Code 更新至 2.1.314，Codex 更新至 0.166.0，Pi 更新至 1.4.0，OMP 更新至 18.14.0。保留用户自行选择的引擎版本。"
+        },
+        {
+          "id": "upgrade",
+          "title": "升级须知",
+          "text": "Android 请使用完整 APK 覆盖安装，请勿先卸载。桌面安装包的实际签名与公证状态以发行页为准；暂不提供 iOS 安装包。"
+        }
+      ]
+    },
+    "zh-TW": {
+      "intro": "Lex 0.1.13 改善 Fast 開關、行動版帳號切換與 macOS 使用體驗，並更新四個執行引擎。",
+      "topics": [
+        {
+          "id": "fast",
+          "title": "現有連線也能請求 Fast",
+          "text": "Codex 的 API 與自訂連線，以及 Claude Code、Pi 的 OpenAI 相容路由，可直接啟用 Fast，無須重新新增供應商。預設關閉；供應商可能接受、忽略或拒絕請求，實際速度與計費以供應商為準。原生訂閱與 xAI Fast 型號仍依帳號可用範圍提供。"
+        },
+        {
+          "id": "accounts",
+          "title": "修復跨區域帳號切換",
+          "text": "修復行動版先登入中國大陸帳號、再登入全球帳號後，無法切回中國大陸帳號的問題。"
+        },
+        {
+          "id": "mac",
+          "title": "改善 macOS 體驗",
+          "text": "補齊 macOS 本機執行所需的路徑、程序與終端機相容處理。"
+        },
+        {
+          "id": "engines",
+          "title": "更新執行引擎",
+          "text": "Claude Code 更新至 2.1.314，Codex 更新至 0.166.0，Pi 更新至 1.4.0，OMP 更新至 18.14.0。保留使用者自行選擇的引擎版本。"
+        },
+        {
+          "id": "upgrade",
+          "title": "升級須知",
+          "text": "Android 請使用完整 APK 覆蓋安裝，請勿先解除安裝。桌面安裝套件的實際簽章與公證狀態以發行頁為準；暫不提供 iOS 安裝套件。"
+        }
+      ]
+    },
+    "en": {
+      "intro": "Lex 0.1.13 improves Fast controls, mobile account switching, and macOS compatibility, and updates all four engines.",
+      "topics": [
+        {
+          "id": "fast",
+          "title": "Request Fast on existing connections",
+          "text": "Enable Fast on Codex API and custom connections, and on OpenAI-compatible routes in Claude Code and Pi, without adding your provider again. Fast stays off by default. Providers may accept, ignore, or reject the request; actual speed and billing depend on them. Native subscriptions and xAI Fast models remain subject to account availability."
+        },
+        {
+          "id": "accounts",
+          "title": "Switch between regional accounts",
+          "text": "Fixes mobile account switching when signing in to a mainland China account, then a global account, and switching back."
+        },
+        {
+          "id": "mac",
+          "title": "Better macOS compatibility",
+          "text": "Improves local path, process, and terminal handling on macOS."
+        },
+        {
+          "id": "engines",
+          "title": "Updated engines",
+          "text": "Updates Claude Code to 2.1.314, Codex to 0.166.0, Pi to 1.4.0, and OMP to 18.14.0. Your explicitly selected engine versions are preserved."
+        },
+        {
+          "id": "upgrade",
+          "title": "Upgrading",
+          "text": "On Android, install the full APK over the existing app without uninstalling first. See the release page for actual desktop signing and notarization status. An iOS installer is not currently provided."
+        }
+      ]
+    },
+    "ja": {
+      "intro": "Lex 0.1.13 では Fast 設定、モバイルのアカウント切り替え、macOS の互換性を改善し、4 つの実行エンジンを更新しました。",
+      "topics": [
+        {
+          "id": "fast",
+          "title": "既存の接続で Fast を要求",
+          "text": "Codex の API・カスタム接続と、Claude Code・Pi の OpenAI 互換ルートで、プロバイダーを再追加せずに Fast を有効にできます。初期状態はオフです。プロバイダーは要求を受け入れ、無視、または拒否する場合があり、実際の速度と料金はプロバイダーが決定します。ネイティブのサブスクリプションと xAI Fast モデルは引き続きアカウントの利用権限に従います。"
+        },
+        {
+          "id": "accounts",
+          "title": "地域間のアカウント切り替えを修正",
+          "text": "モバイルで中国本土のアカウント、グローバルアカウントの順にログインした後、中国本土のアカウントへ戻れない問題を修正しました。"
+        },
+        {
+          "id": "mac",
+          "title": "macOS の互換性を改善",
+          "text": "macOS のローカルパス、プロセス、ターミナルの処理を改善しました。"
+        },
+        {
+          "id": "engines",
+          "title": "実行エンジンを更新",
+          "text": "Claude Code を 2.1.314、Codex を 0.166.0、Pi を 1.4.0、OMP を 18.14.0 に更新しました。ユーザーが明示的に選択したエンジンのバージョンは保持します。"
+        },
+        {
+          "id": "upgrade",
+          "title": "アップグレードについて",
+          "text": "Android はアンインストールせず、完全な APK を上書きインストールしてください。デスクトップ版の署名・公証の実際の状態はリリースページをご確認ください。iOS インストーラーは現在提供していません。"
+        }
+      ]
+    },
+    "ko": {
+      "intro": "Lex 0.1.13은 Fast 설정, 모바일 계정 전환 및 macOS 호환성을 개선하고 네 가지 실행 엔진을 업데이트합니다.",
+      "topics": [
+        {
+          "id": "fast",
+          "title": "기존 연결에서 Fast 요청",
+          "text": "Codex의 API 및 사용자 지정 연결과 Claude Code, Pi의 OpenAI 호환 경로에서 공급자를 다시 추가하지 않고 Fast를 켤 수 있습니다. 기본값은 꺼짐입니다. 공급자는 요청을 수락하거나 무시하거나 거부할 수 있으며 실제 속도와 요금은 공급자에 따라 달라집니다. 네이티브 구독 및 xAI Fast 모델은 계속 계정의 이용 권한을 따릅니다."
+        },
+        {
+          "id": "accounts",
+          "title": "지역 간 계정 전환 수정",
+          "text": "모바일에서 중국 본토 계정에 로그인한 다음 글로벌 계정에 로그인한 후, 중국 본토 계정으로 다시 전환할 수 없던 문제를 수정했습니다."
+        },
+        {
+          "id": "mac",
+          "title": "macOS 호환성 개선",
+          "text": "macOS의 로컬 경로, 프로세스 및 터미널 처리를 개선했습니다."
+        },
+        {
+          "id": "engines",
+          "title": "실행 엔진 업데이트",
+          "text": "Claude Code를 2.1.314, Codex를 0.166.0, Pi를 1.4.0, OMP를 18.14.0으로 업데이트했습니다. 사용자가 직접 선택한 엔진 버전은 유지합니다."
+        },
+        {
+          "id": "upgrade",
+          "title": "업그레이드 안내",
+          "text": "Android는 먼저 제거하지 말고 전체 APK를 덮어 설치하세요. 데스크톱 패키지의 실제 서명 및 공증 상태는 릴리스 페이지를 확인하세요. iOS 설치 파일은 현재 제공하지 않습니다."
+        }
+      ]
+    }
+  }
+}

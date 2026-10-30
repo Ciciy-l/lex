@@ -1,19 +1,19 @@
 {
   "app": {
-    "version": "0.1.12",
-    "releaseNotes": "Lex 0.1.12",
+    "version": "0.1.13",
+    "releaseNotes": "Lex 0.1.13",
     "installer": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.12/Lex-0.1.12-Linux-x64.deb",
-      "sha256": "112bb7e7c7ef2367ca63a80fd5e8b5ed28d64d0c4bd7a05e344cfe6676dc09a8",
-      "size": 205410556
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.13/Lex-0.1.13-Linux-x64.deb",
+      "sha256": "8866e5ac6d72a165218dc7fdbf8fd457e0440db5139b6e5cd1b1086016efdd71",
+      "size": 205408314
     }
   },
   "claudeCode": {
-    "version": "2.1.296",
-    "file": "https://downloads.claude.ai/claude-code-releases/2.1.296/linux-x64/claude",
-    "sha256": "24972e3bc859fab2b46ed4c1e51f7d6130f06d3bd550811a114640de3370d0de",
-    "size": 257068216,
-    "binarySha256": "24972e3bc859fab2b46ed4c1e51f7d6130f06d3bd550811a114640de3370d0de"
+    "version": "2.1.314",
+    "file": "https://downloads.claude.ai/claude-code-releases/2.1.314/linux-x64/claude",
+    "sha256": "4487042b4c4f5d88d4568f68ae98aae0b1ffae58864cf57fb868641bc5f84594",
+    "size": 298229464,
+    "binarySha256": "4487042b4c4f5d88d4568f68ae98aae0b1ffae58864cf57fb868641bc5f84594"
   },
   "codex": {
     "version": "0.145.0",
@@ -23,21 +23,21 @@
     "binarySha256": "a2a05dafaa1acb002a45eaec0a462de5b13694fcfcd7bc43305f14781ce7be14"
   },
   "codexPackage": {
-    "version": "0.162.1",
-    "file": "https://github.com/openai/codex/releases/download/rust-v0.162.1/codex-package-x86_64-unknown-linux-musl.tar.gz",
-    "sha256": "a676f5722aae0d86cbe3764332f08eab1fdd89dc0a300b3ad4ffbf48611fa3e3",
-    "size": 162905879
+    "version": "0.166.0",
+    "file": "https://github.com/openai/codex/releases/download/rust-v0.166.0/codex-package-x86_64-unknown-linux-musl.tar.gz",
+    "sha256": "1d44b28bc4ac9937d7d3532264baa68a507ce364956a0d4ebb856f331cdee254",
+    "size": 199694962
   },
   "pi": {
-    "version": "1.2.0",
-    "file": "https://github.com/earendil-works/pi/releases/download/v1.2.0/pi-linux-x64.tar.gz",
-    "sha256": "00fc36cffdebceea5a48230da62cf3fb463178f8fe185766652f96002a246847",
-    "size": 42611136
+    "version": "1.4.0",
+    "file": "https://github.com/earendil-works/pi/releases/download/v1.4.0/pi-linux-x64.tar.gz",
+    "sha256": "f2e4e4329603223d03260cdb8bd5033dbdc1f73ba58ab8939db2e56546e115d2",
+    "size": 42645744
   },
   "omp": {
-    "version": "18.10.4",
-    "file": "https://github.com/can1357/oh-my-pi/releases/download/v18.10.4/omp-linux-x64",
-    "sha256": "ff59fc1b484c1308a7247ad208305005627b3fac62b440737c2b1835ac32074e",
-    "size": 276199392
+    "version": "18.14.0",
+    "file": "https://github.com/can1357/oh-my-pi/releases/download/v18.14.0/omp-linux-x64",
+    "sha256": "e7dd2b606c4ebe9d1a7bcfad1b8820db968cd6b05409fed1c6bc8db0b6a95a8f",
+    "size": 276244656
   }
 }
