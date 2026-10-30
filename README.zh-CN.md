@@ -56,20 +56,13 @@ Lex 基于开源 [Cindy](https://github.com/makecindy/cindy) 客户端，由社�
 Lex 继续兼容 Cindy 插件、Skill Hub 资源和 `.cindy` 文件，让既有 Cindy 社区资源仍然可以
 直接使用。
 
-## 0.1.7 更新
+## 模型与账号
 
 模型选择区以模型名称为主，渠道与协议合并为一处紧凑入口。桌面端未登录时默认进入主界面，
 需要在线服务时可主动点击登录，选择 Cindy 后进入原有账号登录流程。
 
-本次正式版改善 Claude Code、Codex、Pi 与 OMP 的主要 GUI/TUI 收发与任务恢复，
-增加桌面端重启后的已保存草稿恢复，修正 Pi 正常空闲退出的提示与 OMP 累计用量显示。
-详情见[发布说明](release-notices/0.1.7.md)。0.1.7 为正式版本；
-官网默认下载跟随最新已发布的稳定版。
-
-OMP 原生任务暂时关闭自动 recap，规避已观察到的空闲断连；显式 TUI 设置仍可能重新开启。
-`/btw`、`/omfg` 与其它辅助并发未验，GUI/TUI 功能也并非完全一致。
-本次交互验证使用 Windows 专有模拟模型，不代表真实供应商或 macOS/Linux 已完成实测。
-草稿恢复针对已保存内容，尚未保存的最后编辑不保证在硬中断后恢复。
+功能更新、修复与验证范围见
+[GitHub Releases](https://github.com/Ciciy-l/lex/releases)。官网默认下载跟随最新已发布的稳定版。
 
 ## 敬请期待
 

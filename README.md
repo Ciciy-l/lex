@@ -64,24 +64,15 @@ that an unfinished Shell no longer exists, Lex opens a fresh Shell with its save
 startup directory and shell choice, without replaying commands. Ended terminals
 and legacy Agent CLI panes still require an explicit restart.
 
-## What's new in 0.1.7
+## Models and accounts
 
 The model selector puts the model name first, with one compact channel/protocol
 control. Desktop opens directly in the account-free main interface; choose Cindy
 from the sign-in entry when you want online services.
 
-This release improves ordinary GUI/TUI sending and task recovery across Claude Code,
-Codex, Pi, and OMP, preserves saved drafts across desktop restarts, fixes Pi's normal
-idle exit reporting, and improves OMP's cumulative usage display. See the
-[release notes](release-notices/0.1.7.md) for details. Version 0.1.7 is a stable
-release; the website's downloads follow the latest published stable release.
-
-OMP native sessions temporarily disable automatic recap to avoid the observed idle
-disconnect. Explicit TUI settings can re-enable it. `/btw`, `/omfg`, and other auxiliary
-concurrency remain unverified. GUI/TUI features are not identical. This release's
-interactive checks used a dedicated simulated model on Windows; they do not establish
-live-provider or macOS/Linux acceptance. Draft recovery applies to saved edits; the
-last edits not yet saved are not guaranteed to survive a hard interruption.
+For changes, fixes, and validation notes, see
+[GitHub Releases](https://github.com/Ciciy-l/lex/releases). Website downloads follow
+the latest published stable release.
 
 ## Coming soon
 
