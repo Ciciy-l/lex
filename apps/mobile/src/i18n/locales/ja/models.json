@@ -37,7 +37,10 @@
       "xhigh": "超高",
       "max": "最高",
       "ultra": "究極"
-    }
+    },
+    "fastEnable": "Fast モードを有効にする",
+    "fastDisable": "Fast モードを無効にする",
+    "fastUnavailable": "モデル設定は一時的に利用できません。しばらくしてから再試行してください。"
   },
   "contextWindowSwitch": {
     "title": "このモデルには現在の会話が収まりません",

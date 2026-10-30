@@ -29,7 +29,8 @@ describe('composer narrow toolbar contract', () => {
     expect(modelSelectorSource).toContain(
       'const isCompactToolbar = compactToolbar && !isFieldTrigger;',
     );
-    expect(modelSelectorSource).toContain("'w-[148px] min-w-[72px]'");
+    expect(modelSelectorSource).not.toContain("'w-[148px] min-w-[72px]'");
+    expect(chatInputSource).toContain("className={cn('min-w-0 shrink', sessionModelLoading && 'h-[30px] w-[148px]')}");
     expect(modelSelectorSource).toContain("'w-[64px] min-w-[64px]'");
     // 2026-08-12 Chris 裁决(bug7):composer pill 换成「模型名 + 引擎小标 + 深度」后,
     // 窄工具条下**先截模型名**,小标与档字保留 —— 它们是定宽身份位,截掉等于把

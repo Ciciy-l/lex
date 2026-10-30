@@ -37,7 +37,10 @@
       "xhigh": "초고",
       "max": "최고",
       "ultra": "극한"
-    }
+    },
+    "fastEnable": "Fast 모드 켜기",
+    "fastDisable": "Fast 모드 끄기",
+    "fastUnavailable": "모델 설정을 일시적으로 사용할 수 없습니다. 잠시 후 다시 시도하세요."
   },
   "contextWindowSwitch": {
     "title": "이 모델에는 현재 대화가 모두 들어가지 않습니다",

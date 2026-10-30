@@ -8274,6 +8274,11 @@
         "layoutTryUnified": "새 선택기 사용해 보기",
         "layoutOriginal": "이전 버전으로 돌아가기",
         "favoritesSyncFailed": "즐겨찾기를 동기화할 수 없습니다. 선택 화면을 다시 여세요. 원격 컴퓨터를 업데이트해야 할 수 있습니다."
+      },
+      "fastShortcut": {
+        "enable": "Fast 모드 켜기",
+        "disable": "Fast 모드 끄기",
+        "unavailable": "모델 설정을 일시적으로 사용할 수 없습니다. 잠시 후 다시 시도하세요."
       }
     },
     "permissionSelector": {

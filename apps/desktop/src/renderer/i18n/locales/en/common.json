@@ -8276,6 +8276,11 @@
         "layoutTryUnified": "Try the new picker",
         "layoutOriginal": "Back to old picker",
         "favoritesSyncFailed": "Favorites could not sync. Reopen the picker to retry; the remote computer may need an update."
+      },
+      "fastShortcut": {
+        "enable": "Enable Fast mode",
+        "disable": "Disable Fast mode",
+        "unavailable": "Model settings are temporarily unavailable. Try again shortly."
       }
     },
     "permissionSelector": {

@@ -1,3 +1,4 @@
+import { ComposerFastButton } from '@/session/ComposerFastButton';
 import { resolveWorkspacePickerFrame, type WorkspacePickerFrame } from '@/session/workspacePickerPlacement';
 import { modelNeedsReselection } from '@/session/modelReselection';
 import { isRemoteTaskSuggestionId } from '@/session/remoteTaskSuggestionsModel';
@@ -61,7 +62,6 @@ import {
   Settings,
   Target,
   X,
-  Zap,
 } from 'lucide-react-native';
 import {
   getRecordingPermissionsAsync,
@@ -961,14 +961,12 @@ export default function NewRemoteSessionScreen() {
     () => modelSections.connected.find((p) => p.id === modelSections.activeSourceId) ?? null,
     [modelSections],
   );
-  const triggerFastOn =
-    draft.fastMode &&
-    rowFastEditable({
-      provider: activeSourceProvider ?? undefined,
-      modelId: draft.model,
-      agentKind: draft.agentKind,
-      hasFastModeCap: capabilities?.hasFastMode === true,
-    });
+  const triggerFastSupported = rowFastEditable({
+    provider: activeSourceProvider ?? undefined,
+    modelId: draft.model,
+    agentKind: draft.agentKind,
+    hasFastModeCap: capabilities?.hasFastMode === true,
+  });
   useEffect(() => {
     let cancelled = false;
     setNewSessionPreferencesLoaded(false);
@@ -3815,9 +3813,16 @@ export default function NewRemoteSessionScreen() {
             />
           ) : null}
           <Text style={styles.modelPillText} numberOfLines={1}>{pillModelSummary}</Text>
-          {triggerFastOn ? <Zap color={colors.textTertiary} size={iconSize.sm} strokeWidth={iconStroke.regular} /> : null}
           <ChevronDown color={colors.textTertiary} size={iconSize.sm} strokeWidth={iconStroke.regular} />
         </Pressable>
+        {triggerFastSupported ? (
+          <ComposerFastButton
+            enabled={draft.fastMode}
+            disabled={creating || modelSheetOpen}
+            onChange={changeSelectedFastMode}
+            testID="newSession.fastMode"
+          />
+        ) : null}
       </ComposerToolbarLeftGroup>
       <ComposerToolbarSpacer />
       {composerVoicePlacement?.inline || composerVoicePlacement?.floating

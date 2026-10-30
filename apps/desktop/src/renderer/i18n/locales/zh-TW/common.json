@@ -8274,7 +8274,12 @@
         "layoutOriginal": "切回舊版",
         "favoritesSyncFailed": "收藏未能同步。請重新開啟重試；被控電腦可能需要更新。"
       },
-      "modelListAria": "模型清單"
+      "modelListAria": "模型清單",
+      "fastShortcut": {
+        "enable": "開啟 Fast 模式",
+        "disable": "關閉 Fast 模式",
+        "unavailable": "模型設定暫時無法使用，請稍後再試"
+      }
     },
     "permissionSelector": {
       "triggerAria": "選擇權限模式：{{label}}",

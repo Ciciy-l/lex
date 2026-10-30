@@ -8274,6 +8274,11 @@
         "layoutTryUnified": "尝试新选择器",
         "layoutOriginal": "切回老版",
         "favoritesSyncFailed": "收藏未能同步。请重新打开重试；被控电脑可能需要更新。"
+      },
+      "fastShortcut": {
+        "enable": "开启 Fast 模式",
+        "disable": "关闭 Fast 模式",
+        "unavailable": "模型设置暂时不可用，请稍后重试"
       }
     },
     "permissionSelector": {

@@ -647,6 +647,8 @@ interface ModelSelectorProps {
   actualRoute?: boolean;
   /** Fast Mode 状态 + 回调(从工具栏搬进 Edit 配置列)。不传 → 配置列不显示 Fast 开关。 */
   fastMode?: boolean;
+  /** Composer has a separate Fast shortcut; other surfaces keep the status mark. */
+  showFastIndicator?: boolean;
   /** 语义同 onEffortChange(含返回值口径)。 */
   onFastModeChange?: (enabled: boolean) => void | boolean | Promise<void | boolean>;
   thinkingEnabled?: boolean;
@@ -3271,6 +3273,7 @@ export function ModelSelector({
   onModelChange,
   onEffortChange,
   fastMode,
+  showFastIndicator = true,
   onFastModeChange,
   thinkingEnabled,
   onThinkingChange,
@@ -3648,7 +3651,7 @@ export function ModelSelector({
         effortMeta.get(effort),
       )
     : null;
-  // Fast 工具栏按钮已移除 → trigger 上用闪电标出当前是否 Fast(模型支持 + 已开启时)。
+  // 非 composer 入口仍在 trigger 上显示 Fast 状态；composer 使用独立快捷开关。
   // 支持性按「当前生效来源」现查 per-provider 条目;无法解析来源(flat / device-link 退化)时
   // 回退拍平值,避免误隐藏闪电。
   const triggerActiveProvider = triggerProvider;
@@ -3829,9 +3832,7 @@ export function ModelSelector({
               // 窄态工具条:钳制唯一可收缩的模型入口，给语音 / 发送固定动作留足空间。
               isUltraCompactToolbar
                 ? 'w-[64px] min-w-[64px]'
-                : isCompactToolbar
-                  ? 'w-[148px] min-w-[72px]'
-                  : 'min-w-[72px]',
+                : 'min-w-[72px]',
               'border border-transparent bg-transparent',
               'hover:border-[var(--border-default)] hover:bg-[var(--composer-pill-bg,#FCFCFC)] dark:hover:bg-[var(--composer-pill-bg,#393838)]',
             ),
@@ -3863,7 +3864,7 @@ export function ModelSelector({
               isUltraCompactToolbar
                 ? 'hidden'
                 : isCompactToolbar
-                  ? 'max-w-[108px] truncate'
+                  ? 'truncate'
                   : isCreateAgentVariant
                     ? 'truncate'
                     : cn('truncate', isFieldTrigger ? 'max-w-[260px]' : ''),
@@ -3893,7 +3894,7 @@ export function ModelSelector({
               isUltraCompactToolbar
                 ? 'hidden'
                 : isCompactToolbar
-                  ? 'max-w-[108px] truncate'
+                  ? 'truncate'
                   : isCreateAgentVariant
                     ? 'truncate'
                     : isFieldTrigger
@@ -3954,7 +3955,7 @@ export function ModelSelector({
               isUltraCompactToolbar
                 ? 'hidden'
                 : isCompactToolbar
-                  ? 'max-w-[108px] truncate'
+                  ? 'truncate'
                   : isCreateAgentVariant
                     ? 'truncate'
                     : isFieldTrigger
@@ -4021,7 +4022,7 @@ export function ModelSelector({
               </span>
             </>
           )}
-          {triggerFastOn && showTriggerTail && (
+          {showFastIndicator && triggerFastOn && showTriggerTail && (
             <Zap
               size={isCreateAgentVariant ? 11 : dense ? 12 : 13}
               className={cn(

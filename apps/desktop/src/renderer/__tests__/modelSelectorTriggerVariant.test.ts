@@ -892,7 +892,8 @@ describe('ModelSelector trigger variants', () => {
     let trigger = screen.getByRole('button', {
       name: /Current: Opus 4\.8, effort: 超高/,
     });
-    expect(trigger.className).toContain('w-[148px]');
+    expect(trigger.className).not.toContain('w-[148px]');
+    expect(within(trigger).getByText('Opus 4.8').className).not.toContain('max-w-[108px]');
     expect(trigger.className).toContain('min-w-[72px]');
     expect(within(trigger).getByText('Opus 4.8').className).toContain('truncate');
     expect(trigger.textContent).not.toContain('超高');

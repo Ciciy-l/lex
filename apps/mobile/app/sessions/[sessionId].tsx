@@ -1,3 +1,4 @@
+import { ComposerFastButton } from '@/session/ComposerFastButton';
 import { useRetiredSession } from '@/session/retiredSessionAccess';
 import { isExplicitRemoteNotFoundError } from '@/session/newSessionWorktree';
 import { deleteRemoteMessageConfirmed } from '@/session/confirmedMessageDeletion';
@@ -63,7 +64,6 @@ import {
   Square,
   Sparkles,
   Target,
-  Zap,
   X,
 } from 'lucide-react-native';
 import {
@@ -2667,15 +2667,12 @@ function SessionScreen() {
   const composerPillSourceId = composerSelectedSourceDisconnected
     ? composerDisplaySession?.providerId ?? null
     : composerPillSourceProvider?.id ?? null;
-  const composerPillFastOn = agentSwitchIntent
-    ? agentSwitchIntent.fastMode === true
-    : !composerSelectedSourceDisconnected && !!currentSession?.fastMode
-      && rowFastEditable({
-        provider: composerActiveSourceProvider ?? undefined,
-        modelId: currentSession?.model ?? '',
-        agentKind: sessionAgentKind,
-        hasFastModeCap: capabilities?.hasFastMode === true,
-      });
+  const composerFastSupported = !composerSelectedSourceDisconnected && rowFastEditable({
+    provider: composerActiveSourceProvider ?? undefined,
+    modelId: composerDisplaySession?.model ?? '',
+    agentKind: composerDisplayAgentKind,
+    hasFastModeCap: composerDisplayCapabilities?.hasFastMode === true,
+  });
   const composerRuntimeLabel = composerRuntimeSummary
     ? agentSwitchIntent
       ? t(composerSwitchesAgent ? 'session.screen.nextAgentSwitch' : 'session.screen.nextModelSelection', {
@@ -6891,7 +6888,6 @@ function SessionScreen() {
         {!sessionManagedByHost && composerRuntimeSummary ? (
           <ComposerRuntimePill
             disabled={sessionManagedByHost || controlBusy || !canUseRemoteSessionControls}
-            fastOn={composerPillFastOn}
             label={composerRuntimeLabel}
             leading={agentSwitchIntent && composerSwitchesAgent ? (
               <MobileAgentMark
@@ -6915,6 +6911,14 @@ function SessionScreen() {
             ) : null}
             onPress={toggleComposerModelPicker}
             testID="session.composerModelButton"
+          />
+        ) : null}
+        {!sessionManagedByHost && composerRuntimeSummary && composerFastSupported ? (
+          <ComposerFastButton
+            enabled={composerDisplaySession?.fastMode === true}
+            disabled={controlBusy || !canUseRemoteSessionControls || modelSheetOpen}
+            onChange={(enabled) => changeComposerSelectedFastMode(enabled, composerDisplayAgentKind)}
+            testID="session.fastMode"
           />
         ) : null}
       {Platform.OS === 'ios' && nativeComposerAvailable && (composerDocumentRef.current.nodes.reduce((count, node) => count + (node.type === 'text' ? node.text.length : 0), 0) > 300 || composerDocumentRef.current.nodes.some((node) => node.type === 'text' && node.text.split('\n').length > 4)) ? <ComposerExpandButton onPress={() => composerInputRef.current?.expand?.()} /> : null}
@@ -8238,15 +8242,13 @@ function SessionScreen() {
       void runControlAction(() => maker.setEffort(sessionId, effort), { effort });
     }
   }, [agentSwitchIntent, maker, modelSheetAgentKind, runControlAction, sessionAgentKind, sessionId, writeSessionAgentSwitchIntent]);
-  const changeComposerSelectedFastMode = useCallback((enabled: boolean) => {
-    if (
-      modelSheetAgentKind !== sessionAgentKind
-      && agentSwitchIntent?.targetAgentKind === modelSheetAgentKind
-    ) {
+  const changeComposerSelectedFastMode = useCallback((enabled: boolean, targetAgent = modelSheetAgentKind) => {
+    // A toolbar edit follows the displayed next-message selection, including same-engine intents.
+    if (agentSwitchIntent?.targetAgentKind === targetAgent) {
       void writeSessionAgentSwitchIntent({ ...agentSwitchIntent, fastMode: enabled });
       return;
     }
-    if (modelSheetAgentKind === sessionAgentKind) {
+    if (targetAgent === sessionAgentKind) {
       void runControlAction(() => maker.setFastMode(sessionId, enabled), { fastMode: enabled });
     }
   }, [agentSwitchIntent, maker, modelSheetAgentKind, runControlAction, sessionAgentKind, sessionId, writeSessionAgentSwitchIntent]);
@@ -11503,7 +11505,6 @@ const RouteActionButton = forwardRef<View, RouteActionButtonProps>(function Rout
 function ComposerRuntimePill({
   disabled = false,
   icon: Icon,
-  fastOn = false,
   label,
   leading,
   onPress,
@@ -11512,8 +11513,6 @@ function ComposerRuntimePill({
 }: {
   disabled?: boolean;
   icon?: typeof Hand;
-  /** Fast 已生效 → label 后缀 Zap 闪电(对齐桌面 trigger)。 */
-  fastOn?: boolean;
   label: string;
   /** 前缀节点(模型药丸传来源官方 mark);与 icon 二选一。 */
   leading?: ReactNode;
@@ -11544,7 +11543,6 @@ function ComposerRuntimePill({
       >
         {label}
       </Text>
-      {fastOn ? <Zap color={colors.textTertiary} size={iconSize.sm} strokeWidth={iconStroke.regular} /> : null}
       <ChevronDown color={color} size={iconSize.sm} strokeWidth={iconStroke.regular} />
     </RouteActionButton>
   );

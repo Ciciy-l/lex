@@ -37,7 +37,10 @@
       "xhigh": "Extra High",
       "max": "Maximum",
       "ultra": "Ultra"
-    }
+    },
+    "fastEnable": "Enable Fast mode",
+    "fastDisable": "Disable Fast mode",
+    "fastUnavailable": "Model settings are temporarily unavailable. Try again shortly."
   },
   "contextWindowSwitch": {
     "title": "This model can't fit the current conversation",
