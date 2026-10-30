@@ -1631,7 +1631,7 @@
     },
     "sessionImport": {
       "title": "本地任务导入",
-      "description": "只读扫描本机 Claude Code 与 Codex 历史。只有列表里勾选的任务会被导入；已跳过的内部 Agent 会话不会展示，也不会导入。",
+      "description": "只读扫描本机 Codex、Claude Code 和 Cindy 的常规任务，选择后批量导入。伙伴相关任务会自动排除。",
       "scan": "扫描",
       "scanning": "扫描中",
       "emptyTitle": "先扫描本地历史",
@@ -1653,7 +1653,7 @@
         "projects": "项目任务",
         "projectsHint": "导入后进入项目分组的任务",
         "dialogue": "对话",
-        "dialogueHint": "Codex 标记为不属于项目的任务",
+        "dialogueHint": "不属于项目的普通任务",
         "filtered": "已跳过",
         "filteredHint": "内部 Agent 会话或已在应用内"
       },
@@ -1662,9 +1662,10 @@
         "placement": "位置",
         "all": "全部",
         "codex": "Codex",
-        "claude": "Claude",
+        "claude": "Claude Code",
         "project": "已有项目",
-        "dialogue": "对话"
+        "dialogue": "对话",
+        "cindy": "Cindy"
       },
       "toast": {
         "scanFailed": "扫描失败",
@@ -6128,7 +6129,11 @@
         "failed": "失败",
         "canceled": "已取消"
       },
-      "account": "账号 {{count}}"
+      "account": "账号 {{count}}",
+      "restart": "重新选择来源",
+      "scanHint": "点击“扫描”读取所选 Cindy 账号。",
+      "alsoImportNative": "确认后还会导入已勾选的 {{count}} 个 Codex / Claude Code 任务。",
+      "backToList": "返回列表"
     }
   },
   "remoteDevice": {

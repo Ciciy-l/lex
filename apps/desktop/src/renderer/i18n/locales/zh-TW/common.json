@@ -1631,7 +1631,7 @@
     },
     "sessionImport": {
       "title": "本地任務匯入",
-      "description": "只讀掃描本機 Claude Code 與 Codex 歷史。只有列表裡勾選的任務會被匯入；已跳過的內部 Agent 會話不會展示，也不會匯入。",
+      "description": "唯讀掃描本機 Codex、Claude Code 和 Cindy 的一般任務，選取後批次匯入。夥伴相關任務會自動排除。",
       "scan": "掃描",
       "scanning": "掃描中",
       "emptyTitle": "先掃描本地歷史",
@@ -1653,7 +1653,7 @@
         "projects": "專案任務",
         "projectsHint": "匯入後進入專案分組的任務",
         "dialogue": "對話",
-        "dialogueHint": "Codex 標記為不屬於專案的任務",
+        "dialogueHint": "不屬於專案的一般任務",
         "filtered": "已跳過",
         "filteredHint": "內部 Agent 會話或已在應用內"
       },
@@ -1662,9 +1662,10 @@
         "placement": "位置",
         "all": "全部",
         "codex": "Codex",
-        "claude": "Claude",
+        "claude": "Claude Code",
         "project": "已有專案",
-        "dialogue": "對話"
+        "dialogue": "對話",
+        "cindy": "Cindy"
       },
       "toast": {
         "scanFailed": "掃描失敗",
@@ -6128,7 +6129,11 @@
         "failed": "失敗",
         "canceled": "已取消"
       },
-      "account": "帳號 {{count}}"
+      "account": "帳號 {{count}}",
+      "restart": "重新選擇來源",
+      "scanHint": "點選「掃描」讀取所選 Cindy 帳號。",
+      "alsoImportNative": "確認後還會匯入已勾選的 {{count}} 個 Codex / Claude Code 任務。",
+      "backToList": "返回清單"
     }
   },
   "remoteDevice": {

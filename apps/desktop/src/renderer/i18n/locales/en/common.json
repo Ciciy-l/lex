@@ -1631,7 +1631,7 @@
     },
     "sessionImport": {
       "title": "Local Session Import",
-      "description": "Read-only scan of local Claude Code and Codex history. Only checked sessions in the list will be imported; skipped internal sessions are hidden and cannot be imported.",
+      "description": "Scan local Codex, Claude Code and Cindy tasks read-only, then select tasks to import. Companion-related tasks are excluded.",
       "scan": "Scan",
       "scanning": "Scanning",
       "emptyTitle": "Scan local history first",
@@ -1653,7 +1653,7 @@
         "projects": "Project sessions",
         "projectsHint": "Sessions that will appear under project groups",
         "dialogue": "Chat",
-        "dialogueHint": "Codex projectless sessions",
+        "dialogueHint": "Regular tasks outside projects",
         "filtered": "Skipped",
         "filteredHint": "Internal or already in app"
       },
@@ -1662,9 +1662,10 @@
         "placement": "Placement",
         "all": "All",
         "codex": "Codex",
-        "claude": "Claude",
+        "claude": "Claude Code",
         "project": "Existing projects",
-        "dialogue": "Chat"
+        "dialogue": "Chat",
+        "cindy": "Cindy"
       },
       "toast": {
         "scanFailed": "Scan failed",
@@ -6130,7 +6131,11 @@
         "failed": "Failed",
         "canceled": "Canceled"
       },
-      "account": "Account {{count}}"
+      "account": "Account {{count}}",
+      "restart": "Choose a source again",
+      "scanHint": "Click Scan to read the selected Cindy account.",
+      "alsoImportNative": "Confirming will also import the {{count}} selected Codex / Claude Code tasks.",
+      "backToList": "Back to list"
     }
   },
   "remoteDevice": {

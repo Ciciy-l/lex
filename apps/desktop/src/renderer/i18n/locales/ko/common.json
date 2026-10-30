@@ -1631,7 +1631,7 @@
     },
     "sessionImport": {
       "title": "로컬 세션 가져오기",
-      "description": "로컬 Claude Code / Codex 기록을 읽기 전용으로 스캔합니다. 목록에서 선택한 세션만 가져오며, 건너뛴 내부 세션은 표시되지 않고 가져올 수 없습니다.",
+      "description": "로컬 Codex, Claude Code 및 Cindy의 일반 작업을 읽기 전용으로 스캔한 뒤 선택하여 가져옵니다. 파트너 관련 작업은 제외됩니다.",
       "scan": "스캔",
       "scanning": "스캔 중",
       "emptyTitle": "먼저 로컬 기록을 스캔하세요",
@@ -1653,7 +1653,7 @@
         "projects": "기존 프로젝트 세션",
         "projectsHint": "현재 사이드바 프로젝트에 속한 세션",
         "dialogue": "새 폴더 세션",
-        "dialogueHint": "프로젝트 그룹을 생성할 세션",
+        "dialogueHint": "프로젝트에 속하지 않은 일반 작업",
         "filtered": "건너뜀",
         "filteredHint": "내부 세션이거나 이미 앱에 있음"
       },
@@ -1662,9 +1662,10 @@
         "placement": "위치",
         "all": "전체",
         "codex": "Codex",
-        "claude": "Claude",
+        "claude": "Claude Code",
         "project": "기존 프로젝트",
-        "dialogue": "새 폴더"
+        "dialogue": "새 폴더",
+        "cindy": "Cindy"
       },
       "toast": {
         "scanFailed": "스캔 실패",
@@ -6128,7 +6129,11 @@
         "failed": "실패",
         "canceled": "취소됨"
       },
-      "account": "계정 {{count}}"
+      "account": "계정 {{count}}",
+      "restart": "소스 다시 선택",
+      "scanHint": "스캔을 눌러 선택한 Cindy 계정을 읽으세요.",
+      "alsoImportNative": "확인하면 선택한 Codex / Claude Code 작업 {{count}}개도 가져옵니다.",
+      "backToList": "목록으로 돌아가기"
     }
   },
   "remoteDevice": {

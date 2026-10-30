@@ -1631,7 +1631,7 @@
     },
     "sessionImport": {
       "title": "ローカルセッションのインポート",
-      "description": "ローカルの Claude Code / Codex 履歴を読み取り専用でスキャンします。リストでチェックしたセッションのみインポートされ、スキップされた内部セッションは表示されず、インポートもされません。",
+      "description": "ローカルの Codex、Claude Code、Cindy の通常タスクを読み取り専用でスキャンし、選択してインポートします。パートナー関連のタスクは除外されます。",
       "scan": "スキャン",
       "scanning": "スキャン中",
       "emptyTitle": "まずローカル履歴をスキャン",
@@ -1653,7 +1653,7 @@
         "projects": "既存プロジェクトのセッション",
         "projectsHint": "現在のサイドバーのプロジェクトに属するセッション",
         "dialogue": "新規フォルダーのセッション",
-        "dialogueHint": "プロジェクトグループを作成するセッション",
+        "dialogueHint": "プロジェクトに属さない通常タスク",
         "filtered": "スキップ済み",
         "filteredHint": "内部セッション、または既にアプリ内に存在"
       },
@@ -1662,9 +1662,10 @@
         "placement": "配置",
         "all": "すべて",
         "codex": "Codex",
-        "claude": "Claude",
+        "claude": "Claude Code",
         "project": "既存プロジェクト",
-        "dialogue": "新規フォルダー"
+        "dialogue": "新規フォルダー",
+        "cindy": "Cindy"
       },
       "toast": {
         "scanFailed": "スキャンに失敗しました",
@@ -6128,7 +6129,11 @@
         "failed": "失敗",
         "canceled": "キャンセル"
       },
-      "account": "アカウント {{count}}"
+      "account": "アカウント {{count}}",
+      "restart": "ソースを選び直す",
+      "scanHint": "「スキャン」で選択した Cindy アカウントを読み取ります。",
+      "alsoImportNative": "確認すると、選択した Codex / Claude Code の {{count}} 件のタスクもインポートされます。",
+      "backToList": "一覧に戻る"
     }
   },
   "remoteDevice": {

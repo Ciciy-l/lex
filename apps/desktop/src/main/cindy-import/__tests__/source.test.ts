@@ -65,6 +65,35 @@ describe('Cindy read-only source', () => {
     const { instance } = await adapter();
     expect(await instance.readMessages('clear', 5)).toMatchObject([{ id: 'after', clientId: 'after', rewindAt: 9 }]);
   });
+  it('excludes every upstream Bot lane role, including archived links, and never reads their messages', async () => {
+    // Cindy e17f474 (2026-10-30): roles added since the original fork still
+    // use bot_session_links. Ownership must not be limited to known roles.
+    db.exec('CREATE TABLE bot_session_links(session_id TEXT, role TEXT, archived_at INTEGER)');
+    const roles = ['canonical', 'history', 'delegation', 'group', 'channel', 'thread', 'routine', 'future-role'];
+    for (const role of roles) {
+      session(role); // Deliberately missing source=bot: the link alone is authoritative.
+      message('message-' + role, role, 'private Bot lane');
+      db.prepare('INSERT INTO bot_session_links VALUES (?, ?, ?)').run(role, role, 5);
+    }
+    db.exec('CREATE TABLE bot_group_messages(id TEXT, content TEXT); CREATE TABLE bot_direct_messages(id TEXT, content TEXT)');
+    db.exec("INSERT INTO bot_group_messages VALUES ('group-message', 'private group'); INSERT INTO bot_direct_messages VALUES ('dm', 'private DM')");
+    session('ordinary', { title: 'A normal discussion about bots' }); message('ordinary-message', 'ordinary', 'ordinary content');
+    const { instance, rows, excluded } = await adapter();
+    expect(rows.map((row) => row.id)).toEqual(['ordinary']); expect(excluded).toBe(roles.length);
+    for (const role of roles) {
+      expect(await instance.readSession(role)).toBeNull();
+      await expect(instance.readMessages(role, null)).rejects.toMatchObject({ code: 'sourceChanged' });
+    }
+    expect((await instance.readMessages('ordinary', null)).map((row) => row.id)).toEqual(['ordinary-message']);
+  });
+  it('rejects a team containing a retired Bot-owned Worker instead of importing its hidden history', async () => {
+    db.exec('CREATE TABLE bot_session_links(session_id TEXT); CREATE TABLE orca_teams(id TEXT,lead_session_id TEXT,status TEXT,updated_at INTEGER,created_at INTEGER); CREATE TABLE orca_workers(id TEXT,team_id TEXT,session_id TEXT,status TEXT,label TEXT,role TEXT,focused INTEGER,created_at INTEGER)');
+    session('lead', { orca_role: 'lead' }); session('worker', { orca_role: 'worker' }); message('private', 'worker', 'private Bot history');
+    db.exec("INSERT INTO bot_session_links VALUES ('worker'); INSERT INTO orca_teams VALUES ('team','lead','active',1,1); INSERT INTO orca_workers VALUES ('w','team','worker','idle','test','developer',1,1)");
+    const { instance } = await adapter();
+    await expect(instance.readWorkers('lead')).rejects.toMatchObject({ code: 'teamIncomplete' });
+    await expect(instance.readMessages('worker', null)).rejects.toMatchObject({ code: 'sourceChanged' });
+  });
   it('rejects unknown schemas rather than guessing ownership or clear boundaries', async () => {
     db.exec('ALTER TABLE sessions DROP COLUMN cleared_at');
     await expect(adapter()).rejects.toMatchObject({ code: 'schemaUnsupported' });

@@ -4,7 +4,7 @@
 
 ## 结论
 
-可以支持，且不依赖 Lex Server / Lex Admin。Lex 复用 Cindy 的任务、消息和分享格式，并新增只读来源适配器与独立导入向导。
+可以支持，且不依赖 Lex Server / Lex Admin。Lex 复用 Cindy 的任务、消息和分享格式，并新增只读来源适配器。Cindy、Codex、Claude Code 在同一导入页按来源切换，共用任务列表与批量勾选。
 
 必须同时处理三层内容：产品任务与消息、引擎原生历史、附件及工作目录。消息可读与原任务可继续运行是两个不同的验收结果。
 
@@ -18,7 +18,8 @@
 
 | 位置 | 现状与复用边界 |
 | --- | --- |
-| `renderer/components/settings/SessionImportSection.tsx` | 保留 Codex / Claude 扫描与分享文件向导，新增独立 Cindy 导入入口。 |
+| `renderer/components/settings/SessionImportSection.tsx` | 来源筛选为全部 / Codex / Claude Code / Cindy，共用项目分组、复选框、全选与导入按钮；保留分享文件向导。 |
+| `renderer/components/settings/CindyImportPanel.tsx` | 页面内的 Cindy 来源选择、预检、缺失项确认与逐条结果；切换来源筛选不销毁导入状态。 |
 | `main/localDb/ipc/session-import.ts` | 扫描与导入分离；扫描缓存按当前 DB 用户区分。新增 Cindy 时还需校验账号代次，阻止切换账号后的迟到结果。 |
 | `main/session-share/xdtshareFormat.pure.ts` | `.cshare` 与旧 `.xdtshare` 共用 `XDTSHARE` 魔数；普通包与 Orca 协同包使用格式版本门禁，应用版本号只是描述信息。公开 Cindy 上游同样保留这些标识。 |
 | `main/session-share/sessionShareExport.ts` | 收集白名单任务字段、清空边界之后的消息、原生转录和受管媒体；依赖当前 `getDbClient()`、应用目录及账号索引，不能直接用于外部 Cindy 数据根。 |
@@ -37,6 +38,9 @@
 
 ### 1. 来源发现与账号选择
 
+- 「全部」包含已扫描的 Cindy 任务；切换来源/位置筛选保留勾选并显示隐藏选中数。Cindy 首次进入仅发现账号库，用户点击扫描后才读取所选账号；不自动扫描所有 Cindy 账号。
+- 三个来源共用项目分组与任务行。Cindy 每批最多 100 条，已导入项禁选；全选达到上限后再次点击可取消勾选。更换 Cindy 账号或重新扫描清空旧 Cindy 勾选，不影响 Codex / Claude Code 勾选。
+- 混合批量先展示 Cindy 预检，并告知同时选中的 Codex / Claude Code 数量；确认后执行导入，取消/账号失效时不继续执行尚未提交的其他来源。普通 Codex / Claude Code 导入仍走原有直接导入流程。
 - 从系统应用数据根发现 Cindy 的已知正式目录；区分 Cindy、Cindy 中国大陆版与旧布局，排除 Lex 自身目录、开发沙箱和备份。不同应用目录不视为同一个账号来源。
 - 自动发现失败时提供系统目录选择器；选中的是一个数据根，不能允许 Renderer 任意传入数据库或文件路径来读取。
 - 先显示来源与账号库供用户选择，再读取所选库的任务；不默认把所有账号的任务混成一份列表。仅使用非敏感元数据，不解密登录资料。
@@ -52,6 +56,8 @@ SQLite 快照必须包含已提交的 WAL 数据；不能直接复制单个 `.db
 首版在扫描、预检和每项任务发布前核验 Cindy 已退出。数据库/WAL、转录、媒体、附件或工作目录源文件变化时中止并要求重新扫描，不会把不一致内容标为完整导入。进程检查只读取可执行文件名与锁定 PID，不读取命令行参数。
 
 退休伙伴归属必须检查 `source = bot`、`bot_session_links`、`bot_profiles.canonical_session_id`、`bot_delegations.child_session_id` 四条关系；旧库缺表时通过 schema 探测生成固定查询。已删除、远程代理任务及不支持的引擎要有明确排除原因。Orca Worker 应随 lead 整体处理，不拆成独立普通任务。
+
+2026-10-30 对照 Cindy 上游 HEAD [`e17f474`](https://github.com/makecindy/cindy/commit/e17f474) 的 `localDb/schema.ts`、`botProfileRuntime.ts`、`botGroupChatService.ts`、`botDelegationService.ts`：伙伴关联角色现有 canonical、history、delegation、group、channel、thread、routine。导入按整张 `bot_session_links` 的归属排除，不限制角色，也不因关联已归档而放行，因此新角色仍受保护；`source=desktop` 的伙伴委派子任务由 `bot_delegations.child_session_id` 排除。伙伴群消息与伙伴间私信在独立表中，不属于本次导入读取范围。普通 Orca 协同不属于退休伙伴；如团队混入伙伴归属 Worker，则拒绝该团队，不把隐藏消息带入。合成数据库测试覆盖上述角色、归档关联、直接读取拒绝与正常任务保留；这不是对真实 Cindy 安装数据的兼容验收。
 
 ### 3. 任务复制与原生历史
 
@@ -85,7 +91,7 @@ SQLite 快照必须包含已提交的 WAL 数据；不能直接复制单个 `.db
 
 ## 自动化覆盖与仍需手工验证
 
-1. 来源列表到导入结果、显式部分导入确认与目录选择由设置页向导完成。
+1. 来源列表到导入结果、显式部分导入确认与目录选择在同一设置页完成。
 2. 合成数据覆盖 schema/WAL、任务过滤、Orca、附件/工作目录、Pi/Codex/Claude 原生来源、重复导入、账号代次、取消、失败清理与事务回执不明。
 3. macOS 已验证入口、原生目录框打开/取消、运行中拦截及来源页 Light / Dark；完整数据导入、原生历史恢复和 Windows 实机仍需验证。
 
@@ -102,5 +108,6 @@ SQLite 快照必须包含已提交的 WAL 数据；不能直接复制单个 `.db
 - `db:validate` 检查 Drizzle migration 链与 schema 对齐。
 - 2026-10-30 macOS 隔离 Electron 实机：设置入口、来源发现、原生目录框打开/取消、Cindy 运行中阻止扫描、来源页 Light / Dark 目检通过。沙箱使用独立 userData、隔离模型凭证和被动调度；未执行真实任务导入。
 - 2026-10-30 受控浏览器 UI：加载实际向导、翻译和主题，导入 API 使用合成返回值。选择/预检、目录与部分导入确认、逐项结果、已导入禁选、取消提示、Light / Dark 和 320 px 窄窗通过。来源变化后旧确认仍被沿用的问题已复现并修复，浏览器复验与自动化回归均覆盖。
+- 2026-10-30 同级来源交互调整：Cindy 独立弹窗替换为共用列表与页面内预检。Mac 隔离 Electron 核对来源切换、来源页 Light / Dark 和运行中阻断；受控浏览器使用真实导入页与合成 IPC，复验列表/勾选、项目分组、目录选择、缺失项确认、结果和原生来源直接导入。修复 320 px 窄窗说明区挤掉任务列表的问题，滚动后可访问列表和提交按钮。自动化补充跨来源选中保持/混合导入、账号切换失效、100 条上限和取消后的迟到回包；上游伙伴角色与归档关联的过滤另有合成 SQLite 回归。
 - **完整端到端尚未通过**：当前 Cindy 宿主必须保持运行，生产停机保护在扫描前阻断；原生目录框的路径输入也未通过自动化验证。没有绕过停机保护，没有验证 UI → SQLite/附件落盘 → 导入后打开任务的整条链路。后续需在独立终端控制 Lex、关闭 Cindy 后补测。
 - Windows、真实 Cindy 数据布局及真实原生 Agent 子进程恢复仍未验证。受控 UI 的成功结果不代表文件复制、数据库事务或真实模型恢复已通过端到端验收。
