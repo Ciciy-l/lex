@@ -276,7 +276,7 @@ export function SessionImportSection() {
             disabled={busy || reviewing}
           />
           {showCindy && !reviewing && <CindyImportSourcePicker controller={cindy} disabled={busy} />}
-          {cindy.error && <p role="alert" className="text-12 text-[var(--text-secondary)]">{t('settings.cindyImport.errors.' + cindy.error, { defaultValue: t('settings.cindyImport.errors.importFailed') })}</p>}
+          {cindy.error && <p role="alert" className="text-12 text-[var(--text-secondary)]">{t(`settings.cindyImport.errors.${cindy.error}`, { defaultValue: t('settings.cindyImport.errors.importFailed') })}</p>}
           {cindy.busy && <div className="flex flex-wrap items-center gap-2 text-12 text-[var(--text-secondary)]"><span role="status">{t('settings.cindyImport.preparing')}</span><Button variant="secondary" onClick={cindy.cancel}>{t('settings.cindyImport.cancel')}</Button></div>}
         </div>
         {reviewing ? <CindyImportReview controller={cindy} disabled={busy} nativeCount={pendingNative.length} onCommit={commitReviewed} /> : !scan && !cindy.scan ? (

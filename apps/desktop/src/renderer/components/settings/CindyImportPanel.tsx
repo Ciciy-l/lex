@@ -135,31 +135,30 @@ export function CindyImportSourcePicker({ controller: c, disabled }: { controlle
 
 export function CindyImportReview({ controller: c, disabled, nativeCount, onCommit }: { controller: Controller; disabled: boolean; nativeCount: number; onCommit(): void }) {
   const { t } = useTranslation();
-  const translate = (key: string) => t('settings.cindyImport.' + key);
-  const problem = (code?: string) => t('settings.cindyImport.errors.' + code, { defaultValue: translate('errors.importFailed') });
+  const problem = (code?: string) => t(`settings.cindyImport.errors.${code}`, { defaultValue: t('settings.cindyImport.errors.importFailed') });
   const valid = c.preview?.items.filter((item) => !item.error) ?? [];
   const incomplete = valid.some((item) => item.issues.length);
   return <div className="flex min-h-[320px] flex-1 flex-col text-13 text-[var(--text-primary)]">
     <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
       {!c.results && <>
-        <p>{translate('projectWarning')}</p>
+        <p>{t('settings.cindyImport.projectWarning')}</p>
         {nativeCount > 0 && <p>{t('settings.cindyImport.alsoImportNative', { count: nativeCount })}</p>}
         {c.preview?.items.map((item) => <div key={item.id} className="space-y-2 rounded-xl border border-[var(--border-default)] p-3">
-          <p className="break-all font-medium">{item.title || translate('untitled')}</p>
+          <p className="break-all font-medium">{item.title || t('settings.cindyImport.untitled')}</p>
           {item.error ? <p>{problem(item.error)}</p> : <>
-            <p>{item.historyIncomplete ? translate('historyOnly') : translate('fullCopy')}</p>
+            <p>{item.historyIncomplete ? t('settings.cindyImport.historyOnly') : t('settings.cindyImport.fullCopy')}</p>
             {item.issues.map((issue) => <p key={issue}>{problem(issue)}</p>)}
-            {item.missingFiles.length > 0 && <details><summary className="min-h-8 cursor-pointer">{translate('missingFiles')}</summary><ul className="list-inside list-disc break-all">{item.missingFiles.map((file) => <li key={file}>{file}</li>)}</ul></details>}
-            <p className="break-all text-[var(--text-secondary)]">{item.workingDir || (item.needsDirectory ? translate('needsDirectory') : translate('newDirectory'))}</p>
-            {(item.workingDir || item.needsDirectory) && <Button disabled={disabled} variant="secondary" onClick={() => c.chooseProject(item.id)}>{translate('chooseProject')}</Button>}
+            {item.missingFiles.length > 0 && <details><summary className="min-h-8 cursor-pointer">{t('settings.cindyImport.missingFiles')}</summary><ul className="list-inside list-disc break-all">{item.missingFiles.map((file) => <li key={file}>{file}</li>)}</ul></details>}
+            <p className="break-all text-[var(--text-secondary)]">{item.workingDir || (item.needsDirectory ? t('settings.cindyImport.needsDirectory') : t('settings.cindyImport.newDirectory'))}</p>
+            {(item.workingDir || item.needsDirectory) && <Button disabled={disabled} variant="secondary" onClick={() => c.chooseProject(item.id)}>{t('settings.cindyImport.chooseProject')}</Button>}
           </>}
         </div>)}
-        {incomplete && <label className="flex min-h-9 cursor-pointer items-start gap-2 py-2"><input type="checkbox" className="mt-1 h-4 w-4 shrink-0 accent-[var(--settings-menu-text-selected)]" disabled={disabled} checked={c.allowIncomplete} onChange={(event) => c.setAllowIncomplete(event.target.checked)} />{translate('allowIncomplete')}</label>}
+        {incomplete && <label className="flex min-h-9 cursor-pointer items-start gap-2 py-2"><input type="checkbox" className="mt-1 h-4 w-4 shrink-0 accent-[var(--settings-menu-text-selected)]" disabled={disabled} checked={c.allowIncomplete} onChange={(event) => c.setAllowIncomplete(event.target.checked)} />{t('settings.cindyImport.allowIncomplete')}</label>}
       </>}
-      {c.results && <div role="status" className="space-y-3">{c.results.map((result) => <div key={result.id}><p className="break-all font-medium">{c.preview?.items.find((item) => item.id === result.id)?.title || translate('untitled')}</p><p>{translate('results.' + result.status)} {result.status === 'failed' ? problem(result.code) : ''}</p>{result.status === 'imported' && c.preview?.items.find((item) => item.id === result.id)?.historyIncomplete && <p>{translate('historyOnly')}</p>}</div>)}</div>}
+      {c.results && <div role="status" className="space-y-3">{c.results.map((result) => <div key={result.id}><p className="break-all font-medium">{c.preview?.items.find((item) => item.id === result.id)?.title || t('settings.cindyImport.untitled')}</p><p>{t(`settings.cindyImport.results.${result.status}`)} {result.status === 'failed' ? problem(result.code) : ''}</p>{result.status === 'imported' && c.preview?.items.find((item) => item.id === result.id)?.historyIncomplete && <p>{t('settings.cindyImport.historyOnly')}</p>}</div>)}</div>}
     </div>
     <footer className="flex shrink-0 flex-wrap justify-between gap-2 border-t border-[var(--settings-input-border)] px-4 py-3">
-      <Button disabled={disabled} variant="secondary" onClick={c.clearReview}>{translate('backToList')}</Button>
+      <Button disabled={disabled} variant="secondary" onClick={c.clearReview}>{t('settings.cindyImport.backToList')}</Button>
       {!c.results && <Button disabled={disabled || c.needsRestart || !valid.length || valid.some((item) => item.needsDirectory) || (incomplete && !c.allowIncomplete)} loading={disabled} onClick={onCommit}>{t('settings.sessionImport.importSelected')}</Button>}
     </footer>
   </div>;

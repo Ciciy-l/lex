@@ -21,6 +21,8 @@
  *     非媒体散件/回落的老目录;
  *   - cindy-media/legacyDeadDirs.ts:死目录清退——对历史兼容层的唯一
  *     允许删除操作,只认三个死目录名单,不新增任何写入;
+ *   - cindy-import/files.ts / source.ts:只读选定 Cindy 数据根的历史附件,
+ *     暂存后复用分享导入入仓;不写 Cindy 或 Lex 的 cc-agent 目录;
  */
 
 import { describe, it, expect } from 'vitest';
@@ -31,6 +33,8 @@ const MAIN_ROOT = path.resolve(__dirname, '../..');
 
 /** 允许出现 'cc-agent' 字面量的 main 源码文件(相对 src/main,POSIX 分隔)。 */
 const ALLOWED_FILES = new Set([
+  'cindy-import/files.ts',
+  'cindy-import/source.ts',
   'cindy-media/legacyDeadDirs.ts',
   'im/host.ts',
   'imageCacheStore.ts',
