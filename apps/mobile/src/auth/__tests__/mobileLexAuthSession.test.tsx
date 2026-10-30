@@ -7,6 +7,7 @@ import serviceCopy from '../../i18n/locales/en/serviceLogin.json';
 const native = vi.hoisted(() => ({
   http: vi.fn(),
   platform: 'android',
+  isLexMobile: true,
   replaceRoute: vi.fn(),
   closeAccount: undefined as (() => void) | undefined,
   storage: new Map<string, string>(),
@@ -88,7 +89,7 @@ vi.mock('@/config/env', () => ({
   loadMobileEndpointsForRealm: native.loadRealm,
   activateMobileSessionRealm: native.activateRealm, activateMobileLexServer: native.activateRealm, resetMobileSessionRealm() {},
 }));
-vi.mock('@/config/lexMobile', () => ({ IS_LEX_MOBILE: true }));
+vi.mock('@/config/lexMobile', () => ({ get IS_LEX_MOBILE() { return native.isLexMobile; } }));
 vi.mock('@/auth/personalLoginRealm', () => ({
   readPersonalLoginRealm: native.readPersonalRealm,
   savePersonalLoginRealm: native.savePersonalRealm,
@@ -188,6 +189,7 @@ async function login(origin = 'https://a.test') {
 }
 beforeEach(async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  native.platform = 'android'; native.isLexMobile = true;
   multi = false; native.storage.clear(); native.http.mockReset().mockImplementation(server);
   native.readSecure.mockReset().mockImplementation(async key => native.storage.get(key) ?? null);
   native.writeSecure.mockReset().mockImplementation(async (key, value) => { native.storage.set(key, value); });
@@ -198,6 +200,131 @@ beforeEach(async () => {
   clearActiveMobileAuthScope(); setMobileAuthOwner(null); await mount();
 });
 afterEach(async () => { await act(async () => root.unmount()); setMobileAuthOwner(null); clearActiveMobileAuthScope(); });
+
+describe('saved Cindy personal accounts across service realms', () => {
+  type Realm = 'cn' | 'global';
+  const originFor = (realm: Realm) => 'https://' + realm + '.auth.example.invalid';
+  const personalMember = (realm: Realm) => ({
+    id: 'fixture-personal-' + realm, passportId: 'fixture-passport-' + realm,
+    kind: 'personal' as const, role: 'owner' as const, displayName: 'Fixture ' + realm,
+    email: realm + '@fixture.invalid',
+    orgId: null, orgName: null,
+  });
+  const keyFor = (realm: Realm) => accountVaultKey(realm, personalMember(realm).id);
+  const sessionKey = 'cindy.mobile.auth.session.v1';
+  let revisions: Record<Realm, number>;
+  const personalPair = (realm: Realm) => ({
+    accessToken: 'fixture-access-' + realm,
+    refreshToken: 'fixture-refresh-' + realm + '-' + revisions[realm],
+    membership: personalMember(realm),
+  });
+
+  beforeEach(() => {
+    native.crossRealm = true;
+    revisions = { cn: 0, global: 0 };
+    native.http.mockImplementation(async (url: string, init?: RequestInit) => {
+      const { origin, pathname } = new URL(url);
+      const realm: Realm = origin === originFor('cn') ? 'cn' : 'global';
+      expect(origin).toBe(originFor(realm));
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      const bearer = new Headers(init?.headers).get('authorization');
+      if (bearer) expect(bearer).toBe('Bearer fixture-' + (pathname === '/api/auth/account' ? 'account-' : 'access-') + realm);
+      if (pathname.endsWith('/sso/discovery')) {
+        return new Response(JSON.stringify({ code: 'ORG_SSO_NOT_FOUND' }), { status: 404 });
+      }
+      if (pathname.endsWith('/verify-code')) return json({
+        status: 'ok', ...personalPair(realm), accountToken: 'fixture-account-' + realm,
+        accountRefreshToken: 'fixture-passport-refresh-' + realm,
+      });
+      if (pathname === '/api/auth/refresh') {
+        // A credential must only reach its own realm and only at its latest generation.
+        expect(body.refreshToken).toBe(personalPair(realm).refreshToken);
+        revisions[realm] += 1;
+        return json(personalPair(realm));
+      }
+      if (pathname === '/api/auth/account/refresh') {
+        expect(body.accountRefreshToken).toBe('fixture-passport-refresh-' + realm);
+        return json({ accountToken: 'fixture-account-' + realm, accountRefreshToken: body.accountRefreshToken });
+      }
+      if (pathname === '/api/auth/account') return json({ memberships: [personalMember(realm)] });
+      if (pathname === '/api/me') return json({
+        membership: personalMember(realm), passportId: personalMember(realm).passportId,
+        identities: [personalMember(realm)],
+      });
+      return server(url, init);
+    });
+  });
+
+  async function loginPersonal(realm: Realm) {
+    await act(async () => { expect(await auth.selectLoginService({ kind: 'cindy', realm })).toBe(true); });
+    await act(async () => { expect(await auth.dispatchLoginAction({ type: 'request-code', kind: 'email', identifier: personalMember(realm).email })).toBe(true); });
+    await act(async () => { expect(await auth.dispatchLoginAction({ type: 'verify-code', kind: 'email', identifier: personalMember(realm).email, code: 'test-only' })).toBe(true); });
+    expect(auth.service).toEqual({ kind: 'cindy', realm });
+  }
+
+  async function addGlobalAfterCn() {
+    await loginPersonal('cn');
+    await act(async () => { await auth.beginAddAccount(); });
+    await loginPersonal('global');
+  }
+
+  it.each(['android', 'ios'])('switches cn → Global → cn repeatedly and restores the selected personal account on %s', async platform => {
+    native.platform = platform;
+    await addGlobalAfterCn();
+    // Opening the account sheet refreshes both saved Passport lists first.
+    await act(async () => { await auth.syncSavedAccounts(); });
+    expect(auth.savedAccounts.map(account => account.accountKey).sort()).toEqual([keyFor('cn'), keyFor('global')].sort());
+    for (const realm of ['cn', 'global', 'cn'] as const) {
+      native.loadRealm.mockClear(); native.activateRealm.mockClear(); native.http.mockClear();
+      await act(async () => { await auth.switchAccount(keyFor(realm)); });
+      expect(auth.service).toEqual({ kind: 'cindy', realm });
+      expect(auth.user?.id).toBe(personalMember(realm).id);
+      expect(getMobileAuthOwner().accountKey).toBe(keyFor(realm));
+      expect((await readMobileAccountVault()).activeAccountKey).toBe(keyFor(realm));
+      expect(parseAuthSessionRecord(native.storage.get(sessionKey) ?? null)).toMatchObject({ realm, refreshToken: personalPair(realm).refreshToken });
+      expect(auth.savedAccounts.filter(account => account.isCurrent).map(account => account.accountKey)).toEqual([keyFor(realm)]);
+      expect(native.loadRealm).toHaveBeenCalledWith(realm);
+      expect(native.activateRealm).toHaveBeenCalledWith(realm);
+      expect(native.http.mock.calls.every(([url]) => new URL(url).origin === originFor(realm))).toBe(true);
+      expect(native.loadRealm.mock.invocationCallOrder[0]).toBeLessThan(native.http.mock.invocationCallOrder[0]);
+      expect(auth.accountsError).toBeNull();
+    }
+    native.http.mockClear();
+    await act(async () => root.unmount()); await mount();
+    expect(auth.isAuthenticated).toBe(true);
+    expect(auth.service).toEqual({ kind: 'cindy', realm: 'cn' });
+    expect(getMobileAuthOwner().accountKey).toBe(keyFor('cn'));
+    expect(native.http.mock.calls.every(([url]) => new URL(url).origin === originFor('cn'))).toBe(true);
+  });
+
+  it('keeps Global active if persisting the cn switch fails and retries with the rotated cn credential', async () => {
+    await addGlobalAfterCn();
+    const previousSession = native.storage.get(sessionKey);
+    let failSessionWrite = true;
+    native.writeSecure.mockImplementation(async (key, value) => {
+      if (key === sessionKey && failSessionWrite) {
+        failSessionWrite = false;
+        throw new Error('fixture storage unavailable');
+      }
+      native.storage.set(key, value);
+    });
+    await act(async () => { await expect(auth.switchAccount(keyFor('cn'))).rejects.toThrow('fixture storage unavailable'); });
+    expect(auth.service).toEqual({ kind: 'cindy', realm: 'global' });
+    expect(getMobileAuthOwner().accountKey).toBe(keyFor('global'));
+    expect((await readMobileAccountVault()).activeAccountKey).toBe(keyFor('global'));
+    expect(native.storage.get(sessionKey)).toBe(previousSession);
+    await act(async () => { await auth.switchAccount(keyFor('cn')); });
+    expect(auth.service).toEqual({ kind: 'cindy', realm: 'cn' });
+  });
+
+  it('retains the region-specific Cindy build restriction for saved personal accounts', async () => {
+    await addGlobalAfterCn();
+    native.isLexMobile = false;
+    await act(async () => { await expect(auth.switchAccount(keyFor('cn'))).rejects.toThrow('REGION_MISMATCH'); });
+    expect(auth.service).toEqual({ kind: 'cindy', realm: 'global' });
+    expect((await readMobileAccountVault()).activeAccountKey).toBe(keyFor('global'));
+  });
+});
 
 describe('service chooser restores the personal realm without changing the active owner', () => {
   it.each(['cn', 'global'] as const)('opens Cindy with saved/default %s before requesting providers', async realm => {

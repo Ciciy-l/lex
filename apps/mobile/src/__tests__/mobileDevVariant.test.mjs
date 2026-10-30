@@ -4,7 +4,7 @@ import { extractMobileDevVariantArgs, mobileSimulatorBuildEnv } from '../../scri
 import { extractAndroidSerialArgs, inspectAndroidDevelopmentClient } from '../../scripts/lib/android-whoami.mjs';
 import { lexMobileConfig } from '../../../../scripts/shared/lex-mobile-config.cjs';
 
-describe('official Lex Android development target', () => {
+describe('official Lex mobile development target', () => {
   it('keeps Cindy local configuration and isolates the explicit Lex variant', () => {
     expect(extractMobileDevVariantArgs(['--lex', '--build-only'])).toEqual({ lex: true, passthrough: ['--build-only'] });
     expect(() => extractMobileDevVariantArgs(['--lex', '--lex'])).toThrow();
@@ -15,7 +15,21 @@ describe('official Lex Android development target', () => {
     const config = { plugins: [], ios: {}, android: {} };
     expect(lexMobileConfig(config, lex)).toMatchObject({ slug: 'lex-mobile', android: { package: 'io.github.ciciyl.lex' }, updates: { enabled: false } });
     expect(() => lexMobileConfig(config, { ...lex, EAS_OWNER: 'fixture' })).toThrow('cannot inherit');
-    expect(() => mobileSimulatorBuildEnv('global', { lex: true, platform: 'darwin' })).toThrow('Android');
+    expect(() => mobileSimulatorBuildEnv('global', { lex: true, platform: 'linux' })).toThrow('macOS/iOS Simulator');
+  });
+  it.each(['win32', 'darwin'])('preserves Lex identity and configuration guards on %s', (platform) => {
+    const env = mobileSimulatorBuildEnv('global', { lex: true, platform });
+    expect(env.CINDY_USE_LOCAL_REGION_CONFIG).toBeUndefined();
+    expect(lexMobileConfig({ plugins: [], ios: {}, android: {} }, env)).toMatchObject({
+      name: 'Lex',
+      version: env.LEX_MOBILE_VERSION,
+      ios: { bundleIdentifier: 'io.github.ciciyl.lex' },
+      android: { package: 'io.github.ciciyl.lex' },
+      updates: { enabled: false },
+    });
+    for (const inherited of [{ EAS_OWNER: 'fixture' }, { CINDY_USE_LOCAL_REGION_CONFIG: '1' }]) {
+      expect(() => lexMobileConfig({ plugins: [] }, { ...env, ...inherited })).toThrow('cannot inherit');
+    }
   });
   it('requires an explicit Android serial and rejects stale/foreign Metro or non-debug packages', async () => {
     expect(extractAndroidSerialArgs(['--serial', 'emulator-5560'])).toEqual({ serial: 'emulator-5560', passthrough: [] });

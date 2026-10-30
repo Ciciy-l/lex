@@ -59,6 +59,21 @@ describe('sim-rebuild script invariants', () => {
     expect(source).toContain("'-destination', simulatorDestination");
   });
 
+  it('installs and launches on the selected iOS device with the verified Metro port', () => {
+    expect(source).toContain('extractSimMetroPortArgs(androidArgs.passthrough)');
+    expect(source).toContain('!booted.toUpperCase().includes(simulatorUdid)');
+    expect(source).toContain("const installTarget = simulatorUdid ?? 'booted'");
+    expect(source).toContain("['simctl', 'install', installTarget, app]");
+    expect(source).toContain("['simctl', 'uninstall', installTarget, bundleId]");
+    const gate = source.indexOf('const metroPid = listenerPid(metroPort)');
+    const launch = source.indexOf("['simctl', 'launch', '--terminate-running-process', installTarget");
+    expect(gate).toBeGreaterThan(0);
+    expect(launch).toBeGreaterThan(gate);
+    expect(source.slice(gate, launch)).toContain('runningSource !== currentSource');
+    expect(source.slice(gate, launch)).toContain('process.exit(1)');
+    expect(source).toContain("'-RCT_jsLocation', 'localhost:' + metroPort");
+  });
+
   it('uses the Android debug client on Windows without invoking xcrun', () => {
     expect(source).toContain("import { ensureWindowsAndroidEmulator, resolveAndroidSdkTools, extractAndroidSimulatorArgs } from './lib/android-simulator.mjs';");
     expect(source).toContain("probeMetroOwnership");

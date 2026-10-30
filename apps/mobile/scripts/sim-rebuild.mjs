@@ -55,6 +55,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractMobileDevVariantArgs, mobileSimulatorBuildEnv } from './lib/mobile-dev-variant.mjs';
+import { extractSimMetroPortArgs } from './lib/sim-whoami.mjs';
 import {
   resolvePnpmInvocation,
   usablePnpmExecPath,
@@ -88,7 +89,10 @@ const buildDir = join(iosDir, 'build');
 const { region, passthrough: regionPassthrough } = extractMobileDevRegionArgs(process.argv.slice(2));
 const { lex, passthrough: variantPassthrough } = extractMobileDevVariantArgs(regionPassthrough);
 const androidArgs = extractAndroidSimulatorArgs(variantPassthrough);
-const { passthrough } = androidArgs;
+const { port: metroPort, passthrough } = extractSimMetroPortArgs(androidArgs.passthrough);
+if (process.platform === 'win32' && metroPort !== 8081) {
+  throw new Error('Android rebuild 目前只支持默认 Metro 端口 8081。');
+}
 const clean = passthrough.includes('--clean');
 const forceBuild = passthrough.includes('--force-build');
 const buildOnly = passthrough.includes('--build-only');
@@ -168,6 +172,9 @@ if (!buildOnly) {
   if (!/\(Booted\)/.test(booted)) {
     console.error('✗ 没有 booted 的模拟器。先打开 Simulator.app 并启动一台 iPhone,再重试。');
     process.exit(1);
+  }
+  if (simulatorUdid && !booted.toUpperCase().includes(simulatorUdid)) {
+    throw new Error('指定的 Simulator UUID 未启动。');
   }
 }
 
@@ -361,23 +368,27 @@ if (buildOnly) {
   process.exit(0);
 }
 
+const installTarget = simulatorUdid ?? 'booted';
 if (clean) {
   console.log('› --clean:卸载旧包…');
   // uninstall 容错:app 未安装时 simctl 返回非零会让 execFileSync 抛错、后续 install 不执行
   // (首次干净安装就是这个场景)。卸载失败基本只意味着"本来就没装",忽略即可。
   try {
-    run('xcrun', ['simctl', 'uninstall', 'booted', bundleId]);
+    run('xcrun', ['simctl', 'uninstall', installTarget, bundleId]);
   } catch {
     console.log('  (没有可卸载的旧包,跳过)');
   }
 }
-console.log('› 安装到 booted 模拟器…');
-run('xcrun', ['simctl', 'install', 'booted', app]);
+console.log('› 安装到目标模拟器…');
+run('xcrun', ['simctl', 'install', installTarget, app]);
 
-// 启动前校验 8081(app 默认连 8081)。两种情况都会让"装了本分支 native、却加载别处 JS"污染验证:
-//   (a) 8081 被别的 worktree 占;(b) 是本 worktree 的 Metro 但没注入当前分支 git env
+// 启动前校验所选 Metro(默认 8081)，显式端口也必须满足相同归属检查:
+//   (a) 被别的 worktree 占;(b) 是本 worktree 的 Metro 但没注入当前分支 git env
 //       (手动 expo start 起的 / 起后切过分支)。命中则不自动启动,提示用 sim:start 起对的 Metro。
-const metroPid = listenerPid(8081);
+const metroPid = listenerPid(metroPort);
+if (!metroPid && await portInUse(metroPort)) {
+  throw new Error('Metro 端口被占用但无法确认进程归属，拒绝启动。');
+}
 if (metroPid) {
   const metroCwd = cwdOfPid(metroPid);
   const foreign = !metroCwd || !isInside(worktreeRoot, metroCwd);
@@ -387,20 +398,23 @@ if (metroPid) {
       ? `属于别的 worktree(${metroCwd || '未知'})`
       : `源码指纹已过期(运行中=${runningSource || '无'} ≠ 当前=${currentSource})`;
     console.log(`\n✓ native 包已安装(${bundleId})。`);
-    console.error(`⚠️ 未自动启动:8081 上的 Metro ${why}。`);
+    console.error(`⚠️ 未自动启动:${metroPort} 上的 Metro ${why}。`);
     console.error('   直接启动会让 app 加载错分支的 JS(native 是本分支、JS 不是)。');
-    console.error('   先停掉它、再 `pnpm mobile:sim:start`(起本 worktree 当前分支的 8081 Metro),然后启动 app。');
-    process.exit(0);
+    console.error('   用 mobile:sim:start 启动本 worktree 的相同变体和端口，再重试。');
+    process.exit(1);
   }
   if (envChanged) {
     console.log(`\n✓ native 包已安装(${bundleId})。`);
-    console.error('⚠️ 未自动启动:已补/改 apps/mobile/.env,但 8081 上的 Metro 是用旧 env 启动的(env 在 bundle 时注入)。');
+    console.error('⚠️ 未自动启动:已补/改 apps/mobile/.env，但所选 Metro 使用旧 env。');
     console.error('   先停掉它再 `pnpm mobile:sim:start`(用新 env 起 Metro),然后启动 app,新 env 才生效。');
-    process.exit(0);
+    process.exit(1);
   }
 }
 console.log('› 启动…');
-run('xcrun', ['simctl', 'launch', 'booted', bundleId]);
+// NSArgumentDomain selects this launch's packager without modifying native
+// config/fingerprint or depending on a development-client deep-link handler.
+run('xcrun', ['simctl', 'launch', '--terminate-running-process', installTarget, bundleId,
+  '-RCT_jsLocation', 'localhost:' + metroPort]);
 console.log(`\n✓ 完成。${bundleId} 已重装并启动。改 JS 直接靠 Metro Fast Refresh,不用再跑本脚本。`);
 
 /**

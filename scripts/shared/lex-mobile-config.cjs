@@ -34,16 +34,21 @@ function lexMobileConfig(config, env = process.env) {
         [key, key.endsWith('UsageDescription') && typeof value === 'string' ? value.replace(/\bCindy\b/g, 'Lex') : value])),
     },
     updates: { enabled: false },
-    plugins: config.plugins.map((plugin) => {
-      if (Array.isArray(plugin) && plugin[0] === 'expo-splash-screen') {
-        return [plugin[0], { backgroundColor: '#ffffff', image: icon, imageWidth: 128, dark: { backgroundColor: '#262626', image: icon } }];
-      }
-      if (Array.isArray(plugin) && ['expo-audio', 'expo-image-picker', 'expo-media-library'].includes(plugin[0])) {
-        return [plugin[0], Object.fromEntries(Object.entries(plugin[1] ?? {}).map(([key, value]) =>
-          [key, key.endsWith('Permission') && typeof value === 'string' ? value.replace(/\bCindy\b/g, 'Lex') : value]))];
-      }
-      return plugin;
-    }),
+    plugins: [
+      ['./plugins/with-ios-scene-lifecycle', {
+        sourceHash: require('../../apps/mobile/plugins/with-ios-scene-lifecycle').sourceHash,
+      }],
+      ...config.plugins.map((plugin) => {
+        if (Array.isArray(plugin) && plugin[0] === 'expo-splash-screen') {
+          return [plugin[0], { backgroundColor: '#ffffff', image: icon, imageWidth: 128, dark: { backgroundColor: '#262626', image: icon } }];
+        }
+        if (Array.isArray(plugin) && ['expo-audio', 'expo-image-picker', 'expo-media-library'].includes(plugin[0])) {
+          return [plugin[0], Object.fromEntries(Object.entries(plugin[1] ?? {}).map(([key, value]) =>
+            [key, key.endsWith('Permission') && typeof value === 'string' ? value.replace(/\bCindy\b/g, 'Lex') : value]))];
+        }
+        return plugin;
+      }),
+    ],
   };
 }
 
