@@ -117,7 +117,11 @@ export function CindyImportWizard({ onClose }: { onClose(): void }) {
         <div className="flex flex-wrap justify-end gap-2">
           {busy && <span role="status" className="self-center text-[var(--text-secondary)]">{translate(committing ? 'importing' : 'preparing')}</span>}
           <Button variant="secondary" onClick={busy ? () => { void api.cancel().catch(() => setError('importFailed')); } : close}>{translate(busy ? 'cancel' : 'close')}</Button>
-          {scan && !preview && <Button disabled={!selected.size || busy} loading={busy} onClick={() => perform(async () => setPreview(await api.preview(scan.scanId, [...selected])))}>{t('settings.cindyImport.preview', { count: selected.size })}</Button>}
+          {scan && !preview && <Button disabled={!selected.size || busy} loading={busy} onClick={() => perform(async () => {
+            // Consent applies only to the missing items shown in this preview.
+            setAllowIncomplete(false);
+            setPreview(await api.preview(scan.scanId, [...selected]));
+          })}>{t('settings.cindyImport.preview', { count: selected.size })}</Button>}
           {preview && !results && <Button disabled={busy || !valid.length || valid.some((item) => item.needsDirectory) || (incomplete && !allowIncomplete)} loading={committing} onClick={commit}>{translate('import')}</Button>}
         </div>
       </AlertDialog.Content>
