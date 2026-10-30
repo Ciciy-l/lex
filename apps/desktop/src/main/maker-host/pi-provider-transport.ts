@@ -1,4 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto';
+import { isFastServiceTier, supportsFastServiceTier } from '@cindy/model-providers';
 import { withOpenCodeGoSessionHeader } from './opencode-go-session.js';
 import { once } from 'node:events';
 import type { ServerResponse } from 'node:http';
@@ -309,8 +310,7 @@ export function createPiProviderFetch(options: PiProviderTransportOptions): type
       signal, maxRetries: 0,
       reasoning: request.reasoning?.effort && request.reasoning.effort !== 'none'
         ? request.reasoning.effort as ThinkingLevel : undefined,
-      ...(options.row.supportsFastMode === true && request.service_tier === 'priority' &&
-        ['openai-responses', 'azure-openai-responses', 'openai-completions'].includes(model.api)
+      ...(isFastServiceTier(request.service_tier) && supportsFastServiceTier(model.api)
         ? { onPayload: (payload: unknown) => payload && typeof payload === 'object' && !Array.isArray(payload)
           ? { ...payload, service_tier: 'priority' } : payload } : {}),
       maxTokens: typeof request.max_output_tokens === 'number' ? Math.min(request.max_output_tokens, model.maxTokens) : model.maxTokens,

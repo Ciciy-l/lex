@@ -4286,7 +4286,7 @@ describe('codex proxy host', () => {
       return current;
     }
 
-    it.each([true, false])('routes only a returned same-account Fast target and prices its completed usage (available=%s)', async available => {
+    it.each([true, false].flatMap(available => ['fast', 'priority'].map(tier => ({ available, tier }))))('routes same-account Fast and prices completed usage (available=$available, tier=$tier)', async ({ available, tier }) => {
       const host = await freshCodexProxyHost();
       const { BUNDLED_CATALOG } = await import('@cindy/model-providers');
       const { setActiveCatalog, setCustomProviders, setXaiDiscoveredModels } = await import('../active-catalog.js');
@@ -4325,7 +4325,7 @@ describe('codex proxy host', () => {
       const resolvePrice = registerUsagePricing(sessionId);
       const options = mockState.createAnthropicCompatProxy.mock.calls[0][0];
       const ctx = { reqId: 1, method: 'POST', url: '/responses', upstreamBase: 'https://us.api.x.ai/v1', headers: { 'thread-id': threadId } };
-      const body = { model: 'xai/fixture-grok', service_tier: 'priority', input: [] };
+      const body = { model: 'xai/fixture-grok', service_tier: tier, input: [] };
       let current: unknown = body;
       for (const transform of options.transformRequest) {
         const next = transform(current, ctx);
@@ -4362,7 +4362,7 @@ describe('codex proxy host', () => {
       setActiveCatalog(BUNDLED_CATALOG);
     });
 
-    it('does not send a stale Fast tier to a public xAI API-key connection', async () => {
+    it.each(['fast', 'priority'])('does not send a stale %s tier to a public xAI API-key connection', async tier => {
       const host = await freshCodexProxyHost();
       const { BUNDLED_CATALOG, buildUserProvider } = await import('@cindy/model-providers');
       const { setActiveCatalog, setCustomProviders } = await import('../active-catalog.js');
@@ -4390,7 +4390,7 @@ describe('codex proxy host', () => {
       const resolvePrice = registerUsagePricing(sessionId);
       const options = mockState.createAnthropicCompatProxy.mock.calls[0][0];
       const ctx = { reqId: 2, method: 'POST', url: '/responses', upstreamBase: 'https://us.api.x.ai/v1', headers: { 'thread-id': threadId } };
-      let current: unknown = { model: 'fixture-grok', service_tier: 'priority', input: [] };
+      let current: unknown = { model: 'fixture-grok', service_tier: tier, input: [] };
       for (const transform of options.transformRequest) {
         const next = transform(current, ctx);
         if (next !== null && next !== undefined) current = next;

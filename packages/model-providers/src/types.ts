@@ -403,18 +403,13 @@ export interface CatalogModel {
   /** 思考只有开/关两档时，选择器显示开关而不是档位列表。 */
   thinkingToggle?: boolean;
   /**
-   * 该模型在**该 (provider, agent) 下**是否支持 Fast Mode —— Fast 能力的**唯一真相**。
-   *
-   * 因为模型按 (provider, agent) 嵌套（见 Provider.models），本字段天然 per-provider：
-   * **同一 model id 在不同 provider 下取值可以不同**，用来表达「这个来源能不能真正交付 fast」。
-   * 典型：opus 走官方 Anthropic 直连可 fast ⇒ 该条目 `true`；某网关会剥掉承载 fast 的请求字段
-   * （cc 的 `anthropic-beta` 头 / codex 的 `serviceTier`）⇒ 那个 provider 下的同名条目应配 `false`。
-   * 故意**不纳入** catalog.ts 的跨供应商一致性校验（`modelSignature`），正是为放行这种分叉。
-   *
-   * **是否真的显示开关还要叠上 agent 运行时粗粒度 gate**：
-   * 实际可用 = `model.supportsFastMode && agent.capabilities.hasFastMode`。UI 取实际可用性时
-   * 必须按「当前生效来源」现查本字段（见 registry.ts `sessionModelSupportsFastMode`），
-   * 不能读跨 provider 拍平去重后的列表（那只保留首个 provider 的值，会错）。
+   * Provider-reported Fast capability for this exact (provider, agent, model).
+   * Preserve true/false/unknown from discovery; this is not the user's request
+   * preference or proof of the actual processing/billing tier.
+   * Responses/Chat routes may request Fast even when this declaration is absent
+   * or false. Use registry.modelSupportsFastMode plus agent.hasFastMode for UI
+   * requestability, never a cross-provider flattened model. Native subscription
+   * entitlements and xAI model switching still use their declared capabilities.
    */
   supportsFastMode?: boolean;
   /** Same-provider, same-harness catalog model used for Fast. null explicitly disables mapping.

@@ -18,6 +18,8 @@ import {
   isModelSelectableForNewRoute,
 } from './classification.js';
 import type { ProviderLogoKind } from './providerBranding.js';
+import { isOfficialXaiApiHost } from './xai-endpoints.js';
+import { supportsFastServiceTier } from './fastMode.js';
 import {
   isModelDisabled,
   isProviderDisabled,
@@ -366,9 +368,10 @@ export function actualSourceIdForModel(
 }
 
 /**
- * 某 (provider, model, agent) 是否支持 Fast 模式 —— 纯函数,**Fast 能力的唯一真相**。
- * 直接读该供应商在该 agent 下那个模型条目的 `supportsFastMode`（per-provider，见 CatalogModel）。
- * 缺省 / 取不到 provider / 该来源不提供此模型 ⇒ false（不显示开关）。
+ * Whether this exact route can request Fast, not a promise of provider support.
+ * Responses/Chat serializers expose the request option even for old/sparse
+ * catalogs and negative provider declarations. Native Anthropic Fast and xAI's
+ * model-switching Fast still require their distinct declared capabilities.
  *
  * 实际可用 = `agent.hasFastMode && modelSupportsFastMode(...)`（agent 粗粒度 gate 由调用方叠加）。
  * 注意：必须传入**具体某个 provider**的条目，不能用跨 provider 拍平去重后的模型（那只保留首个
@@ -380,11 +383,22 @@ export function modelSupportsFastMode(
   agent: AgentKind,
 ): boolean {
   if (!provider) return false;
-  return !!getModel(provider, modelId, agent)?.supportsFastMode;
+  const model = getModel(provider, modelId, agent);
+  if (!model) return false;
+  const routing = provider.routing?.[agent];
+  const wire = model.api ?? (agent === 'pi' ? model.piApi : undefined)
+    ?? model.route?.wireProtocol ?? (agent === 'codex' ? model.codexCompatibilityWireProtocol : undefined)
+    ?? routing?.wireProtocol ?? (agent === 'codex' && routing?.upstream ? 'openai-responses' : undefined);
+  const xai = provider.id === 'xai' || provider.auth?.native === 'xai'
+    || typeof model.fastModelId === 'string'
+    || isOfficialXaiApiHost(model.route?.baseUrl ?? routing?.upstream);
+  const nativeCodex = agent === 'codex' && (provider.auth?.native === 'codex' || provider.id === 'openai');
+  if (agent !== 'omp' && supportsFastServiceTier(wire) && !xai && !nativeCodex) return true;
+  return model.supportsFastMode === true;
 }
 
 /**
- * 会话维度的 Fast 门控:解析「当前生效来源」后,查该来源下这个模型的 `supportsFastMode`。
+ * 会话维度的 Fast 门控:解析「当前生效来源」后,查该路由的 Fast 请求能力。
  * 生效来源口径与模型选择器 activeSourceId 一致(显式 providerId 若已连接则用它,否则取该 agent 的
  * nativeDefaultSourceId)。这样 providerId 为 null(未显式选源)时也能命中真实默认来源
  * —— 例如 cc 默认源是 xd 网关(见 nativeDefaultSourceId),若该来源把某模型 fast 配为 false

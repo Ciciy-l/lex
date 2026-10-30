@@ -31,7 +31,7 @@
  * 1. **先解析生效来源再查能力**。候选引擎、Fast、上下文、effort 一律按
  *    (provider, agent, wire id) 三元组现查,**禁止读跨供应商拍平去重后的列表** ——
  *    那只保留首见供应商的值,同 id 多来源时会取到另一条路由的元数据
- *    (registry.ts `modelSupportsFastMode` / CatalogModel.supportsFastMode 明示)。
+ *    (registry.ts `modelSupportsFastMode` 判断请求能力，CatalogModel 保留供应商声明)。
  * 2. **推荐引擎必须是候选之一**,且每个候选都必须有可发的 wire id。
  * 3. **零 IO、零 any、纯函数**。可见性口径由调用方注入 —— 本包不得反向依赖 apps/desktop。
  *

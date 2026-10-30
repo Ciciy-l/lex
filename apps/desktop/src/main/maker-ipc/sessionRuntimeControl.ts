@@ -422,6 +422,8 @@ export function resolveSessionRuntimeAxes(params: {
   fastMode: boolean;
   effortExplicit: boolean;
   fastExplicit: boolean;
+  /** Exact route requestability; provider metadata alone is not a Codex gate. */
+  fastCapable?: boolean;
   allowFixedEffortPlaceholder?: boolean;
 }):
   | { ok: true; effort: Effort | null; fastMode: boolean }
@@ -437,13 +439,14 @@ export function resolveSessionRuntimeAxes(params: {
   ) {
     return { ok: false, reason: 'effort-unavailable' };
   }
-  if (params.fastExplicit && params.fastMode && params.model.supportsFastMode !== true) {
+  const fastCapable = params.fastCapable ?? params.model.supportsFastMode === true;
+  if (params.fastExplicit && params.fastMode && !fastCapable) {
     return { ok: false, reason: 'fast-unavailable' };
   }
   return {
     ok: true,
     effort: resolveCompatibleSessionRuntimeEffort(params.model, params.effort),
-    fastMode: params.fastMode && params.model.supportsFastMode === true,
+    fastMode: params.fastMode && fastCapable,
   };
 }
 

@@ -1,4 +1,4 @@
-import { withLexApplicationHeaders } from '@cindy/model-providers';
+import { modelSupportsFastMode, withLexApplicationHeaders } from '@cindy/model-providers';
 import { t } from '../i18n.js';
 import { assertNotRetiredCompanionSession } from '../localDb/retiredCompanions.js';
 import { scanLocalCustomizations } from '../skillhub/customizationScanHost';
@@ -160,6 +160,8 @@ import { readModelContextLimit } from './model-context-limit-store.js';
 import { resolveDesktopModelContextProviderId } from './model-context-settings.js';
 import {
   prepareCodexCustomContextCatalog,
+  prepareCodexFastModeCatalog,
+  codexFastCatalogSignature,
 } from './codex-custom-context-catalog.js';
 import { buildPiAgent } from './pi-host.js';
 import { buildOmpAgent } from './omp-host.js';
@@ -1485,6 +1487,15 @@ export function getMaker(): Maker {
       orcaWorkerBridgeProvider,
     ];
     _mcpProviders.codex = codexMcpProviders;
+    const fastRequestModels = () => getActiveCatalog().providers.flatMap(provider =>
+      (provider.models.codex ?? []).filter(model =>
+        modelSupportsFastMode(provider, model.id, 'codex')).map(model => model.id));
+    const withFastCatalogSignature = (signature: string, credentialMode: string | undefined,
+      purpose: string | undefined, smart: boolean, modelIds = fastRequestModels()) => {
+      if (purpose === 'control-plane' || purpose === 'review'
+        || (credentialMode === 'oauth-bearer' && !smart && purpose !== 'custom-context')) return signature;
+      return signature + ':' + codexFastCatalogSignature(modelIds);
+    };
     const resolveDesiredCodexSubagentRoutingSignature = async (ctx: {
       providerId?: string;
       credentialMode?: 'oauth-bearer' | 'gateway-key' | 'provider-oauth';
@@ -1495,15 +1506,15 @@ export function getMaker(): Maker {
         ctx.hostPurpose === 'control-plane'
         || ctx.hostPurpose === 'review'
         || !settings.codexSmartSubagentRouting
-      ) return 'default';
+      ) return withFastCatalogSignature('default', ctx.credentialMode, ctx.hostPurpose, false);
       const providerViews: ProviderView[] =
         await getDesktopProviderService().listProviders({ allowSideEffects: false });
       const candidates = selectCodexSmartSubagentCandidates(providerViews, {
         allowChatGptOAuth: ctx.credentialMode !== undefined,
         oauthProviderId: ctx.providerId,
       });
-      return codexSmartSubagentRoutingSignature(candidates, getActiveCatalogRevision())
-        ?? 'default';
+      const signature = codexSmartSubagentRoutingSignature(candidates, getActiveCatalogRevision());
+      return withFastCatalogSignature(signature ?? 'default', ctx.credentialMode, ctx.hostPurpose, !!signature);
     };
     const codexAgent = new CodexAgent({
       getAppVersion: () => app.getVersion(),
@@ -1865,6 +1876,30 @@ export function getMaker(): Maker {
           }
         }
         let customContextCatalogArgs: string[] = [];
+        const fastModelIds = fastRequestModels();
+        let fastCatalog: Awaited<ReturnType<typeof prepareCodexFastModeCatalog>> | undefined;
+        // Official subscriptions retain native, refreshable model discovery.
+        // API hosts (and already frozen smart/custom catalogs) need requestability
+        // descriptors because Codex otherwise silently discards explicit Fast.
+        if (!isControlPlane && !isReview && (!useOAuthBearer || smartSubagentConfig || isCustomContext)) try {
+          fastCatalog = await prepareCodexFastModeCatalog({
+            binaryPath: codexPath,
+            codexHome: effectiveCodexHome,
+            modelIds: fastModelIds,
+            ...(smartSubagentConfig ? { baseCatalog: smartSubagentConfig.modelCatalog } : {}),
+          });
+          if (smartSubagentConfig) {
+            smartSubagentConfig = { ...smartSubagentConfig, catalogPath: fastCatalog.catalogPath,
+              modelCatalog: fastCatalog.modelCatalog };
+          } else {
+            customContextCatalogArgs = fastCatalog.extraArgs;
+          }
+        } catch (error) {
+          // A user-selected runtime may have a different native catalog format.
+          // Preserve its startup and native tier checks rather than rewriting prompts.
+          desktopMakerLogger.warn('Codex Fast request catalog unavailable; preserving native catalog',
+            { error: error instanceof Error ? error.message : String(error) });
+        }
         if (isCustomContext) {
           const modelId = ctx.customContextModel?.trim();
           const contextWindow = ctx.customContextWindow;
@@ -1882,8 +1917,8 @@ export function getMaker(): Maker {
               codexHome: effectiveCodexHome,
               modelId,
               contextWindow,
-              ...(smartSubagentConfig
-                ? { baseCatalog: smartSubagentConfig.modelCatalog }
+              ...(fastCatalog || smartSubagentConfig
+                ? { baseCatalog: fastCatalog?.modelCatalog ?? smartSubagentConfig?.modelCatalog }
                 : {}),
             });
             if (smartSubagentConfig) {
@@ -1909,8 +1944,8 @@ export function getMaker(): Maker {
           ? registerCodexScopedCustomProviderRoutes(scopedProxyKey, codexCustomProviderRoutes)
           : undefined;
         return {
-          // 默认不碰 Codex 原生 Sol/Terra 调配。用户开启智能调配后才为这个本地
-          // app-server 冻结扩展目录与逐模型 Provider 路由。
+          // OAuth retains native discovery unless smart routing/custom context
+          // already needs a frozen catalog. API hosts add Fast request metadata.
           extraArgs: [
             ...mcpExtraArgs,
             ...(!isReview && !ctx.remoteHostId
@@ -1928,9 +1963,9 @@ export function getMaker(): Maker {
           codexProxyActive: ready,
           codexOpenAiWebSocketsEnabled: useOAuthBearer && ready,
           codexSubagentRoutingProfile,
-          ...(smartSubagentConfig
-            ? { codexSubagentRoutingSignature: smartSubagentConfig.routingSignature }
-            : {}),
+          codexSubagentRoutingSignature: withFastCatalogSignature(
+            smartSubagentConfig?.routingSignature ?? 'default', credentialMode,
+            ctx.hostPurpose, !!smartSubagentConfig, fastModelIds),
           ...(codexCustomProviderRoutes.length > 0
             ? { codexCustomProviderRoutes: toCodexCustomProviderHostRoutes(codexCustomProviderRoutes) }
             : {}),

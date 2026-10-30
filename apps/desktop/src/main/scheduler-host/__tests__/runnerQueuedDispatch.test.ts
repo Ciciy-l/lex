@@ -476,7 +476,7 @@ beforeEach(() => {
 });
 
 describe('MakerScheduleRunner queued dispatch (busy bound session)', () => {
-  it('dispatches a fresh implicit provider route using the resolved fire-local schedule', async () => {
+  it('keeps explicit Fast on a resolved Responses route despite negative provider metadata', async () => {
     const h = createSessionHarness(async () => ({ accepted: true }));
     Object.assign(h.session, { agentKind: 'pi', model: 'shared-model' });
     mocks.setSessionProvider.mockImplementationOnce((_sessionId, providerId) => {
@@ -545,7 +545,7 @@ describe('MakerScheduleRunner queued dispatch (busy bound session)', () => {
         model: 'shared-model',
         providerId: 'selected',
         effort: 'high',
-        fastMode: false,
+        fastMode: true,
       }),
     );
     // A fresh handle was already created on this route. The store and queue
@@ -560,7 +560,7 @@ describe('MakerScheduleRunner queued dispatch (busy bound session)', () => {
     expect(mocks.backfillSessionMeta.mock.calls.at(-1)?.[2]).toMatchObject({
       providerId: 'selected',
       effort: 'high',
-      fastMode: false,
+      fastMode: true,
     });
     await vi.waitFor(() => expect(h.listenerCount()).toBe(1));
     h.emit({ type: 'done', data: {}, source: 'pi' });

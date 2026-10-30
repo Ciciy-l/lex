@@ -40,7 +40,7 @@ function release(overrides = {}) {
 
 test('OMP runtime pin keeps the adapter on its one audited baseline', () => {
   assert.equal(readPinnedVersion(), OMP_COMPATIBILITY_BASELINE);
-  assert.equal(OMP_COMPATIBILITY_BASELINE, '18.10.4');
+  assert.equal(OMP_COMPATIBILITY_BASELINE, '18.14.0');
 });
 
 test('OMP runtime metadata requires exact name, URL, digest, and size matches', () => {
@@ -70,7 +70,7 @@ test('OMP runtime metadata requires exact name, URL, digest, and size matches', 
 });
 
 test('OMP runtime updater rejects unaudited version substitutions', () => {
-  for (const version of ['18.1.19', '18.10.3', '18.10.5', '18.10.4-rc.1']) {
+  for (const version of ['18.1.19', '18.10.3', '18.10.5', '18.14.0-rc.1']) {
     assert.throws(
       () => assertPinnedRuntimeAsset(pin, release(), version, 'win32-x64'),
       /not the audited RPC baseline/,

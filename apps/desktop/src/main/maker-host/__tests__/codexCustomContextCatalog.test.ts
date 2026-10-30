@@ -9,6 +9,7 @@ import nativeFallbackPrompt from '../codex-native-fallback-prompt.json';
 import {
   extractBundledCodexModelCatalog,
   prepareCodexCustomContextCatalog,
+  prepareCodexFastModeCatalog,
   patchCodexModelMaxContextWindow,
   nativeCodexFallbackModel,
 } from '../codex-custom-context-catalog.js';
@@ -39,6 +40,39 @@ async function createFixtureBinary(
 }
 
 describe('Codex custom context model catalog', () => {
+  it('adds requestable Fast without changing native prompts, defaults or other models', async () => {
+    const selected = { slug: 'private-model', base_instructions: 'native prompt', context_window: 128000,
+      max_context_window: 256000, service_tiers: [{ id: 'flex', name: 'Flex', description: 'native' }],
+      additional_speed_tiers: [], default_service_tier: null };
+    const untouched = { slug: 'other', service_tiers: [], base_instructions: 'other prompt' };
+    const catalog = { models: [selected, untouched], extension: 'preserve' };
+    const { root, binaryPath } = await createFixtureBinary(catalog);
+    const prepared = await prepareCodexFastModeCatalog({ binaryPath, codexHome: root,
+      modelIds: ['private-model', 'private-model', 'relay/private-model-dated'], baseCatalog: catalog });
+    expect(prepared.modelCatalog.models).toHaveLength(3);
+    expect(prepared.modelCatalog.models[0]).toEqual({ ...selected, additional_speed_tiers: ['fast'],
+      service_tiers: [...selected.service_tiers, { id: 'priority', name: 'Fast', description: 'Request Fast processing' }] });
+    expect(prepared.modelCatalog.models[1]).toEqual(untouched);
+    expect(prepared.modelCatalog.models[2]).toEqual({ ...prepared.modelCatalog.models[0], slug: 'relay/private-model-dated' });
+    expect(catalog.models[0]).toEqual(selected);
+    const custom = await prepareCodexCustomContextCatalog({ binaryPath, codexHome: root,
+      modelId: 'private-model', contextWindow: 400000, baseCatalog: prepared.modelCatalog });
+    const written = JSON.parse(await fs.readFile(custom.catalogPath, 'utf8'));
+    expect(written.models[0]).toMatchObject({ context_window: 128000, max_context_window: 400000,
+      default_service_tier: null, additional_speed_tiers: ['fast'] });
+    expect(written.models[1]).toEqual(untouched);
+  });
+
+  it('uses only a verified native fallback for unknown Fast aliases', async () => {
+    const { root, binaryPath } = await createFixtureBinary({ models: [{ slug: 'known' }] });
+    await expect(prepareCodexFastModeCatalog({ binaryPath, codexHome: root, modelIds: ['unknown'] }))
+      .rejects.toThrow('native fallback metadata changed');
+    await fs.appendFile(binaryPath, nativeFallbackPrompt);
+    const prepared = await prepareCodexFastModeCatalog({ binaryPath, codexHome: root, modelIds: ['unknown'] });
+    expect(prepared.modelCatalog.models[1]).toMatchObject({ ...nativeCodexFallbackModel('unknown'),
+      additional_speed_tiers: ['fast'], service_tiers: [{ id: 'priority', name: 'Fast', description: 'Request Fast processing' }] });
+  });
+
   it('preserves the byte-exact Apache-2.0 native prompt shared by Codex 0.153 and 0.162.1', () => {
     const bytes = Buffer.from(nativeFallbackPrompt);
     // Public upstream Git blob; an independently obtained source, not a fixture generated from this asset.

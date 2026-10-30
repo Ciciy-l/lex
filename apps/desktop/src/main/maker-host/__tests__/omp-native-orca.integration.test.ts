@@ -180,7 +180,7 @@ it.skipIf(!binary)('OMP native Worker receives distinct idle/queued Orca inputs 
             if (/approve|deny|allow|permission/i.test(data) && nativeDialogs.length < 12) nativeDialogs.push(data.slice(-5000));
             // This fixture acts as the synthetic terminal user. Production
             // does not auto-approve or relax OMP's original approval mode.
-            if (data.includes('Ctrl+Q approve') && !approvedNativeCalls.has(bodies.length)) {
+            if (/(?:Ctrl\+Q|Ctrl\+Enter|⌃Q) approve/.test(terminalTail) && !approvedNativeCalls.has(bodies.length)) {
               expect(bodies.length).toBeGreaterThan(0);
               const call = bodies.length;
               approvedNativeCalls.add(call);

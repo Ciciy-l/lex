@@ -1,4 +1,4 @@
-import { withLexApplicationHeaders } from '@cindy/model-providers';
+import { isOfficialXaiApiHost, supportsFastServiceTier, withLexApplicationHeaders } from '@cindy/model-providers';
 import { normalizeAutoReviewUserIntent, createAutoReviewActionContext, type AutoReviewUserIntent } from '../shared/auto-review-decision.js';
 import { getPiExtensionUiCapability } from './extension-ui-capabilities.js';
 import { managePiNativeHistory, PI_NATIVE_RAW_HISTORY, type PiNativeHistoryHandle } from './native-history-reopen.js';
@@ -3344,7 +3344,10 @@ export class PiAgent extends BaseAgent {
     // BYOM 直连原生 provider)。扩展每次派子代理现读本文件。
     const requestPrefsFile = joinRemotePosixPath(runtimeDir, 'request-prefs-' + runtimeInstanceId + '.json');
     const fastModels = nativeProviders.flatMap(provider => provider.models
-      .filter(model => model.supportsFastMode === true)
+      .filter(model => model.supportsFastMode === true || (
+        supportsFastServiceTier(model.api ?? provider.api)
+        && provider.id !== 'xai' && provider.sourceProviderId !== 'xai'
+        && !isOfficialXaiApiHost(model.baseUrl ?? provider.baseUrl)))
       .map(model => ({ provider: provider.id, id: model.wireId ?? model.id })));
     let requestPrefsWriteChain: Promise<void> = Promise.resolve();
     let requestPrefsSnapshot: string | undefined;

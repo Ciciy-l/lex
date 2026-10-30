@@ -27,6 +27,11 @@ export interface CodexModelCatalog {
   [key: string]: unknown;
 }
 
+/** Stable host identity: adding a requestable model must refresh the startup catalog. */
+export function codexFastCatalogSignature(modelIds: readonly string[]): string {
+  return 'fast:' + createHash('sha256').update(JSON.stringify([...new Set(modelIds)].sort())).digest('hex');
+}
+
 /** Same longest-prefix / single provider namespace lookup as Codex ModelsManager. */
 export function findCodexCatalogModel(catalog: CodexModelCatalog, modelId: string) {
   const find = (id: string) => catalog.models.filter((m) => id.startsWith(m.slug))
@@ -363,4 +368,49 @@ export async function prepareCodexCustomContextCatalog(params: {
     catalogPath,
     extraArgs: buildCodexModelCatalogSpawnArgs(catalogPath),
   };
+}
+
+/**
+ * Let Codex serialize the user's explicit Fast request for Responses routes.
+ * This process-local descriptor is not provider discovery or a billing claim.
+ * Keep native prompts, context limits, other tiers and defaults byte-for-byte.
+ */
+export async function prepareCodexFastModeCatalog(params: {
+  binaryPath: string;
+  codexHome: string;
+  modelIds: readonly string[];
+  baseCatalog?: CodexModelCatalog;
+}): Promise<{ catalogPath: string; extraArgs: string[]; modelCatalog: CodexModelCatalog }> {
+  const native = await readNativeCodexCatalog(params.binaryPath, params.codexHome);
+  let catalog = params.baseCatalog ?? native;
+  let fallbackInstructions: string | undefined;
+  const models = [...catalog.models];
+  for (const modelId of new Set(params.modelIds)) {
+    if (!modelId) continue;
+    const index = models.findIndex(model => model.slug === modelId);
+    let selected = index >= 0 ? models[index] : findCodexCatalogModel(native, modelId);
+    if (!selected) {
+      if (fallbackInstructions === undefined) {
+        const binary = await fs.readFile(params.binaryPath);
+        const unix = nativeFallbackPrompt.replace(/\r\n/g, '\n');
+        const windows = unix.replace(/\n/g, '\r\n');
+        if (binary.includes(Buffer.from(unix))) fallbackInstructions = unix;
+        else if (binary.includes(Buffer.from(windows))) fallbackInstructions = windows;
+        else throw new Error('Codex native fallback metadata changed; update the bundled compatibility descriptor');
+      }
+      selected = nativeCodexFallbackModel(modelId, fallbackInstructions);
+    }
+    const tiers = Array.isArray(selected.service_tiers) ? selected.service_tiers : [];
+    const speeds = Array.isArray(selected.additional_speed_tiers) ? selected.additional_speed_tiers : [];
+    const model = { ...selected, slug: modelId,
+      service_tiers: tiers.some(tier => isRecord(tier) && tier.id === 'priority')
+        ? tiers : [...tiers, { id: 'priority', name: 'Fast', description: 'Request Fast processing' }],
+      additional_speed_tiers: speeds.includes('fast') ? speeds : [...speeds, 'fast'],
+    };
+    if (index >= 0) models[index] = model;
+    else models.push(model);
+  }
+  catalog = { ...catalog, models };
+  const catalogPath = await persistCatalog(params.codexHome, `${JSON.stringify(catalog)}\n`);
+  return { catalogPath, extraArgs: buildCodexModelCatalogSpawnArgs(catalogPath), modelCatalog: catalog };
 }

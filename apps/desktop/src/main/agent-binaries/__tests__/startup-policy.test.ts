@@ -64,7 +64,7 @@ vi.mock('../../maker-host/omp-runtime-verifier.js', () => ({
     return {
       platformKey,
       binaryName: platformKey.startsWith('win32') ? 'omp.exe' : 'omp',
-      url: `https://github.com/can1357/oh-my-pi/releases/download/v18.10.4/${suffix}`,
+      url: `https://github.com/can1357/oh-my-pi/releases/download/v18.14.0/${suffix}`,
       sha256: 'b'.repeat(64),
       size: 7,
     };
@@ -112,8 +112,8 @@ function releaseManifest(version = '2.0.0'): Manifest {
     codexPackage: asset('codex'),
     pi: asset('pi'),
     omp: {
-      version: '18.10.4',
-      file: `https://github.com/can1357/oh-my-pi/releases/download/v18.10.4/${
+      version: '18.14.0',
+      file: `https://github.com/can1357/oh-my-pi/releases/download/v18.14.0/${
         process.platform === 'win32'
           ? 'omp-windows-x64.exe'
           : process.platform === 'linux'
@@ -219,14 +219,14 @@ describe('shared startup policy through the real binary preparation chain', () =
       path: path.join(
         mocks.userDataDir,
         'omp',
-        '18.10.4',
+        '18.14.0',
         process.platform === 'win32' ? 'omp.exe' : 'omp',
       ),
     });
     expect(mocks.download).toHaveBeenCalledWith(
       expect.objectContaining({
-        url: expect.stringContaining('/oh-my-pi/releases/download/v18.10.4/'),
-        targetPath: path.join(mocks.userDataDir, 'omp', '.18.10.4.dist.download'),
+        url: expect.stringContaining('/oh-my-pi/releases/download/v18.14.0/'),
+        targetPath: path.join(mocks.userDataDir, 'omp', '.18.14.0.dist.download'),
       }),
     );
     expect(binaries.getCachedBinaryStatus('omp')).toMatchObject({ binaryReady: true });
@@ -237,7 +237,7 @@ describe('shared startup policy through the real binary preparation chain', () =
     const binaryPath = path.join(
       mocks.userDataDir,
       'omp',
-      '18.10.4',
+      '18.14.0',
       process.platform === 'win32' ? 'omp.exe' : 'omp',
     );
     writeExecutable(binaryPath, 'altered omp');

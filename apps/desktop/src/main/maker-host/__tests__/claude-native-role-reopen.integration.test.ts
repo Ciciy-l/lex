@@ -1,6 +1,6 @@
 /** Opt-in original CLI + Main MCP factory; only synthetic accounts and loopback traffic. */
 import { createServer } from 'node:http';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, realpath } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -19,7 +19,7 @@ const newline = String.fromCharCode(10), escape = String.fromCharCode(27);
 const logger: Logger = { trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {}, child() { return logger; } };
 
 it.skipIf(!binary).each(['idle-reopen', 'active-identity', 'failed-revocation', 'retired-revocation'] as const)('uses original Claude and Main MCP for %s', async mode => {
-  const root = await mkdtemp(path.join(tmpdir(), 'lex-claude-role-reopen-'));
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), 'lex-claude-role-reopen-')));
   const home = path.join(root, 'home'), cwd = path.join(root, 'work'), config = path.join(home, '.claude');
   await Promise.all([mkdir(config, { recursive: true }), mkdir(cwd)]);
   const key = 'sk-ant-api03-lex-native-probe-not-a-real-key';
@@ -28,8 +28,9 @@ it.skipIf(!binary).each(['idle-reopen', 'active-identity', 'failed-revocation', 
   let handle: AgentSessionHandle | undefined;
   let roleStore: Awaited<ReturnType<typeof nativeRoleDb>> | undefined;
   const roleWarnings: unknown[][] = [];
-  const rawHandles: AgentSessionHandle[] = [];
+  const rawHandles: Awaited<ReturnType<typeof createClaudeNativeHostSession>>[] = [];
   const recoveryRoles: unknown[] = [];
+  let terminalTail = '';
   const usesRoleDb = mode === 'failed-revocation' || mode === 'retired-revocation';
   const activeCalls = ['mcp__cindy_orca__start_team', 'mcp__cindy_orca__end_team', 'mcp__cindy_orca__end_team',
     'mcp__orca_worker_bridge__send_to_lead', 'mcp__cindy_orca__start_team', 'mcp__cindy_orca__end_team'];
@@ -116,6 +117,7 @@ it.skipIf(!binary).each(['idle-reopen', 'active-identity', 'failed-revocation', 
           let text = '', trusted = false;
           child.onData((data: string) => {
             text = (text + stripVTControlCharacters(data)).slice(-10000);
+            terminalTail = text;
             if (!trusted && text.replace(/\s/g, '').includes('Yes,Itrustthisfolder')) {
               trusted = true; child.write(escape + '[B'); setTimeout(() => child.write(String.fromCharCode(13)), 100);
             }
@@ -141,7 +143,13 @@ it.skipIf(!binary).each(['idle-reopen', 'active-identity', 'failed-revocation', 
           };
         });
         rawHandles.push(raw);
-        await raw.nativeRuntime.ready;
+        let ready = false;
+        let readyError: unknown;
+        void raw.nativeRuntime.ready.then(() => { ready = true; }, error => { readyError = error; });
+        await vi.waitFor(() => {
+          if (readyError) throw readyError;
+          expect(ready, terminalTail).toBe(true);
+        }, { timeout: 20000 });
         if (mode === 'idle-reopen' && options.launch.mcpSources?.context.vendorOptions?.orcaRole === 'lead') {
           await vi.waitFor(async () => {
             const tools = await raw.nativeRuntime.command('tool-list', {}) as Array<{ name: string }>;
@@ -317,7 +325,9 @@ it.skipIf(!binary).each(['idle-reopen', 'active-identity', 'failed-revocation', 
       actualId ??= handle.id;
       expect(actualId).not.toBe('<pending>');
       expect(contexts[index]).toMatchObject({ sessionId: 'fixture-task', instance: 'fixture-instance', role });
-      const tools = bodies[index * 2].tools.map((tool: any) => tool.name);
+      // New Claude versions defer MCP schemas on the wire; query the native
+      // registry to verify availability and revocation, not eager serialization.
+      const tools = (await rawHandles[index]!.nativeRuntime.command('tool-list', {}) as Array<{ name: string }>).map(tool => tool.name);
       process.stdout.write(JSON.stringify({ nativeRoleCatalog: { index, role, tools,
         selectedServers: Object.keys(executors[index]!.mcp), handlerContext: contexts[index], requestCount: bodies.length } }) + newline);
       expect(tools).toContain('mcp__lex_role_fixture__context');

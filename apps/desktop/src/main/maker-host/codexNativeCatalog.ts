@@ -1,4 +1,4 @@
-import { deriveModelList, isModelVisible, type CatalogModel } from '@cindy/model-providers';
+import { deriveModelList, isModelVisible, modelSupportsFastMode, type CatalogModel } from '@cindy/model-providers';
 import { projectCodexNativeConfig, projectCodexNativeModels, type CodexNativeTaskRoutingOptions, type CodexModelListItem } from '@cindy/maker-core';
 import { getActiveAppSession, isAppSessionBoundaryPending } from '../appSessionState.js';
 import { getDesktopProviderService } from './createDesktopProviderService.js';
@@ -96,7 +96,7 @@ export function createDesktopCodexNativeCatalog(context: {
     if (current) metadata.push({ ...current, model: initial.model });
     const data = models.map(model => ({ id: model.id, name: model.name, description: model.description,
       visible: visible(providerId, model), efforts: model.efforts,
-      defaultEffort: model.defaultEffort ?? 'none', fastMode: model.supportsFastMode === true,
+      defaultEffort: model.defaultEffort ?? 'none', fastMode: modelSupportsFastMode(selectedProvider[0], model.id, 'codex'),
       imageInput: model.supportsImageInput }));
     check();
     return projectCodexNativeModels(data, metadata, initial.model);

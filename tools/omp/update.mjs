@@ -24,7 +24,7 @@ import {
   verifyFileSha256OrRemove,
 } from '../shared/verify-sha256.mjs';
 
-export const OMP_COMPATIBILITY_BASELINE = '18.10.4';
+export const OMP_COMPATIBILITY_BASELINE = '18.14.0';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '../..');

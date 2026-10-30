@@ -5186,6 +5186,17 @@ assertRouteCurrent();
       const nextProvider = setOpts && Object.hasOwn(setOpts, 'providerId') ? setOpts.providerId : mutableProviderId;
       if (opts.remoteHostId && nextProvider !== mutableProviderId) return true;
       if ((this.deps.isCodexAccountProvider?.(nextProvider) ? nextProvider : undefined) !== accountProviderId) return true;
+      // Startup model catalogs cannot be hot-patched. Reopen with the same native
+      // history when provider discovery added/removed a Fast request descriptor.
+      if (!opts.remoteHostId && this.deps.resolveCodexSubagentRoutingSignature) {
+        const desired = await this.deps.resolveCodexSubagentRoutingSignature(this.deps.mcpProviders ?? [], {
+          ...(accountProviderId ? { providerId: accountProviderId } : {}),
+          credentialMode: this.hostEffectiveCredentialModes.get(currentHostKey) ?? credentialMode,
+          ...(reviewMode ? { hostPurpose: 'review' as const }
+            : usesCustomContextHost ? { hostPurpose: 'custom-context' as const } : {}),
+        });
+        if (desired !== (host.getSubagentRoutingSignature() ?? 'default')) return true;
+      }
       for (let attempt = 0; ; attempt++) {
         const selection = opts.remoteHostId ? null : await this.resolveLocalAuthSelection(
           setOpts && Object.hasOwn(setOpts, 'providerId') ? setOpts.providerId : mutableProviderId,

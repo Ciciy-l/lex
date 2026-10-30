@@ -13,7 +13,7 @@ const reply = [
 ].map(value => `data: ${JSON.stringify(value)}\n\n`).join('') + 'data: [DONE]\n\n';
 
 describe('Pi-owned transport for Cindy harnesses', () => {
-  it.each([true, false, undefined])('sends discovered Sub2API effort and declared Fast (%s) through the native Chat adapter', async supportsFastMode => {
+  it.each([true, false, undefined])('sends explicit Fast through the native Chat adapter independently of provider declaration (%s)', async supportsFastMode => {
     const upstream = 'https://sub2api.example/custom/v1';
     const models = parseModelsListResponse({ data: [{ id: 'grok-4.7',
       supportsReasoningEffort: true, reasoningEffort: 'high',
@@ -37,7 +37,7 @@ describe('Pi-owned transport for Cindy harnesses', () => {
     }) });
     expect(await response.text()).toContain('response.completed');
     expect(sent).toMatchObject({ model: 'grok-4.7', reasoning_effort: 'xhigh' });
-    expect(sent?.service_tier).toBe(supportsFastMode === true ? 'priority' : undefined);
+    expect(sent?.service_tier).toBe('priority');
   });
 
   it('sends inherited reasoning for a future model through the Responses serializer on the same account route', async () => {

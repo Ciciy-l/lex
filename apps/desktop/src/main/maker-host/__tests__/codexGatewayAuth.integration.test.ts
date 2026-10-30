@@ -13,10 +13,18 @@ import type { Logger } from '../../../../../../packages/maker-core/src/interface
 const fixture = vi.hoisted(() => ({ userData: '', home: '', gatewayKey: 'synthetic-gateway-key' }));
 vi.mock('electron', () => ({ app: {
   isPackaged: true,
+  getName: () => 'Lex',
   getPath: (name: string) => name === 'home' ? fixture.home : fixture.userData,
   getAppPath: () => fixture.userData,
 }, safeStorage: { isEncryptionAvailable: () => false } }));
 vi.mock('../../appCapabilities.js', () => ({ getAppCapabilities: () => ({ canUseCindyGateway: true }) }));
+// Skill discovery and binary provisioning belong to their own suites; importing
+// them here would initialize the Desktop singleton during an isolated auth test.
+vi.mock('../managed-skills.js', () => ({ listCindyManagedSkills: async () => [], cindyManagedSkillRoots: async () => [] }));
+vi.mock('../../agent-binaries/index.js', () => ({
+  getCachedBinaryStatus: () => ({ binaryReady: false, binaryPath: null }),
+  isVettedAgentBinaryPath: () => false,
+}));
 vi.mock('../../secrets/providerSecretStore.js', () => ({ getProviderSecretStore: () => ({ get: () => fixture.gatewayKey }) }));
 vi.mock('../../appSessionState.js', async (original) => ({
   ...await original<typeof import('../../appSessionState.js')>(),
@@ -106,6 +114,9 @@ describe.skipIf(!binary)('first-profile gateway/API startup with native Codex', 
     const diagnostics: unknown[] = [];
     const nativePids: number[] = [];
     const testLogger: Logger = { ...logger, debug: (...args) => { diagnostics.push(args); }, warn: (...args) => { diagnostics.push(args); }, error: (...args) => { diagnostics.push(args); }, child: () => testLogger };
+    const { withGhostSkillProjectionOwnerCommit } = await import('../../authBoundaryQuarantine.js');
+    await withGhostSkillProjectionOwnerCommit({ previousOwnerId: null, nextOwnerId: 'synthetic-owner',
+      prepareTransition: async () => {}, commit: () => {} });
     const adapter = new DesktopCodexAuthAdapter();
     const taskRpcs: string[] = [];
     const originalRequest = AppServerHost.prototype.request;

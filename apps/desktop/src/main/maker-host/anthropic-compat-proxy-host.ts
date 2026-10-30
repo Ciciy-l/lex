@@ -139,6 +139,7 @@ import {
 } from '@cindy/maker-core';
 import { createXdToolResultImageNoticeTransform } from './xd-tool-result-image-notice.js';
 import { createPiResponsesVerbosityTransform } from './pi-responses-verbosity.js';
+import { modelSupportsFastMode } from '@cindy/model-providers';
 
 // scope = 'cc-proxy' → logger.ts 的 emit() 路由把这条流量并入统一 agent 流
 // (agent-*.ndjson, source=proxy)。child(sub) 会继续保持 'cc-proxy/sub' 前缀, routing 一致。
@@ -171,7 +172,7 @@ function attachClaudeProviderBridge(route: RoutingDecision, providerId: string, 
     const handler = createClaudeProviderBridge({
       url: `${base.replace(/\/+$/, '')}/${requestPath.replace(/^\/+/, '')}`,
       protocol, headers: route.headerOverride ?? {}, efforts: model.efforts,
-      supportsFastMode: model.supportsFastMode === true,
+      supportsFastMode: modelSupportsFastMode(provider, model.id, 'claude-code'),
       providerId: provider.id,
       catalogPresetId: model.catalogPresetId,
       assertCurrent: () => {

@@ -680,8 +680,11 @@ describe('Codex official OAuth host isolation', () => {
       const target = await agent.startSession({ sessionId: 'target-signature', providerId, model: 'gpt-5.4', workingDir: '/repo' });
       const sibling = await agent.startSession({ sessionId: 'sibling-signature', providerId: providerId === 'openai' ? 'cprov-test' : 'openai', model: 'gpt-5.4', workingDir: '/repo' });
       const siblingTransport = createdTransports[1];
-      await target.close();
+      expect(await target.requiresModelSwitchRebuild?.('gpt-5.4')).toBe(false);
       signature = 'changed';
+      expect(await target.requiresModelSwitchRebuild?.('new-private-alias')).toBe(true);
+      expect(siblingTransport.closed).toBe(false);
+      await target.close();
       const replacement = await agent.startSession({ sessionId: 'replacement-signature', providerId, model: 'gpt-5.4', workingDir: '/repo' });
       expect(createdTransports[0].closed).toBe(true);
       expect(siblingTransport.closed).toBe(false);
