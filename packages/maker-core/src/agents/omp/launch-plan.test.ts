@@ -24,28 +24,28 @@ function plan(
 }
 
 describe('parseOmpVersionOutput', () => {
-  it('accepts the pinned v18.10.4 banner and nothing looser', () => {
-    expect(parseOmpVersionOutput('18.10.4\n')).toBe('18.10.4');
-    expect(parseOmpVersionOutput('18.10.4\r\n')).toBe('18.10.4');
-    expect(isOmpCompatibilityBaseline('18.10.4\n')).toBe(true);
-    expect(isOmpCompatibilityBaseline('omp/18.10.4\n')).toBe(true);
-    expect(parseOmpVersionOutput('omp/18.10.4\n')).toBe('18.10.4');
-    expect(parseOmpVersionOutput('omp/18.10.4\r\n')).toBe('18.10.4');
+  it('accepts the pinned v18.14.0 banner and nothing looser', () => {
+    expect(parseOmpVersionOutput('18.14.0\n')).toBe('18.14.0');
+    expect(parseOmpVersionOutput('18.14.0\r\n')).toBe('18.14.0');
+    expect(isOmpCompatibilityBaseline('18.14.0\n')).toBe(true);
+    expect(isOmpCompatibilityBaseline('omp/18.14.0\n')).toBe(true);
+    expect(parseOmpVersionOutput('omp/18.14.0\n')).toBe('18.14.0');
+    expect(parseOmpVersionOutput('omp/18.14.0\r\n')).toBe('18.14.0');
     for (const version of [
       '18.1.18',
       '18.1.19',
       '18.10.3',
       '18.10.5',
-      '18.10.4-rc.1',
+      '18.14.0-rc.1',
     ]) {
       expect(isOmpCompatibilityBaseline(version + '\n')).toBe(false);
       expect(isOmpCompatibilityBaseline('omp/' + version + '\n')).toBe(false);
     }
-    expect(parseOmpVersionOutput('18.10.4')).toBeUndefined();
-    expect(parseOmpVersionOutput('18.10.4\nnoise')).toBeUndefined();
-    expect(parseOmpVersionOutput('notice\n18.10.4\n')).toBeUndefined();
-    expect(parseOmpVersionOutput('omp 18.10.4')).toBeUndefined();
-    expect(parseOmpVersionOutput('omp/18.10.4\nnoise')).toBeUndefined();
+    expect(parseOmpVersionOutput('18.14.0')).toBeUndefined();
+    expect(parseOmpVersionOutput('18.14.0\nnoise')).toBeUndefined();
+    expect(parseOmpVersionOutput('notice\n18.14.0\n')).toBeUndefined();
+    expect(parseOmpVersionOutput('omp 18.14.0')).toBeUndefined();
+    expect(parseOmpVersionOutput('omp/18.14.0\nnoise')).toBeUndefined();
   });
 });
 

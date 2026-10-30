@@ -140,11 +140,11 @@ test("Lex agent runtime snapshot is pinned, complete, and platform-safe", () => 
     omp: "omp",
   };
   const versions = {
-    claudeCode: "2.1.296",
-    codex: "0.162.1",
-    codexPackage: "0.162.1",
-    pi: "1.2.0",
-    omp: "18.10.4",
+    claudeCode: "2.1.314",
+    codex: "0.166.0",
+    codexPackage: "0.166.0",
+    pi: "1.4.0",
+    omp: "18.14.0",
   };
   const pins = Object.fromEntries(
     Object.entries(paths).map(([field, tool]) => [
@@ -238,7 +238,7 @@ test("Lex agent runtime snapshot is pinned, complete, and platform-safe", () => 
         assert.equal(url.origin, "https://downloads.claude.ai");
         assert.equal(
           url.pathname,
-          "/claude-code-releases/2.1.296/" +
+          "/claude-code-releases/2.1.314/" +
             platform +
             "/" +
             (platform.startsWith("win32") ? "claude.exe" : "claude"),

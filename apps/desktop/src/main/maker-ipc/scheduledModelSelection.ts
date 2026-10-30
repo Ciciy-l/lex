@@ -1,5 +1,5 @@
 import type { AgentKind, Effort } from '@cindy/maker-core';
-import { effectiveSourceIdForModel, findCatalogModel, type ProviderView } from '@cindy/model-providers';
+import { effectiveSourceIdForModel, findCatalogModel, modelSupportsFastMode, type ProviderView } from '@cindy/model-providers';
 import { resolveCompatibleSessionRuntimeEffort } from './sessionRuntimeControl';
 
 /** A saved automation choice, applied only while its target's send lock is held. */
@@ -52,7 +52,7 @@ export function resolveScheduledModelSelection(
     ...selection,
     providerId,
     effort: resolveCompatibleSessionRuntimeEffort(model, selection.effort),
-    fastMode: selection.fastMode && model.supportsFastMode === true,
+    fastMode: selection.fastMode && modelSupportsFastMode(provider, model.id, selection.agentKind),
   };
 }
 

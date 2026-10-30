@@ -83,11 +83,11 @@ it.skipIf(!binary).each(['ask', 'bypassPermissions'] as const)('OMP real Orca to
             if (/approve|deny|allow|permission/i.test(data) && nativeDialogs.length < 12) nativeDialogs.push(data.slice(-5000));
             // This fixture acts as the synthetic terminal user. Production
             // does not auto-approve or relax OMP's original approval mode.
-            if (data.includes('Ctrl+Q approve') && !approvedNativeCalls.has(bodies.length)) {
+            if (/(?:Ctrl\+Q|Ctrl\+Enter|⌃Q) approve/.test(terminalTail) && !approvedNativeCalls.has(bodies.length)) {
               expect(calls[bodies.length - 1]).toBeDefined();
               const call = bodies.length;
               approvedNativeCalls.add(call);
-              // OMP 18.10.4 ApprovalDialogComponent deliberately ignores
+              // OMP ApprovalDialogComponent deliberately ignores
               // approve keys for 500 ms after mount. Respect its arm interval;
               // an immediate synthetic key tests that guard, not approval.
               const timer = setTimeout(() => {

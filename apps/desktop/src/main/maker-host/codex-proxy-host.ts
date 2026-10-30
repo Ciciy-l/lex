@@ -60,6 +60,7 @@ import {
   type ChatBridgeCapabilities,
 } from '@cindy/responses-chat-bridge';
 import { createResponsesAnthropicHandler } from '@cindy/responses-anthropic-bridge';
+import { isFastServiceTier } from '@cindy/model-providers';
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -1867,7 +1868,7 @@ function createXaiResponsesCompatTransform(pricing: XaiRequestPricing): RequestT
       current = withNormalizedInputItems;
       changed = true;
     }
-    const withFast = rewriteFastModel(xaiProviderId, 'codex', current, current.service_tier === 'priority');
+    const withFast = rewriteFastModel(xaiProviderId, 'codex', current, isFastServiceTier(current.service_tier));
     const sessionId = sessionIdFromHeaders(ctx.headers);
     if (sessionId && ctx.url.split('?', 1)[0]?.endsWith('/responses') && !isGuardian) {
       pricing.set(ctx.reqId, captureUsagePricing(sessionId,
@@ -2283,7 +2284,7 @@ function createXaiFastSafetyTransform(
   pricing: XaiRequestPricing,
 ): RequestTransform {
   const transform: RequestTransform = (body, ctx) => {
-    if (!isPlainObject(body) || body.service_tier !== 'priority') return null;
+    if (!isPlainObject(body) || !isFastServiceTier(body.service_tier)) return null;
     const routing = responsesCompatibilityRouting(body, ctx, frozenAuthInjection);
     if (!routing || !isXaiUpstream(routing.upstream)) return null;
     const requestModel = typeof body.model === 'string' ? body.model : '';

@@ -4,11 +4,11 @@
   "platforms": {
     "win32-x64": {
       "claudeCode": {
-        "version": "2.1.296",
-        "file": "https://downloads.claude.ai/claude-code-releases/2.1.296/win32-x64/claude.exe",
-        "sha256": "76de74f7694a5bdc03378a5f837c9e132827bf004c98c276bc4e9094ff06769a",
-        "size": 260489376,
-        "binarySha256": "76de74f7694a5bdc03378a5f837c9e132827bf004c98c276bc4e9094ff06769a"
+        "version": "2.1.314",
+        "file": "https://downloads.claude.ai/claude-code-releases/2.1.314/win32-x64/claude.exe",
+        "sha256": "66e00df32e6981f686a91f67287fcc86e6e1b80ba4973a7b7c4aa43c59986cfa",
+        "size": 301388448,
+        "binarySha256": "66e00df32e6981f686a91f67287fcc86e6e1b80ba4973a7b7c4aa43c59986cfa"
       },
       "codex": {
         "version": "0.145.0",
@@ -18,31 +18,31 @@
         "binarySha256": "83751f15cb6a0a7b97df67752c001e3fe1c20e18ffbfec3ff63567296205eb6c"
       },
       "codexPackage": {
-        "version": "0.162.1",
-        "file": "https://github.com/openai/codex/releases/download/rust-v0.162.1/codex-package-x86_64-pc-windows-msvc.tar.gz",
-        "sha256": "3e993a82ff393f4530558dcaadb36bb4f0fd1ea7243e621348e40b469f900f6a",
-        "size": 159746536
+        "version": "0.166.0",
+        "file": "https://github.com/openai/codex/releases/download/rust-v0.166.0/codex-package-x86_64-pc-windows-msvc.tar.gz",
+        "sha256": "d559bb88e74d471265857b93b7f19bc250dae527673b9191b33534478093f6bc",
+        "size": 202589789
       },
       "pi": {
-        "version": "1.2.0",
-        "file": "https://github.com/earendil-works/pi/releases/download/v1.2.0/pi-windows-x64.zip",
-        "sha256": "bd272b508657ad8d0ac6176e7751913c848a89cfb8cbe21ff319941e6ca140be",
-        "size": 45099534
+        "version": "1.4.0",
+        "file": "https://github.com/earendil-works/pi/releases/download/v1.4.0/pi-windows-x64.zip",
+        "sha256": "0f7256ea8bdac3af20012b94fdc1252a31cc6dc0d2f9b9eb539555d22e3e321b",
+        "size": 45136547
       },
       "omp": {
-        "version": "18.10.4",
-        "file": "https://github.com/can1357/oh-my-pi/releases/download/v18.10.4/omp-windows-x64.exe",
-        "sha256": "391744ed751f56742c85d8fbf2eb7dcb800b83a0eaf6a650e6cae70d29776d44",
-        "size": 244276224
+        "version": "18.14.0",
+        "file": "https://github.com/can1357/oh-my-pi/releases/download/v18.14.0/omp-windows-x64.exe",
+        "sha256": "620a5935cdb6a9ed52d8b0c93892d6b5bb84155244a98f3be82af0455177bf29",
+        "size": 242797056
       }
     },
     "darwin-arm64": {
       "claudeCode": {
-        "version": "2.1.296",
-        "file": "https://downloads.claude.ai/claude-code-releases/2.1.296/darwin-arm64/claude",
-        "sha256": "c9b5341637becbd423ddffc5b254afb645682a3868cb708bbc6cc0e7bb419937",
-        "size": 240664432,
-        "binarySha256": "c9b5341637becbd423ddffc5b254afb645682a3868cb708bbc6cc0e7bb419937"
+        "version": "2.1.314",
+        "file": "https://downloads.claude.ai/claude-code-releases/2.1.314/darwin-arm64/claude",
+        "sha256": "21d6e7b9a6f07b4cfcb7df13760b3b72aa25e084e13a5354413382987ba832ed",
+        "size": 278848096,
+        "binarySha256": "21d6e7b9a6f07b4cfcb7df13760b3b72aa25e084e13a5354413382987ba832ed"
       },
       "codex": {
         "version": "0.145.0",
@@ -52,31 +52,31 @@
         "binarySha256": "1da3f4e0e96028b8a771814293c3033dafd1971f943f6c7e79b0897fe705f590"
       },
       "codexPackage": {
-        "version": "0.162.1",
-        "file": "https://github.com/openai/codex/releases/download/rust-v0.162.1/codex-package-aarch64-apple-darwin.tar.gz",
-        "sha256": "88e37ccddf5a0f4ea9dc1be13c66a2a94f9c2d1a04f3ace9053d71b3939e885d",
-        "size": 132224844
+        "version": "0.166.0",
+        "file": "https://github.com/openai/codex/releases/download/rust-v0.166.0/codex-package-aarch64-apple-darwin.tar.gz",
+        "sha256": "55a440cb579f970abe7c79ab181e54b0ea4c419be99f333bbd868eebac9c21f0",
+        "size": 165951869
       },
       "pi": {
-        "version": "1.2.0",
-        "file": "https://github.com/earendil-works/pi/releases/download/v1.2.0/pi-darwin-arm64.tar.gz",
-        "sha256": "abddf7688b4b6781d9113f63cd578e3c01dcdb87e71f66e7ec1c9ec6c76178d1",
-        "size": 31065256
+        "version": "1.4.0",
+        "file": "https://github.com/earendil-works/pi/releases/download/v1.4.0/pi-darwin-arm64.tar.gz",
+        "sha256": "79d9979d76a2a5adb7c28e27e9b44629928ccd0dc9fbb6ae7217860bd5e8be5d",
+        "size": 31098931
       },
       "omp": {
-        "version": "18.10.4",
-        "file": "https://github.com/can1357/oh-my-pi/releases/download/v18.10.4/omp-darwin-arm64",
-        "sha256": "7459333760ef0e265d5d40445ea459da3d18a10ef3ec4958302e1977b52c8a2b",
-        "size": 217158688
+        "version": "18.14.0",
+        "file": "https://github.com/can1357/oh-my-pi/releases/download/v18.14.0/omp-darwin-arm64",
+        "sha256": "608843959ab34295d52460dd09dd7d548b6c903c08a83c67954c2d4c36fd1f5a",
+        "size": 214816912
       }
     },
     "darwin-x64": {
       "claudeCode": {
-        "version": "2.1.296",
-        "file": "https://downloads.claude.ai/claude-code-releases/2.1.296/darwin-x64/claude",
-        "sha256": "a6bf4f30be241053a923f3820ad23c5991d2f5ac2935b3a8dd64da218d9cc603",
-        "size": 249194752,
-        "binarySha256": "a6bf4f30be241053a923f3820ad23c5991d2f5ac2935b3a8dd64da218d9cc603"
+        "version": "2.1.314",
+        "file": "https://downloads.claude.ai/claude-code-releases/2.1.314/darwin-x64/claude",
+        "sha256": "404779a308a358ecec8b25c8bccf0ce79a94cf261d12cb74065518d189c174f8",
+        "size": 290710016,
+        "binarySha256": "404779a308a358ecec8b25c8bccf0ce79a94cf261d12cb74065518d189c174f8"
       },
       "codex": {
         "version": "0.145.0",
@@ -86,31 +86,31 @@
         "binarySha256": "6db9193ce2c9a8cef2b5482612cde24202a4329dfc34f4687a036d5d7da619af"
       },
       "codexPackage": {
-        "version": "0.162.1",
-        "file": "https://github.com/openai/codex/releases/download/rust-v0.162.1/codex-package-x86_64-apple-darwin.tar.gz",
-        "sha256": "894ac20afe819d4fa2a4be8cd27c54fd606338b86036e8ed9b6c9978c2dc7aed",
-        "size": 143687717
+        "version": "0.166.0",
+        "file": "https://github.com/openai/codex/releases/download/rust-v0.166.0/codex-package-x86_64-apple-darwin.tar.gz",
+        "sha256": "1cb65690230be5982c654ba2655e3a3b594dce9c55b780e78bfdfeff829d7ad9",
+        "size": 180076524
       },
       "pi": {
-        "version": "1.2.0",
-        "file": "https://github.com/earendil-works/pi/releases/download/v1.2.0/pi-darwin-x64.tar.gz",
-        "sha256": "e079ff016ae78279cfbd6c1b4fffe072162f4a7bb879ad61b04e2e43bcc53455",
-        "size": 33524998
+        "version": "1.4.0",
+        "file": "https://github.com/earendil-works/pi/releases/download/v1.4.0/pi-darwin-x64.tar.gz",
+        "sha256": "1bdefc9e1074c1de458ea9f2e43e6013ce49cd05326009b3de144037036585e2",
+        "size": 33558360
       },
       "omp": {
-        "version": "18.10.4",
-        "file": "https://github.com/can1357/oh-my-pi/releases/download/v18.10.4/omp-darwin-x64",
-        "sha256": "ba70472c9e43d4ca7536a76d03bbe75afadfc1e296ec422161b22e813d5c1062",
-        "size": 227751648
+        "version": "18.14.0",
+        "file": "https://github.com/can1357/oh-my-pi/releases/download/v18.14.0/omp-darwin-x64",
+        "sha256": "fc119dff47f99569e32b0a2b10c25db9733ac6faef6ca005539b6e6f610e5984",
+        "size": 226728400
       }
     },
     "linux-x64": {
       "claudeCode": {
-        "version": "2.1.296",
-        "file": "https://downloads.claude.ai/claude-code-releases/2.1.296/linux-x64/claude",
-        "sha256": "24972e3bc859fab2b46ed4c1e51f7d6130f06d3bd550811a114640de3370d0de",
-        "size": 257068216,
-        "binarySha256": "24972e3bc859fab2b46ed4c1e51f7d6130f06d3bd550811a114640de3370d0de"
+        "version": "2.1.314",
+        "file": "https://downloads.claude.ai/claude-code-releases/2.1.314/linux-x64/claude",
+        "sha256": "4487042b4c4f5d88d4568f68ae98aae0b1ffae58864cf57fb868641bc5f84594",
+        "size": 298229464,
+        "binarySha256": "4487042b4c4f5d88d4568f68ae98aae0b1ffae58864cf57fb868641bc5f84594"
       },
       "codex": {
         "version": "0.145.0",
@@ -120,22 +120,22 @@
         "binarySha256": "a2a05dafaa1acb002a45eaec0a462de5b13694fcfcd7bc43305f14781ce7be14"
       },
       "codexPackage": {
-        "version": "0.162.1",
-        "file": "https://github.com/openai/codex/releases/download/rust-v0.162.1/codex-package-x86_64-unknown-linux-musl.tar.gz",
-        "sha256": "a676f5722aae0d86cbe3764332f08eab1fdd89dc0a300b3ad4ffbf48611fa3e3",
-        "size": 162905879
+        "version": "0.166.0",
+        "file": "https://github.com/openai/codex/releases/download/rust-v0.166.0/codex-package-x86_64-unknown-linux-musl.tar.gz",
+        "sha256": "1d44b28bc4ac9937d7d3532264baa68a507ce364956a0d4ebb856f331cdee254",
+        "size": 199694962
       },
       "pi": {
-        "version": "1.2.0",
-        "file": "https://github.com/earendil-works/pi/releases/download/v1.2.0/pi-linux-x64.tar.gz",
-        "sha256": "00fc36cffdebceea5a48230da62cf3fb463178f8fe185766652f96002a246847",
-        "size": 42611136
+        "version": "1.4.0",
+        "file": "https://github.com/earendil-works/pi/releases/download/v1.4.0/pi-linux-x64.tar.gz",
+        "sha256": "f2e4e4329603223d03260cdb8bd5033dbdc1f73ba58ab8939db2e56546e115d2",
+        "size": 42645744
       },
       "omp": {
-        "version": "18.10.4",
-        "file": "https://github.com/can1357/oh-my-pi/releases/download/v18.10.4/omp-linux-x64",
-        "sha256": "ff59fc1b484c1308a7247ad208305005627b3fac62b440737c2b1835ac32074e",
-        "size": 276199392
+        "version": "18.14.0",
+        "file": "https://github.com/can1357/oh-my-pi/releases/download/v18.14.0/omp-linux-x64",
+        "sha256": "e7dd2b606c4ebe9d1a7bcfad1b8820db968cd6b05409fed1c6bc8db0b6a95a8f",
+        "size": 276244656
       }
     }
   }

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { isModelVisible, type ProviderView } from '@cindy/model-providers';
+import { isModelVisible, modelSupportsFastMode, type ProviderView } from '@cindy/model-providers';
 import { resolveSelectedModelRoutes } from '../../shared/selectedModelRoutes.js';
 import type { ModelRoute } from '../../shared/modelRoute.js';
 import { sameModelRoute, type AppDefaultModelSelection } from '../../shared/appDefaultModelSelection.js';
@@ -35,17 +35,17 @@ export function availableAppDefaultModels(input: {
       if (current && current.harness === route.harness && current.providerId === route.providerId
         && current.model === route.model) {
         if (model.efforts.some(effort => effort === current.effort)) route.effort = current.effort;
-        route.fastMode = model.supportsFastMode === true && current.fastMode;
+        route.fastMode = modelSupportsFastMode(provider, model.id, agent) && current.fastMode;
       }
       // The picker preference is authoritative for a remembered target, including false Fast.
       if (remembered?.effort !== undefined) route.effort = model.efforts.some(effort => effort === remembered.effort)
         ? remembered.effort : (model.defaultEffort && model.efforts.includes(model.defaultEffort) ? model.defaultEffort : '');
-      if (remembered?.fastMode !== undefined) route.fastMode = model.supportsFastMode === true && remembered.fastMode;
+      if (remembered?.fastMode !== undefined) route.fastMode = modelSupportsFastMode(provider, model.id, agent) && remembered.fastMode;
       const valid = resolveSelectedModelRoutes({ providers: input.providers, providersLoading: false,
         availableAgents: input.availableAgents, availableAgentsLoaded: true,
         preferredRoute: route, isModelEnabled: input.enabled });
       return valid.length ? [{ id: JSON.stringify([route.harness, route.providerId, route.model]),
-        route, efforts: model.efforts, supportsFastMode: model.supportsFastMode === true }] : [];
+        route, efforts: model.efforts, supportsFastMode: modelSupportsFastMode(provider, model.id, agent) }] : [];
     }),
   ));
 }

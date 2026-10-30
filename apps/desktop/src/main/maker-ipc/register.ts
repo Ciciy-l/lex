@@ -1,3 +1,4 @@
+import { modelSupportsFastMode } from '@cindy/model-providers';
 import type { AgentNativeInputRequest } from '@cindy/maker-core';
 import { createCodexNativeMediaImporter } from '../maker-host/codexNativeMedia.js';
 import { createPiNativeMediaImporter } from '../maker-host/piNativeMedia.js';
@@ -12307,6 +12308,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             }
             const axes = resolveSessionRuntimeAxes({
               model, effort: profile.effort, fastMode: profile.fastMode,
+              fastCapable: modelSupportsFastMode(provider, profile.model, profile.agentKind),
               effortExplicit: explicit.effort, fastExplicit: explicit.fast,
             });
             if (!axes.ok) throwIpcError('INVALID_PARAMS', `target model runtime axes unavailable: ${axes.reason}`);
@@ -15076,6 +15078,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         if (catalogModel) {
           const axes = resolveSessionRuntimeAxes({
             model: catalogModel,
+            fastCapable: modelSupportsFastMode(finalProvider, finalModel, runtimeAgentKind),
             effort: finalEffort,
             fastMode: finalFastMode,
             effortExplicit: false,
@@ -17080,6 +17083,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         }
         const axes = resolveSessionRuntimeAxes({
           model: catalogModel,
+          fastCapable: modelSupportsFastMode(provider, model, runtimeAgentKind),
           effort: atomicSelection.effort,
           fastMode: atomicSelection.fastMode,
           effortExplicit:

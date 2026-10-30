@@ -19,7 +19,7 @@ import type { RemoteHost } from '../RemoteHost.js';
 
 describe('remote agent installer', () => {
   it('passes the pinned Codex release to the remote bootstrap script', async () => {
-    expect(PINNED_CODEX_RELEASE_VERSION).toBe("0.162.1");
+    expect(PINNED_CODEX_RELEASE_VERSION).toBe("0.166.0");
     const calls: Array<{ command: string; input: string }> = [];
     const host = {
       exec: async (command: string, opts: { input?: string }) => {

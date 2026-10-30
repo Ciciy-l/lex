@@ -1,4 +1,5 @@
 import type { AgentKind } from '@cindy/model-providers';
+import { isFastServiceTier } from '@cindy/model-providers';
 import { getActiveCatalog } from './active-catalog.js';
 
 /** Resolve only in the selected connection. Active catalog has already gated account availability. */
@@ -21,7 +22,7 @@ export function rewriteFastModel(
   const target = fastModelId(providerId, agent, body.model);
   // A persisted Fast setting can outlive account availability, including before discovery.
   // Fall back to the original model while still consuming Codex's Fast intent marker.
-  if (!target && body.service_tier !== 'priority') return null;
+  if (!target && !isFastServiceTier(body.service_tier)) return null;
   const next: Record<string, unknown> = { ...body, model: target ?? body.model };
   delete next.service_tier;
   return next;

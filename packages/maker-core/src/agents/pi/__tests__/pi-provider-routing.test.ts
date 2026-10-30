@@ -309,13 +309,17 @@ describe("Pi provider-aware model routing", () => {
       logger: noopLogger, resolvePiAgentHome: () => agentHome,
       resolvePiNativeProviders: async () => ({ providers: [{ id: 'relay', name: 'Relay',
         baseUrl: 'https://relay.example/v1', api: 'openai-responses' as const,
-        models: [{ id: 'private-sol', supportsFastMode: true }, { id: 'no-fast' }] }], env: {} }),
+        models: [{ id: 'private-sol', supportsFastMode: true }, { id: 'undeclared' },
+          { id: 'declared-false', supportsFastMode: false }, { id: 'anthropic', api: 'anthropic-messages' }] }], env: {} }),
     });
     const handle = await agent.startSession({ sessionId: 'native-fast', workingDir: cwd,
       model: 'private-sol', providerId: 'relay', getPriceVariant: () => fast ? 'priority' : 'standard' });
     const file = captured.env.CINDY_PI_MODEL_REQUEST_PREFS_FILE!;
     expect(JSON.parse(captured.env.CINDY_PI_SECRET_ENV_NAMES!)).toContain('CINDY_PI_MODEL_REQUEST_PREFS_FILE');
-    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ fast: true, models: [{ provider: 'relay', id: 'private-sol' }] });
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ fast: true, models: [
+      { provider: 'relay', id: 'private-sol' }, { provider: 'relay', id: 'undeclared' },
+      { provider: 'relay', id: 'declared-false' },
+    ] });
     await handle.setFastMode!(false);
     expect(JSON.parse(readFileSync(file, 'utf8')).fast).toBe(false);
     fast = false;

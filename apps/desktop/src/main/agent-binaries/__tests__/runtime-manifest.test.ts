@@ -28,7 +28,7 @@ describe('build-pinned agent runtime manifest', () => {
       const omp = getPinnedOmpRuntimeAsset(platform);
       expect(omp).toBeDefined();
       expect(manifest?.omp).toEqual({
-        version: '18.10.4',
+        version: '18.14.0',
         file: omp?.url,
         sha256: omp?.sha256,
         size: omp?.size,
@@ -45,7 +45,7 @@ describe('build-pinned agent runtime manifest', () => {
     expect(first?.claudeCode).toBeDefined();
     first!.claudeCode!.version = 'mutated';
 
-    expect(getRuntimeManifest('win32-x64')?.claudeCode?.version).toBe('2.1.296');
+    expect(getRuntimeManifest('win32-x64')?.claudeCode?.version).toBe('2.1.314');
   });
 
   it('uses the audited Cindy CDN base without a trailing slash', () => {
@@ -55,7 +55,7 @@ describe('build-pinned agent runtime manifest', () => {
   it('keeps the legacy standalone pin distinct from the desktop package pin', () => {
     const manifest = getRuntimeManifest('win32-x64');
 
-    expect(manifest?.codexPackage?.version).toBe('0.162.1');
+    expect(manifest?.codexPackage?.version).toBe('0.166.0');
     expect(manifest?.codex?.version).toBe('0.145.0');
     expect(manifest?.codex?.version).not.toBe(manifest?.codexPackage?.version);
   });

@@ -52,13 +52,13 @@ afterEach(() => {
   setActiveCatalog(BUNDLED_CATALOG);
 });
 
-it('maps Fast only to a declared same-harness target available in the same subscription account', () => {
+it.each(['fast', 'priority'])('maps %s only to an available target in the same subscription account', tier => {
   installFixture(['fixture-grok']);
 
   for (const agent of Object.keys(ids) as Harness[]) {
     const { model, target } = ids[agent];
     expect(fastModelId('xai', agent, model)).toBe(target);
-    const rewritten = rewriteFastModel('xai', agent, { model, service_tier: 'priority' }, true);
+    const rewritten = rewriteFastModel('xai', agent, { model, service_tier: tier }, true);
     expect(rewritten).toMatchObject({ model: target });
     expect(rewritten).not.toHaveProperty('service_tier');
 
@@ -67,11 +67,11 @@ it('maps Fast only to a declared same-harness target available in the same subsc
     const publicApiModel = getActiveCatalog().providers.find((provider) => provider.id === 'xai-public-api')
       ?.models[agent]?.find((entry) => entry.id === model);
     expect(publicApiModel).toMatchObject({ supportsFastMode: false, fastModelId: null });
-    const fallback = rewriteFastModel('xai-second', agent, { model, service_tier: 'priority' }, true);
+    const fallback = rewriteFastModel('xai-second', agent, { model, service_tier: tier }, true);
     expect(fallback).toMatchObject({ model });
     expect(fallback).not.toHaveProperty('service_tier');
     const publicApiFallback = rewriteFastModel('xai-public-api', agent,
-      { model, service_tier: 'priority' }, true);
+      { model, service_tier: tier }, true);
     expect(publicApiFallback).toMatchObject({ model });
     expect(publicApiFallback).not.toHaveProperty('service_tier');
   }

@@ -1,6 +1,7 @@
 import type { AgentKind } from '@cindy/maker-core';
 import {
   connectedProvidersForAgent,
+  modelSupportsFastMode,
   effectiveSourceIdForModel,
   findModelRegistryRoute,
   isOpenAiSubscriptionProvider,
@@ -103,7 +104,7 @@ export async function readOrcaWorkerProviderRoutingContext(deps: {
         name: provider.name,
         models: models.map((model) => model.id),
         registryIdentityByModel,
-        fastModels: models.filter((model) => model.supportsFastMode).map((model) => model.id),
+        fastModels: models.filter((model) => modelSupportsFastMode(provider, model.id, agent)).map((model) => model.id),
         effortMetaByModel: Object.fromEntries(
           models.map((model) => [
             model.id,

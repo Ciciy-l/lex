@@ -43,6 +43,7 @@ export { NATIVE_SUBSCRIPTION_AUTHS, NATIVE_SUBSCRIPTION_DEFAULT_PROVIDER_IDS, PI
 export { expandPresetModels } from './presetModels.js';
 export { isLocalOnlyProviderForAgent, isOpenAiSubscriptionProvider, providerCatalogId } from './provider-identity.js';
 export { isOfficialXaiApiHost, isOfficialXaiUsApiHost } from './xai-endpoints.js';
+export { supportsFastServiceTier, isFastServiceTier } from './fastMode.js';
 
 export {
   effectivePiWireProtocol,

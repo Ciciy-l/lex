@@ -87,6 +87,7 @@ function view(spec: ViewSpec): ProviderView {
 /** Anthropic:claude-code root,codex / pi 是 anthropic-messages bridge 投影(fast=false)。 */
 const anthropic = view({
   id: 'anthropic',
+  routingOverride: { codex: { wireProtocol: 'anthropic-messages' } },
   models: {
     'claude-code': [m('claude-opus-5', { contextWindow: 200_000, supportsFastMode: true })],
     codex: [m('claude-opus-5', { supportsFastMode: false })],
