@@ -1,162 +1,137 @@
 {
   "schemaVersion": 1,
-  "version": "0.1.13",
-  "versionCode": 1001399,
+  "version": "0.1.14",
+  "versionCode": 1001499,
   "packageName": "io.github.ciciyl.lex",
-  "size": 129587674,
-  "sha256": "9d6aed3fd1160defe2f4276be885ae3287ce968740b951364731dd55ed3f9532",
+  "size": 129591550,
+  "sha256": "34f72532dbefbbc95893cb51ecdd89fea9049dbabf115b6a734582d779b7aac7",
   "certificateSha256": "86261bb1fea32e9122a7934f5f62d3b100c2248e032d148837ea997ce0b33a14",
   "platform": "android",
-  "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.13/Lex-0.1.13-Android.apk",
-  "releaseUrl": "https://github.com/Ciciy-l/lex/releases/tag/v0.1.13",
+  "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.14/Lex-0.1.14-Android.apk",
+  "releaseUrl": "https://github.com/Ciciy-l/lex/releases/tag/v0.1.14",
   "contentByLocale": {
     "zh-CN": {
-      "intro": "Lex 0.1.13 改善 Fast 开关、移动端账号切换和 macOS 使用体验，并更新四个执行引擎。",
+      "intro": "Lex 0.1.14 新增 Cindy 任务导入，让模型选择与 Fast 开关更顺手。",
       "topics": [
         {
+          "id": "import",
+          "title": "导入 Cindy 的常规任务",
+          "text": "桌面端任务导入新增与 Codex、Claude Code 并列的 Cindy 来源，支持分组、勾选与批量导入。仅导入常规任务，自动排除伙伴及伙伴群聊相关记录。请先退出源 Cindy，再扫描并预检；导入会创建独立副本，不修改源数据。缺失的历史或附件会在确认前提示，原有登录凭证不会导入。"
+        },
+        {
+          "id": "layout",
+          "title": "模型名称充分利用可用空间",
+          "text": "修复 GUI 输入框下方模型名称过早折叠的问题：空间足够时显示更多名称，仅在工具栏拥挤时截断。"
+        },
+        {
           "id": "fast",
-          "title": "已有连接也能请求 Fast",
-          "text": "Codex 的 API 与自定义连接，以及 Claude Code、Pi 的 OpenAI 兼容路由，可以直接开启 Fast，无需重新添加供应商。默认关闭；供应商可能接受、忽略或拒绝请求，实际速度与计费以供应商为准。原生订阅与 xAI Fast 型号仍遵循账号可用范围。"
-        },
-        {
-          "id": "accounts",
-          "title": "修复跨区域账号切换",
-          "text": "修复移动端先登录中国大陆账号、再登录全球账号后，无法切回中国大陆账号的问题。"
-        },
-        {
-          "id": "mac",
-          "title": "改善 macOS 体验",
-          "text": "补齐 macOS 本地运行所需的路径、进程与终端兼容处理。"
-        },
-        {
-          "id": "engines",
-          "title": "更新执行引擎",
-          "text": "Claude Code 更新至 2.1.314，Codex 更新至 0.166.0，Pi 更新至 1.4.0，OMP 更新至 18.14.0。保留用户自行选择的引擎版本。"
+          "title": "一键切换 Fast",
+          "text": "桌面和移动端在模型选择右侧新增闪电开关，无需展开模型配置。开关与模型配置同步，按当前引擎和模型能力显示；实际速度、可用性及计费由供应商决定。"
         },
         {
           "id": "upgrade",
           "title": "升级须知",
-          "text": "Android 请使用完整 APK 覆盖安装，请勿先卸载。桌面安装包的实际签名与公证状态以发行页为准；暂不提供 iOS 安装包。"
+          "text": "Android 请使用完整 APK 覆盖安装，不要先卸载。桌面安装包实际签名与公证状态以发行页为准；暂不提供 iOS 安装包。"
         }
       ]
     },
     "zh-TW": {
-      "intro": "Lex 0.1.13 改善 Fast 開關、行動版帳號切換與 macOS 使用體驗，並更新四個執行引擎。",
+      "intro": "Lex 0.1.14 新增 Cindy 任務匯入，讓模型選擇與 Fast 開關更順手。",
       "topics": [
         {
+          "id": "import",
+          "title": "匯入 Cindy 的一般任務",
+          "text": "桌面版任務匯入新增與 Codex、Claude Code 並列的 Cindy 來源，支援分組、勾選與批次匯入。僅匯入一般任務，自動排除夥伴及夥伴群聊相關記錄。請先結束來源 Cindy，再掃描並預檢；匯入會建立獨立副本，不修改來源資料。缺少的歷史或附件會在確認前提示，原有登入憑證不會匯入。"
+        },
+        {
+          "id": "layout",
+          "title": "模型名稱充分利用可用空間",
+          "text": "修正 GUI 輸入框下方模型名稱過早摺疊的問題：空間足夠時顯示更多名稱，僅在工具列擁擠時截斷。"
+        },
+        {
           "id": "fast",
-          "title": "現有連線也能請求 Fast",
-          "text": "Codex 的 API 與自訂連線，以及 Claude Code、Pi 的 OpenAI 相容路由，可直接啟用 Fast，無須重新新增供應商。預設關閉；供應商可能接受、忽略或拒絕請求，實際速度與計費以供應商為準。原生訂閱與 xAI Fast 型號仍依帳號可用範圍提供。"
-        },
-        {
-          "id": "accounts",
-          "title": "修復跨區域帳號切換",
-          "text": "修復行動版先登入中國大陸帳號、再登入全球帳號後，無法切回中國大陸帳號的問題。"
-        },
-        {
-          "id": "mac",
-          "title": "改善 macOS 體驗",
-          "text": "補齊 macOS 本機執行所需的路徑、程序與終端機相容處理。"
-        },
-        {
-          "id": "engines",
-          "title": "更新執行引擎",
-          "text": "Claude Code 更新至 2.1.314，Codex 更新至 0.166.0，Pi 更新至 1.4.0，OMP 更新至 18.14.0。保留使用者自行選擇的引擎版本。"
+          "title": "一鍵切換 Fast",
+          "text": "桌面與行動版在模型選擇右側新增閃電開關，無須展開模型設定。開關與模型設定同步，依目前引擎和模型能力顯示；實際速度、可用性及計費由供應商決定。"
         },
         {
           "id": "upgrade",
           "title": "升級須知",
-          "text": "Android 請使用完整 APK 覆蓋安裝，請勿先解除安裝。桌面安裝套件的實際簽章與公證狀態以發行頁為準；暫不提供 iOS 安裝套件。"
+          "text": "Android 請使用完整 APK 覆蓋安裝，請勿先解除安裝。桌面安裝包實際簽章與公證狀態以發行頁為準；暫不提供 iOS 安裝包。"
         }
       ]
     },
     "en": {
-      "intro": "Lex 0.1.13 improves Fast controls, mobile account switching, and macOS compatibility, and updates all four engines.",
+      "intro": "Lex 0.1.14 adds Cindy task import and easier model and Fast controls.",
       "topics": [
         {
+          "id": "import",
+          "title": "Import regular Cindy tasks",
+          "text": "Desktop task import now lists Cindy alongside Codex and Claude Code, with grouping, selection and batch import. Only regular tasks are included; companion and companion-group records are excluded. Quit the source Cindy app before scanning and reviewing. Imports create independent copies without changing the source. Missing history or attachments are shown before confirmation; login credentials are not imported."
+        },
+        {
+          "id": "layout",
+          "title": "More room for model names",
+          "text": "Fixed premature model-name truncation below the GUI input box. Names now use the available space and shorten only when the toolbar is crowded."
+        },
+        {
           "id": "fast",
-          "title": "Request Fast on existing connections",
-          "text": "Enable Fast on Codex API and custom connections, and on OpenAI-compatible routes in Claude Code and Pi, without adding your provider again. Fast stays off by default. Providers may accept, ignore, or reject the request; actual speed and billing depend on them. Native subscriptions and xAI Fast models remain subject to account availability."
-        },
-        {
-          "id": "accounts",
-          "title": "Switch between regional accounts",
-          "text": "Fixes mobile account switching when signing in to a mainland China account, then a global account, and switching back."
-        },
-        {
-          "id": "mac",
-          "title": "Better macOS compatibility",
-          "text": "Improves local path, process, and terminal handling on macOS."
-        },
-        {
-          "id": "engines",
-          "title": "Updated engines",
-          "text": "Updates Claude Code to 2.1.314, Codex to 0.166.0, Pi to 1.4.0, and OMP to 18.14.0. Your explicitly selected engine versions are preserved."
+          "title": "Switch Fast with one tap",
+          "text": "Desktop and mobile now have a lightning switch to the right of model selection, without opening model settings. It shares the same preference and appears according to the current engine and model capabilities. Actual speed, availability and pricing depend on the provider."
         },
         {
           "id": "upgrade",
           "title": "Upgrading",
-          "text": "On Android, install the full APK over the existing app without uninstalling first. See the release page for actual desktop signing and notarization status. An iOS installer is not currently provided."
+          "text": "On Android, install the full APK over the existing app without uninstalling first. See the release page for desktop signing and notarization status. No iOS installation package is available yet."
         }
       ]
     },
     "ja": {
-      "intro": "Lex 0.1.13 では Fast 設定、モバイルのアカウント切り替え、macOS の互換性を改善し、4 つの実行エンジンを更新しました。",
+      "intro": "Lex 0.1.14 では Cindy のタスク取り込みを追加し、モデル選択と Fast の操作を改善しました。",
       "topics": [
         {
+          "id": "import",
+          "title": "Cindy の通常タスクを取り込む",
+          "text": "デスクトップのタスク取り込みで、Codex、Claude Code と並んで Cindy を選べます。グループ表示、複数選択、一括取り込みに対応します。通常タスクのみを対象とし、パートナーやパートナーグループの記録は除外します。取り込み元の Cindy を終了してからスキャンし、内容を確認してください。元データを変更せず独立したコピーを作成します。履歴や添付ファイルの不足は確定前に表示され、ログイン認証情報は取り込みません。"
+        },
+        {
+          "id": "layout",
+          "title": "モデル名の表示領域を改善",
+          "text": "GUI 入力欄の下でモデル名が早く省略される問題を修正しました。利用可能な幅を使い、ツールバーが狭い場合のみ省略します。"
+        },
+        {
           "id": "fast",
-          "title": "既存の接続で Fast を要求",
-          "text": "Codex の API・カスタム接続と、Claude Code・Pi の OpenAI 互換ルートで、プロバイダーを再追加せずに Fast を有効にできます。初期状態はオフです。プロバイダーは要求を受け入れ、無視、または拒否する場合があり、実際の速度と料金はプロバイダーが決定します。ネイティブのサブスクリプションと xAI Fast モデルは引き続きアカウントの利用権限に従います。"
-        },
-        {
-          "id": "accounts",
-          "title": "地域間のアカウント切り替えを修正",
-          "text": "モバイルで中国本土のアカウント、グローバルアカウントの順にログインした後、中国本土のアカウントへ戻れない問題を修正しました。"
-        },
-        {
-          "id": "mac",
-          "title": "macOS の互換性を改善",
-          "text": "macOS のローカルパス、プロセス、ターミナルの処理を改善しました。"
-        },
-        {
-          "id": "engines",
-          "title": "実行エンジンを更新",
-          "text": "Claude Code を 2.1.314、Codex を 0.166.0、Pi を 1.4.0、OMP を 18.14.0 に更新しました。ユーザーが明示的に選択したエンジンのバージョンは保持します。"
+          "title": "Fast をワンタップで切り替え",
+          "text": "デスクトップとモバイルのモデル選択の右側に稲妻スイッチを追加しました。モデル設定を開かずに切り替えられ、設定画面と同じ状態を使用します。現在のエンジンとモデルの対応状況に応じて表示されます。実際の速度、利用可否、料金はプロバイダーによって異なります。"
         },
         {
           "id": "upgrade",
-          "title": "アップグレードについて",
-          "text": "Android はアンインストールせず、完全な APK を上書きインストールしてください。デスクトップ版の署名・公証の実際の状態はリリースページをご確認ください。iOS インストーラーは現在提供していません。"
+          "title": "更新について",
+          "text": "Android はアンインストールせず、完全版 APK を上書きインストールしてください。デスクトップの署名と公証の状況はリリースページを確認してください。iOS インストールパッケージはまだ提供していません。"
         }
       ]
     },
     "ko": {
-      "intro": "Lex 0.1.13은 Fast 설정, 모바일 계정 전환 및 macOS 호환성을 개선하고 네 가지 실행 엔진을 업데이트합니다.",
+      "intro": "Lex 0.1.14는 Cindy 작업 가져오기를 추가하고 모델 선택 및 Fast 조작을 개선합니다.",
       "topics": [
         {
+          "id": "import",
+          "title": "Cindy 일반 작업 가져오기",
+          "text": "데스크톱 작업 가져오기에서 Codex, Claude Code와 함께 Cindy를 선택할 수 있습니다. 그룹 표시, 선택 및 일괄 가져오기를 지원합니다. 일반 작업만 가져오며 파트너와 파트너 그룹 기록은 제외합니다. 원본 Cindy를 종료한 후 스캔하고 내용을 확인하세요. 원본을 변경하지 않고 독립된 사본을 만듭니다. 누락된 기록이나 첨부 파일은 확인 전에 표시되며 로그인 자격 증명은 가져오지 않습니다."
+        },
+        {
+          "id": "layout",
+          "title": "모델 이름 표시 공간 개선",
+          "text": "GUI 입력창 아래에서 모델 이름이 너무 일찍 줄어드는 문제를 수정했습니다. 사용 가능한 공간을 활용하고 도구 모음이 좁을 때만 이름을 줄입니다."
+        },
+        {
           "id": "fast",
-          "title": "기존 연결에서 Fast 요청",
-          "text": "Codex의 API 및 사용자 지정 연결과 Claude Code, Pi의 OpenAI 호환 경로에서 공급자를 다시 추가하지 않고 Fast를 켤 수 있습니다. 기본값은 꺼짐입니다. 공급자는 요청을 수락하거나 무시하거나 거부할 수 있으며 실제 속도와 요금은 공급자에 따라 달라집니다. 네이티브 구독 및 xAI Fast 모델은 계속 계정의 이용 권한을 따릅니다."
-        },
-        {
-          "id": "accounts",
-          "title": "지역 간 계정 전환 수정",
-          "text": "모바일에서 중국 본토 계정에 로그인한 다음 글로벌 계정에 로그인한 후, 중국 본토 계정으로 다시 전환할 수 없던 문제를 수정했습니다."
-        },
-        {
-          "id": "mac",
-          "title": "macOS 호환성 개선",
-          "text": "macOS의 로컬 경로, 프로세스 및 터미널 처리를 개선했습니다."
-        },
-        {
-          "id": "engines",
-          "title": "실행 엔진 업데이트",
-          "text": "Claude Code를 2.1.314, Codex를 0.166.0, Pi를 1.4.0, OMP를 18.14.0으로 업데이트했습니다. 사용자가 직접 선택한 엔진 버전은 유지합니다."
+          "title": "한 번에 Fast 전환",
+          "text": "데스크톱과 모바일의 모델 선택 오른쪽에 번개 스위치를 추가했습니다. 모델 설정을 열지 않고 전환할 수 있으며 설정 화면과 같은 상태를 사용합니다. 현재 엔진과 모델의 지원 여부에 따라 표시됩니다. 실제 속도, 사용 가능 여부 및 요금은 공급업체에 따라 다릅니다."
         },
         {
           "id": "upgrade",
           "title": "업그레이드 안내",
-          "text": "Android는 먼저 제거하지 말고 전체 APK를 덮어 설치하세요. 데스크톱 패키지의 실제 서명 및 공증 상태는 릴리스 페이지를 확인하세요. iOS 설치 파일은 현재 제공하지 않습니다."
+          "text": "Android에서는 먼저 앱을 삭제하지 말고 전체 APK를 덮어 설치하세요. 데스크톱 서명 및 공증 상태는 릴리스 페이지를 확인하세요. iOS 설치 패키지는 아직 제공하지 않습니다."
         }
       ]
     }
