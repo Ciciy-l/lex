@@ -21,11 +21,12 @@ export function resolveLoginGroupPlacement(
   stage: LoginSurfaceLayout,
   flowHeight: number,
   keyboardBottom: number,
+  headerHeight = 0,
 ): LayoutRect & { scale: number } {
   const fit = (region: LayoutRect) => {
     const scale = Math.min(stage.scale * stage.loginGroupScale, region.width / LOGIN_GROUP.width);
     const width = LOGIN_GROUP.width * scale;
-    const height = Math.min(flowHeight * scale, region.height);
+    const height = Math.min(headerHeight + flowHeight * scale, region.height);
     return {
       x: Math.max(region.x, Math.min(stage.offsetX + stage.loginX * stage.scale, region.x + region.width - width)),
       y: Math.max(region.y, Math.min(stage.offsetY + stage.loginY * stage.scale, region.y + region.height - height)),

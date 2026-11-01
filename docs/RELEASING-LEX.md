@@ -235,7 +235,7 @@ Introducing the updater in 0.1.4 added a native module/permission and changed th
 runtime fingerprint. Later JavaScript-only fixes do not add another native migration;
 Lex still distributes full APKs. Retain the same package and certificate so installed
 Lex data survives an upgrade. Any future native input change requires the cold-update
-review in `docs/dev-rules/mobile-development.md`. iOS shares branding/realm/UI only.
+review in `docs/dev-rules/mobile-development.md`. iOS uses its own native transport and distribution channel.
 
 ## iOS distribution
 
@@ -246,6 +246,10 @@ configuration and TestFlight/App Store review. Desktop macOS Developer ID certif
 are not iOS signing credentials. The homepage states that iOS is not yet available;
 add the real TestFlight/App Store URL when that channel exists. iOS Simulator builds
 are not phone installation packages.
+
+The Personal Team (free Apple ID) investigation and the limits of scheduled GitHub
+Actions re-signing are documented in [Lex iOS distribution](lex-ios-distribution.md).
+A new build does not renew an installed app or supply an installation channel.
 
 ## Upstream synchronization
 

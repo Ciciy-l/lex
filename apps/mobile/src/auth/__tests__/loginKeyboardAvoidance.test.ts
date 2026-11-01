@@ -256,7 +256,7 @@ describe('loginKeyboard 接线(hook 订阅拓扑 + 登录页测量拓扑,读源�
       'LOGIN_SSO_ORG_HISTORY.y + LOGIN_SSO_ORG_HISTORY.maxHeight',
     );
     expect(loginSource).toContain(
-      'panelBottomY: groupBaseline.y + loginSizes.panelHeight * groupScale',
+      'panelBottomY: groupBaseline.y + realmHeaderHeight + loginSizes.panelHeight * groupScale',
     );
     expect(loginSource).toContain(
       'height: (controlsUnionBottom - LOGIN_CONTROL.inputY) * groupScale',
