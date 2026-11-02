@@ -12,6 +12,24 @@ const place = (g: WindowGeometry, keyboard = 0) =>
   resolveLoginGroupPlacement(g, resolveLoginSurface(g.width, g.height), 622, keyboard);
 
 describe('login group placement', () => {
+  it.each([[320, 568], [390, 844], [844, 390], [768, 1024]])(
+    'keeps a physical-height realm header and the form inside %i×%i', (width, height) => {
+      const g = { ...closed, width, height, regions: [],
+        insets: { top: 44, bottom: 34, left: 0, right: 0 } };
+      const stage = resolveLoginWindowSurface(g);
+      const header = 60;
+      const frame = resolveLoginGroupPlacement(g, stage, 622, 0, header);
+      const original = resolveLoginGroupPlacement(g, stage, 622, 0);
+      expect(frame.scale).toBe(original.scale);
+      expect(frame.y).toBeGreaterThanOrEqual(g.insets.top);
+      expect(frame.y + frame.height).toBeLessThanOrEqual(height - g.insets.bottom);
+      expect(frame.height).toBeCloseTo(Math.min(header + 622 * frame.scale, height - 78));
+      // In a keyboard-constrained viewport the entire header + form is scrollable.
+      const raised = resolveLoginGroupPlacement(g, stage, 622, height / 2, header);
+      expect(raised.y + raised.height).toBeLessThanOrEqual(height / 2);
+      expect(raised.height).toBeLessThan(header + 622 * raised.scale);
+    },
+  );
   it.each(['left', 'right'] as const)('fits the outer landscape form with the %s safe edge', (edge) => {
     const g = { ...closed, width: 678, height: 466, regions: [],
       insets: { top: 0, bottom: 34, left: 0, right: 0, [edge]: 84 } };

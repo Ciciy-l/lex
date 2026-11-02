@@ -93,7 +93,7 @@ import {
 } from '@/components/MobileLoginHandoffStage';
 import { getMobileConfigIssues } from '@/config/env';
 import { IS_LEX_MOBILE } from '@/config/lexMobile';
-import { ServiceRealmSelector } from '@/components/ServiceRealmSelector';
+import { ServiceRealmSelector, SERVICE_REALM_SELECTOR_HEIGHT } from '@/components/ServiceRealmSelector';
 import { resolveIdentifierMethod } from '@/auth/loginIdentifierMethod';
 import { AccountSwitcherSheet } from '@/session/AccountSwitcherSheet';
 import {
@@ -116,7 +116,7 @@ export interface LoginScreenProps {
 }
 
 export function LoginScreen(props: LoginScreenProps = {}) {
-  if (!IS_LEX_MOBILE || Platform.OS === 'ios') return <CindyLoginScreen {...props} />;
+  if (!IS_LEX_MOBILE) return <CindyLoginScreen {...props} />;
   return <MobileServiceLogin onClose={props.onClose} renderCindy={back => <CindyLoginScreen {...props} onClose={back} onServiceBack={back} />} />;
 }
 
@@ -1280,11 +1280,17 @@ function CindyLoginScreen({
   // 整组纵向跳变(规则 7,codex 审查 P1),二让下方外层/内层容器 bounds 恒包住
   // 协议行——RN(尤其 Android)对父 bounds 外子节点不派发触摸,协议行必须在界内。
   const flowBottomDesignPx = loginSizes.flowHeight + LOGIN_CONSENT_ROW.bottomOverflow;
+  // Keep the realm choice with the form, outside the scaled artwork coordinates.
+  // Reserve the same space across steps so switching methods does not move the panel.
+  const [realmSelectorHeight, setRealmSelectorHeight] = useState(SERVICE_REALM_SELECTOR_HEIGHT);
+  const realmHeaderHeight = IS_LEX_MOBILE ? realmSelectorHeight + spacing.sm : 0;
   const { x: groupLeftPx, y: groupTopPx, height: groupVisibleHeight, scale: groupScale } = resolveLoginGroupPlacement(
     loginWindow, stage, flowBottomDesignPx,
     scrollForKeyboard && keyboard.visible && keyboard.rect && keyboard.rect.width >= loginWindow.width * 0.95
       ? Math.max(0, loginWindow.height - keyboard.rect.y) : 0,
+    realmHeaderHeight,
   );
+  const groupContentHeight = realmHeaderHeight + flowBottomDesignPx * groupScale;
 
   // 键盘契约(Step 5b.1,方案 B):唯一位移源 = 自定义 translate。
   // v5 冻结测量拓扑:基线只在下方「外层未变换测量 wrapper」上 measureInWindow
@@ -1339,11 +1345,11 @@ function CindyLoginScreen({
       keyboard: keyboard.rect,
       // 候选层已收在面板内，停靠锚始终保持面板底；不同屏幕尺寸只通过
       // groupScale 与基线测量适配，避免展开列表时整组额外跳动。
-      panelBottomY: groupBaseline.y + loginSizes.panelHeight * groupScale,
+      panelBottomY: groupBaseline.y + realmHeaderHeight + loginSizes.panelHeight * groupScale,
       // 悬浮相交判定锚仍覆盖输入框、主按钮与展开后的候选层并集。
       controlsUnion: {
         x: groupBaseline.x + LOGIN_CONTROL.x * groupScale,
-        y: groupBaseline.y + LOGIN_CONTROL.inputY * groupScale,
+        y: groupBaseline.y + realmHeaderHeight + LOGIN_CONTROL.inputY * groupScale,
         width: LOGIN_CONTROL.width * groupScale,
         height: (controlsUnionBottom - LOGIN_CONTROL.inputY) * groupScale,
       },
@@ -1357,6 +1363,7 @@ function CindyLoginScreen({
     groupBaseline,
     keyboard,
     groupScale,
+    realmHeaderHeight,
     ssoOrgHistoryBottom,
     controlsUnionBottom,
     stage.viewportWidth,
@@ -1391,10 +1398,6 @@ function CindyLoginScreen({
       keyboardShiftPx={keyboardShift}
       testID="login.screen"
     >
-      {IS_LEX_MOBILE ? <View style={{ position: 'absolute', top: insets.top + spacing.sm, left: spacing.lg, right: additionalAccount ? 64 : spacing.lg, zIndex: 10 }}>
-        <ServiceRealmSelector realm={auth.loginRealm} onSelect={changeRealm}
-          disabled={!auth.initialized || consentDialogOpen || realmConfirmation !== null} />
-      </View> : null}
       {/* 渲染为 null,仅把状态栏样式写进本屏 screen options。iOS 专用:
           Android 由舞台内组件式 StatusBar 控制,不走 RNS 双轨 */}
       {!additionalAccount ? <SystemNavigationBack available={!!backAction} disabled={auth.isBusy}
@@ -1439,9 +1442,9 @@ function CindyLoginScreen({
         {/* 内层 translate 容器:键盘位移唯一施加处(方案 B) */}
         <ScrollView
           style={{ flex: 1, transform: [{ translateY: -keyboardShift }] }}
-          contentContainerStyle={{ height: flowBottomDesignPx * groupScale }}
+          contentContainerStyle={{ height: groupContentHeight }}
           keyboardShouldPersistTaps="handled"
-          scrollEnabled={groupVisibleHeight < flowBottomDesignPx * groupScale}
+          scrollEnabled={groupVisibleHeight < groupContentHeight}
           showsVerticalScrollIndicator={false}
         >
           <Animated.View
@@ -1451,6 +1454,11 @@ function CindyLoginScreen({
               transform: [{ translateY: panelEntrance.translateY }],
             }}
           >
+            {IS_LEX_MOBILE ? (
+              <ServiceRealmSelector realm={auth.loginRealm} onSelect={changeRealm}
+                onLayout={event => setRealmSelectorHeight(event.nativeEvent.layout.height)}
+                disabled={!auth.initialized || consentDialogOpen || realmConsentOpen || captchaChallengeOpen} />
+            ) : null}
             {/* 内层 680 宽设计 px 坐标系,整层 transform 缩放(demo loginGroup 同构);
                 高度恒 622(组 560 + 协议行 overflow 62),保证协议行在 bounds 内可命中 */}
             <View
@@ -1458,7 +1466,7 @@ function CindyLoginScreen({
                 height: flowBottomDesignPx,
                 left: 0,
                 position: 'absolute',
-                top: 0,
+                top: realmHeaderHeight,
                 transform: [{ scale: groupScale }],
                 transformOrigin: 'top left',
                 width: LOGIN_GROUP.width,

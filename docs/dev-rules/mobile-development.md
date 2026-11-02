@@ -60,11 +60,12 @@ pnpm --filter mobile test:smoke
 
 ### 登录服务、浏览器登录与服务区
 
-- Lex 首屏保留免登录空态与本机设置。Android 主动登录先选 Lex Server / Cindy；
-  iOS 不开放尚未适配的 Lex Server 入口。Cindy 继续使用原双区登录及浏览器流程。
+- Lex 首屏保留免登录空态与本机设置。Android、iOS 主动登录先选 Lex Server / Cindy。
+  两端都必须安装含 LexServiceWebSocket 的原生包；旧包禁用入口并提示更新，不回退到
+  React Native WebSocket。Cindy 继续使用原双区登录及浏览器流程。
 - Lex Server 地址是 HTTPS 根 origin；仅开发构建允许 loopback HTTP，正式构建在预检、
   已保存账号激活、HTTP 与原生 WS 边界均拒绝 HTTP；不接受管理路径、API 路径、
-  用户信息、查询或片段。匿名预检共享 10 秒预算、每响应最多 64 KiB；HTTP 与 Android
+  用户信息、查询或片段。匿名预检共享 10 秒预算、每响应最多 64 KiB；HTTP 与 Android / iOS
   专用 WebSocket 均不携带 Cookie、不跟随重定向，不关闭 TLS 校验。
 - 服务以 canonical origin 隔离，不把 Lex 当作第三个 region。待登录服务不会改变活动端点；
   安全存储成功后才发布新 owner。SecureStore 沿用旧键，vault/session 版本兼容旧 Cindy
@@ -86,7 +87,9 @@ pnpm --filter mobile test:smoke
 实现见 `src/auth/AuthContext.tsx`、`app/+native-intent.ts`；回归包括
 `browserAuthSession.test.tsx`、`mobileLexAuthSession.test.tsx`、`serviceTransport.test.ts`、
 `personalLoginRealm.test.ts` 和 `nativeIntent.test.ts`。Android WS 的重定向、Cookie、TLS
-及 401 分类回归位于 `modules/lex-service-websocket/android/src/test/`。
+及 401 分类回归位于 `modules/lex-service-websocket/android/src/test/`。iOS Foundation 传输
+回归在 macOS 上运行 `node scripts/test-lex-ios-websocket.mjs`，覆盖 Debug / Release 边界，
+并配合原生模拟器构建与真实服务登录验证。
 
 ### 新建任务模型
 

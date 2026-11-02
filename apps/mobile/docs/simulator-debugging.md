@@ -55,8 +55,8 @@ explicit cold-update approval. Existing Expo lifecycle/link handlers are retaine
 The shared config-plugin registration also changes the Android fingerprint,
 although its native mods only touch iOS. Review both platforms for the next
 native release; do not treat this as an iOS-only OTA change.
-This local loop covers native startup and local screens; Lex Server connections
-are not yet available on iOS. Pure JS changes use Metro; restart it after source
+This local loop covers native startup, local screens and Lex Server connections
+on iOS with the new LexServiceWebSocket native module. Pure JS changes use Metro; restart it after source
 changes when verifying the source fingerprint with `whoami`.
 
 If another project owns 8081, choose a free port explicitly. On macOS the same
@@ -85,8 +85,14 @@ AVD keeps its app data separate from normal installations; never wipe an AVD to
 obtain a clean fixture. The Windows doctor binds every adb read to the supplied
 serial and checks the running debug package and Metro source ownership. The
 visible development source label and fresh bundle output are still required.
-Lex Server requires the Android native WebSocket module from the new binary;
-older binaries and iOS do not offer that connection option.
+Lex Server requires the dedicated Android/iOS native WebSocket module from the new
+binary; older binaries disable that option and request a native update. The iOS
+module uses an ephemeral URLSession, rejects redirects and ambient cookies, and
+retains system TLS validation. Test the transport on macOS with
+`node scripts/test-lex-ios-websocket.mjs` (debug and release). The simulator may
+connect to `http://127.0.0.1:3101` for local Admin development; a phone's loopback
+points to the phone itself. Device/distribution builds require a reachable HTTPS
+service and a valid certificate. Do not add a TLS bypass for local testing.
 
 Before anyone claims "the simulator is already showing the new version", they
 must produce evidence. The #1 time sink in mobile debugging is staring at a

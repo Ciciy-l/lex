@@ -190,7 +190,8 @@ describe("login.tsx 接线(源码断言)", () => {
 
   it("P1 回归锁:容器 bounds 恒含协议行区间;弹窗前收键盘;radio 无 hitSlop", () => {
     // ① 外层测量盒与内层设计容器都用 flowBottomDesignPx(622),协议行在父 bounds 内
-    expect(loginSource).toMatch(/height: flowBottomDesignPx \* groupScale/);
+    expect(loginSource).toMatch(/const groupContentHeight = realmHeaderHeight \+ flowBottomDesignPx \* groupScale/);
+    expect(loginSource).toMatch(/contentContainerStyle=\{\{ height: groupContentHeight \}\}/);
     expect(loginSource).toMatch(/height: flowBottomDesignPx,/);
     // ⑤ flow bottom 全步骤恒定(不随 showConsentRow 切换,消除步骤跳变)
     expect(loginSource).not.toMatch(

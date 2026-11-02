@@ -9,7 +9,7 @@ interface LexSocketModule {
   send(id: string, data: string): void; close(id: string, code: number, reason: string): void; terminate(id: string): void;
   addListener(name: 'socketEvent', listener: (event: SocketEvent) => void): { remove(): void };
 }
-const nativeModule = () => Platform.OS === 'android' ? requireOptionalNativeModule<LexSocketModule>('LexServiceWebSocket') : null;
+const nativeModule = () => Platform.OS === 'android' || Platform.OS === 'ios' ? requireOptionalNativeModule<LexSocketModule>('LexServiceWebSocket') : null;
 export function supportsLexServiceWebSocket(): boolean { return !!nativeModule(); }
 let sequence = 0;
 

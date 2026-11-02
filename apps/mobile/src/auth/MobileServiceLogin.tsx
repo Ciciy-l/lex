@@ -68,8 +68,8 @@ export function MobileServiceLogin({ renderCindy, onClose }: { renderCindy(back:
         <View style={styles.form}>
           <Text style={styles.title}>{t(screen === 'services' ? 'serviceLogin.chooseService' : screen === 'address' ? 'serviceLogin.serverAddress' : 'serviceLogin.emailLogin')}</Text>
           {screen === 'services' ? <>
-            {Platform.OS === 'android' ? action('Lex Server', () => { auth.clearAuthError(); setScreen('address'); }, 'login.service.lex', !supportsLexServiceWebSocket()) : null}
-            {Platform.OS === 'android' && !supportsLexServiceWebSocket() ? <Text style={styles.hint}>{t('serviceLogin.nativeUpdateRequired')}</Text> : null}
+            {action('Lex Server', () => { auth.clearAuthError(); setScreen('address'); }, 'login.service.lex', !supportsLexServiceWebSocket())}
+            {!supportsLexServiceWebSocket() ? <Text style={styles.hint}>{t('serviceLogin.nativeUpdateRequired')}</Text> : null}
             {action('Cindy', () => { void run(async () => { if (await auth.selectLoginService({ kind: 'cindy' }) && mounted.current) setScreen('cindy'); }); }, 'login.service.cindy')}
           </> : screen === 'address' ? <>
             <Text style={styles.hint}>{t('serviceLogin.serverHint')}</Text>
