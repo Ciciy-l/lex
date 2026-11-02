@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { iosReleaseIdentity } from './shared/lex-ios-release.cjs';
 import { sha256File } from './lex-android-updates.mjs';
 import { mobileClientBundleProcessEnv } from './shared/client-endpoint-build-env.mjs';
+import { verifyIosToolchain } from './check-lex-ios-toolchain.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const mobile = path.join(root, 'apps/mobile');
@@ -31,6 +32,9 @@ const sourceCommit = output('git', ['rev-parse', 'HEAD']);
 // Developer artifacts may exercise uncommitted code, but must never be mistaken
 // for immutable release evidence. The publisher rejects a dirty source marker.
 const sourceDirty = output('git', ['status', '--porcelain', '--untracked-files=normal']) !== '';
+// Fail before prebuild/Pods on unsupported Swift importers. The same selected
+// DEVELOPER_DIR is inherited by ExpoModulesJSI's nested SwiftPM xcodebuild.
+const toolchain = verifyIosToolchain({ repoRoot: root, env });
 const dist = path.join(root, 'dist/ios');
 fs.mkdirSync(dist, { recursive: true });
 const ipa = path.join(dist, identity.assetName);
@@ -94,9 +98,8 @@ try {
   };
   strip(app);
   fs.writeFileSync(buildInfoFile, JSON.stringify({
-    sourceCommit, sourceDirty, xcode: output('xcodebuild', ['-version']),
-    sdk: output('xcrun', ['--sdk', 'iphoneos', '--show-sdk-version']),
-    cocoaPods: output('pod', ['_1.17.0_', '--version']), node: process.version,
+    sourceCommit, sourceDirty, xcode: toolchain.xcode, sdk: toolchain.sdk,
+    cocoaPods: toolchain.cocoaPods, toolchain, node: process.version,
     minimumOSVersion: info.MinimumOSVersion, architecture: 'arm64',
     podfileLock: fs.readFileSync(path.join(ios, 'Podfile.lock'), 'utf8'),
   }, null, 2) + '\n');

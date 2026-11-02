@@ -8,6 +8,9 @@ import { androidVersionCode, ANDROID_PACKAGE } from '../shared/lex-mobile-config
 import { buildIosManifest, publishIosManifest } from '../lex-ios-updates.mjs';
 import { sha256File } from '../lex-android-updates.mjs';
 import { optionalApi, publishDraft } from '../publish-lex-draft.mjs';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { HOSTED_IOS_TOOLCHAIN, assertIosToolchain, probeIosSwiftInterop, verifyIosToolchain } from '../check-lex-ios-toolchain.mjs';
 import YAML from 'yaml';
 
 async function fixture(t, version = '0.2.0-rc.1') {
@@ -224,9 +227,87 @@ test('versioned release waits for iOS; standalone iOS dispatch only uploads an A
   const ios = YAML.parse(read('mobile-ios.yml'));
   assert.equal(ios.permissions.contents, 'read');
   assert.equal(ios.jobs.ios.env.LEX_MOBILE_BUILD, '1');
+  assert.equal(ios.jobs.ios['runs-on'], 'macos-26');
+  assert.equal(ios.jobs.ios.env.DEVELOPER_DIR, '/Applications/Xcode_' + HOSTED_IOS_TOOLCHAIN.xcode + '.app/Contents/Developer');
+  assert.equal(ios.jobs.ios.env.LEX_IOS_REQUIRE_PINNED_TOOLCHAIN, '1');
   assert.ok(ios.jobs.ios.steps.some(step => step.with?.path?.includes('-iOS-unsigned.ipa')));
   assert.ok(ios.jobs.ios.steps.every(step => !step.run?.includes('gh release')));
   const updates = read('lex-updates.yml');
   assert.ok(updates.indexOf('Download uploaded iOS artifacts') < updates.indexOf('node scripts/lex-ios-updates.mjs'));
   assert.deepEqual(YAML.parse(updates).on.release.types, ['published']);
+});
+
+const compatibleToolchain = {
+  xcode: 'Xcode 26.6\nBuild version 17F113', sdk: '26.5', cocoaPods: '1.17.0',
+  swift: 'Apple Swift version 6.3.3 (synthetic compiler fixture)',
+  clang: 'Apple clang version 21.0.0 (synthetic compiler fixture)',
+};
+test('preflight rejects the failed Swift 6.2 importer, independently of Xcode marketing version', () => {
+  assert.throws(() => assertIosToolchain({ ...compatibleToolchain,
+    xcode: 'Xcode 26.3\nBuild version 17C529', sdk: '26.2', swift: 'Apple Swift version 6.2.4' }), /requires Xcode/);
+  assert.throws(() => assertIosToolchain({ ...compatibleToolchain, swift: 'Apple Swift version 6.2.4' }), /requires Xcode/);
+  assert.throws(() => assertIosToolchain({ ...compatibleToolchain, xcode: 'Xcode 26.3\nBuild version 17C529' }), /requires Xcode/);
+  assert.doesNotThrow(() => assertIosToolchain({ ...compatibleToolchain, swift: 'Apple Swift version 6.10' }));
+  for (const patch of [{ xcode: 'unknown' }, { swift: 'Swift version 6.3' }, { sdk: 'iphonesimulator26.5' },
+    { clang: 'Homebrew clang version 21.0' }, { cocoaPods: '1.16.2' }]) {
+    assert.throws(() => assertIosToolchain({ ...compatibleToolchain, ...patch }));
+  }
+});
+test('hosted preflight verifies actual Xcode build and device SDK rather than trusting DEVELOPER_DIR', () => {
+  assert.doesNotThrow(() => assertIosToolchain(compatibleToolchain, { pinned: true }));
+  for (const patch of [{ xcode: 'Xcode 26.6\nBuild version unexpected' }, { sdk: '26.2' },
+    { xcode: 'Xcode 27.2\nBuild version 27B48' }]) {
+    assert.throws(() => assertIosToolchain({ ...compatibleToolchain, ...patch }, { pinned: true }), /differs/);
+  }
+});
+const jsiPackage = createRequire(import.meta.url).resolve('expo-modules-jsi/package.json');
+const schedulerHeader = path.join(path.dirname(jsiPackage), 'apple/Sources/ExpoModulesJSI-Cxx/include/RuntimeScheduler.h');
+for (const fails of [false, true]) {
+  test('Swift importer probe uses the installed unmodified header and cleans up on ' + (fails ? 'failure' : 'success'), () => {
+    const original = fs.readFileSync(schedulerHeader);
+    let directory;
+    const env = { DEVELOPER_DIR: '/synthetic selected Xcode/Contents/Developer' };
+    const compilerError = new Error('synthetic RuntimeScheduler cannot be annotated with SWIFT_RETURNS_RETAINED');
+    const run = (command, args, options) => {
+      assert.equal(command, 'xcrun');
+      assert.deepEqual(args.slice(0, 3), ['--sdk', 'iphoneos', 'swiftc']);
+      assert.equal(args[args.indexOf('-sdk') + 1], '/synthetic iPhoneOS.sdk');
+      assert.equal(args[args.indexOf('-target') + 1], 'arm64-apple-ios16.4');
+      assert.ok(args.includes('-cxx-interoperability-mode=default'));
+      assert.ok(args.includes('-std=c++20') && args.includes('-fblocks'));
+      assert.ok(args.every(arg => !arg.includes('suppress') && !arg.includes('simulator')));
+      assert.equal(options.env, env);
+      const consumer = args[args.indexOf('-typecheck') + 1];
+      directory = path.dirname(consumer);
+      assert.deepEqual(fs.readFileSync(path.join(directory, 'RuntimeScheduler.h')), original);
+      assert.match(fs.readFileSync(path.join(directory, 'module.modulemap'), 'utf8'), /header "RuntimeScheduler.h"/);
+      assert.match(fs.readFileSync(consumer, 'utf8'), /import LexExpoRuntimeScheduler[\s\S]*expo.RuntimeScheduler\(\)/);
+      if (fails) throw compilerError;
+      return '';
+    };
+    const probe = () => probeIosSwiftInterop({ schedulerHeader, sdkPath: '/synthetic iPhoneOS.sdk', env, run });
+    if (fails) assert.throws(probe, error => error === compilerError);
+    else assert.deepEqual(probe(), { target: 'arm64-apple-ios16.4',
+      headerSha256: createHash('sha256').update(original).digest('hex'), passed: true });
+    assert.equal(fs.existsSync(directory), false);
+    assert.deepEqual(fs.readFileSync(schedulerHeader), original);
+  });
+}
+test('version success is insufficient: a failed Swift import blocks the builder before native generation', () => {
+  let imported = false;
+  const run = (command, args) => {
+    if (command === 'xcodebuild') return compatibleToolchain.xcode;
+    if (command === 'pod') return compatibleToolchain.cocoaPods;
+    if (args.includes('--show-sdk-version')) return compatibleToolchain.sdk;
+    if (args.includes('--show-sdk-path')) return '/synthetic iPhoneOS.sdk';
+    if (args.includes('--version')) return args.includes('swiftc') ? compatibleToolchain.swift : compatibleToolchain.clang;
+    assert.ok(args.includes('-typecheck')); imported = true;
+    throw new Error('synthetic Swift importer rejection');
+  };
+  assert.throws(() => verifyIosToolchain({ platform: 'darwin', run,
+    env: { DEVELOPER_DIR: '/synthetic Xcode', LEX_IOS_REQUIRE_PINNED_TOOLCHAIN: '1' } }), /Swift importer rejection/);
+  assert.equal(imported, true);
+  const builder = fs.readFileSync(new URL('../build-lex-ios.mjs', import.meta.url), 'utf8');
+  assert.ok(builder.indexOf('const toolchain = verifyIosToolchain(') < builder.indexOf("run('pnpm'"));
+  assert.match(builder, /cocoaPods: toolchain.cocoaPods, toolchain/);
 });

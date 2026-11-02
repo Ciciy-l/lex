@@ -265,8 +265,15 @@ review in `docs/dev-rules/mobile-development.md`. iOS uses its own native transp
 
 ## iOS distribution
 
-`mobile-ios.yml` uses macOS, Xcode 26.3, CocoaPods 1.17.0, Node 22 and the root
-pnpm pin/frozen lockfile. `scripts/build-lex-ios.mjs` prebuilds the existing Lex
+`mobile-ios.yml` uses the standard arm64 `macos-26` runner, pinned Xcode 26.6
+(17F113, iPhoneOS SDK 26.5), CocoaPods 1.17.0, Node 22 and the root
+pnpm pin/frozen lockfile. Before native generation, the builder checks the actual
+toolchain and typechecks the installed Expo RuntimeScheduler header through the
+Swift C++ importer for arm64 iOS. A pin mismatch or compiler failure stops the
+build; no header patch or compiler-error suppression is applied. Compiler versions
+and the header probe receipt are retained in CI build-info.json. Toolchain selection
+and upstream compatibility evidence are in [iOS distribution](lex-ios-distribution.md).
+`scripts/build-lex-ios.mjs` prebuilds the existing Lex
 variant and archives Release for `iphoneos`, `arm64`, without a signing identity.
 JavaScript/resources are bundled offline. It checks the existing native WebSocket
 pod, device executable, Info.plist and main.jsbundle, strips signatures/profiles
@@ -289,6 +296,54 @@ per target per 24 hours, and supports manual checks, channel preference and igno
 Only validated Lex GitHub URLs can open; low-OS targets display the minimum OS
 without offering a download. A download opens the unsigned IPA URL; it does not
 install or renew the installed signature. See [installation and signing limits](lex-ios-distribution.md).
+
+### Verify an iOS toolchain fix before merging
+
+Run the root `pnpm test:unit:related` and affected package typechecks first, then
+push the DCO-signed fix branch for review. A maintainer can dispatch the existing
+`mobile-ios.yml` on that branch **before merging**. The workflow already exists
+on main; its only input is `version`. For example, with an authenticated GitHub CLI:
+
+```sh
+gh workflow run mobile-ios.yml --repo Ciciy-l/lex --ref fix/ios-hosted-archive -f version=0.1.15
+```
+
+The equivalent GitHub Actions “Run workflow” uses the branch selector and
+`version=0.1.15`. The REST dispatch body is
+`{"ref":"fix/ios-hosted-archive","inputs":{"version":"0.1.15"}}` at
+`POST /repos/Ciciy-l/lex/actions/workflows/mobile-ios.yml/dispatches`. This is an
+artifact-only run with `contents: read`; it neither creates a tag/Release nor
+writes an update manifest. Do not dispatch the full release workflow for this check.
+
+Record the intended full commit SHA **before** dispatch. Identify the resulting
+`workflow_dispatch` run and require its `head_sha` to equal that SHA, its workflow
+path to be `.github/workflows/mobile-ios.yml`, and its iOS job to finish successfully.
+Do not infer the commit from the branch name or accept a different run's artifact.
+Download `mobile-ios-0.1.15` from that run ID, retaining the run/job URL and attempt:
+
+```sh
+gh run view <run-id> --repo Ciciy-l/lex --json headSha,event,status,conclusion,url,jobs
+gh run download <run-id> --repo Ciciy-l/lex --name mobile-ios-0.1.15 --dir <new-external-directory>
+```
+
+Check both `sourceCommit` fields (sidecar and build-info.json) against `head_sha`
+and require `sourceDirty: false`. Verify actual IPA bytes against sidecar size and
+SHA-256. The build-info must show Xcode 26.6 / 17F113, SDK 26.5, actual Swift/Clang
+versions, and a successful header probe. Unzip into a fresh temporary directory:
+require one `Payload/<app>.app`, `iPhoneOS`, bundle `io.github.ciciyl.lex`, version
+`0.1.15` / build `2.15.99`, minimum OS from Info.plist, nonempty `main.jsbundle`
+and resources, no embedded profile or signatures. On macOS, `xcrun lipo -archs`
+must return `arm64` and `xcrun vtool -show-build` must report `platform IOS` for
+the executable. Confirm LexServiceWebSocket is linked as well as present in
+Podfile.lock. The builder enforces the device/bundle checks; the tester independently
+inspects the downloaded artifact and native-module evidence.
+
+A green version/probe check alone is not archive acceptance. If the exact branch
+head changes, repeat the relevant gates and cloud artifact run. After merge and
+successful main push CI, rebuild **all** release platforms at that merged SHA.
+Branch verification artifacts, earlier failed release run assets and dirty local
+IPAs must not be mixed into the release. The exact 12-asset and immutable retry
+contracts above still apply.
 
 ### Preparing 0.1.15
 
