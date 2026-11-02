@@ -60,7 +60,7 @@ export function SessionImportSection() {
   const [scanning, setScanning] = useState(false);
   const [importing, setImporting] = useState(false);
   const [shareWizardOpen, setShareWizardOpen] = useState(false);
-  const cindy = useCindyImport();
+  const cindy = useCindyImport(sourceFilter === 'cindy');
   const [pendingNative, setPendingNative] = useState<{ source: 'codex' | 'claude'; id: string }[]>([]);
   const submitting = useRef(false);
   const mounted = useRef(true);
@@ -114,6 +114,12 @@ export function SessionImportSection() {
     });
   }, [placementFilter, candidates, sourceFilter]);
   const selectableCandidates = visibleCandidates.filter((item) => !item.imported);
+  const skipped = sourceFilter === 'cindy'
+    ? (cindy.scan?.excluded ?? 0) + (cindy.scan?.candidates.filter(item => item.imported).length ?? 0)
+    : sourceFilter === 'all'
+      ? (scan ? scan.rejected.codex + scan.rejected.claude + scan.rejected.existing : 0)
+        + (cindy.scan?.excluded ?? 0) + candidates.filter(item => item.imported).length
+      : undefined; // Native scans do not split already-present exclusions by engine.
 
   const listItems = useMemo(() => buildImportListItems(visibleCandidates), [visibleCandidates]);
 
@@ -251,8 +257,8 @@ export function SessionImportSection() {
             disabled={busy || reviewing || (sourceFilter === 'cindy' && (!cindy.sourceId || cindy.needsRestart))}
             className="gap-2"
           >
-            <Spinner icon={RefreshCw} size={15} spinning={scanning} />
-            {scanning ? t('settings.sessionImport.scanning') : t('settings.sessionImport.scan')}
+            <Spinner icon={RefreshCw} size={15} spinning={scanning || cindy.busy} />
+            {scanning || cindy.busy ? t('settings.sessionImport.scanning') : t('settings.sessionImport.scan')}
           </Button>
         </div>
       </header>
@@ -276,7 +282,7 @@ export function SessionImportSection() {
             disabled={busy || reviewing}
           />
           {showCindy && !reviewing && <CindyImportSourcePicker controller={cindy} disabled={busy} />}
-          {cindy.error && <p role="alert" className="text-12 text-[var(--text-secondary)]">{t(`settings.cindyImport.errors.${cindy.error}`, { defaultValue: t('settings.cindyImport.errors.importFailed') })}</p>}
+          {showCindy && cindy.error && <p role="alert" className="text-12 text-[var(--text-secondary)]">{t(`settings.cindyImport.errors.${cindy.error}`, { defaultValue: t('settings.cindyImport.errors.importFailed') })}</p>}
           {cindy.busy && <div className="flex flex-wrap items-center gap-2 text-12 text-[var(--text-secondary)]"><span role="status">{t('settings.cindyImport.preparing')}</span><Button variant="secondary" onClick={cindy.cancel}>{t('settings.cindyImport.cancel')}</Button></div>}
         </div>
         {reviewing ? <CindyImportReview controller={cindy} disabled={busy} nativeCount={pendingNative.length} onCommit={commitReviewed} /> : !scan && !cindy.scan ? (
@@ -294,7 +300,7 @@ export function SessionImportSection() {
         ) : (
           <div className="flex min-h-[440px] flex-1 flex-col">
             <div className="flex shrink-0 flex-col gap-3 border-b border-[var(--settings-input-border)] p-4">
-              <ScanSummary candidates={candidates.filter((item) => !item.imported)} skipped={(scan ? scan.rejected.codex + scan.rejected.claude + scan.rejected.existing : 0) + (cindy.scan?.excluded ?? 0) + candidates.filter((item) => item.imported).length} />
+              <ScanSummary candidates={selectableCandidates} skipped={skipped} />
             </div>
 
             <div className="flex min-h-0 flex-1 flex-col">
@@ -321,7 +327,8 @@ export function SessionImportSection() {
               <div className="flex min-h-0 flex-1 flex-col overflow-y-auto [scrollbar-gutter:stable]">
                 {listItems.length === 0 ? (
                   <div className="flex min-h-[160px] flex-1 items-center justify-center px-4 py-10 text-center text-12 text-[var(--settings-section-desc)]">
-                    {t('settings.sessionImport.noCandidates')}
+                    {sourceFilter === 'cindy' && cindy.error ? null
+                      : busy ? t('settings.sessionImport.scanning') : t('settings.sessionImport.noCandidates')}
                   </div>
                 ) : (
                   listItems.map((listItem) => {
@@ -474,7 +481,7 @@ function buildImportListItems(candidates: ImportCandidate[]): ImportListItem[] {
   return listItems.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
 }
 
-function ScanSummary({ candidates, skipped }: { candidates: ImportCandidate[]; skipped: number }) {
+function ScanSummary({ candidates, skipped }: { candidates: ImportCandidate[]; skipped?: number }) {
   const { t } = useTranslation();
   const projectCount = candidates.filter((item) => item.sidebarBucket === 'project').length;
   const dialogueCount = candidates.length - projectCount;
@@ -495,11 +502,11 @@ function ScanSummary({ candidates, skipped }: { candidates: ImportCandidate[]; s
         value={dialogueCount}
         hint={t('settings.sessionImport.summary.dialogueHint')}
       />
-      <SummaryCell
+      {skipped !== undefined && <SummaryCell
         label={t('settings.sessionImport.summary.filtered')}
         value={skipped}
         hint={t('settings.sessionImport.summary.filteredHint')}
-      />
+      />}
     </div>
   );
 }

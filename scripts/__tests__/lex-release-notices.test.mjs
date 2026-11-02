@@ -197,12 +197,16 @@ test("release workflows validate tagged structured notices before publishing any
   const checkout = draftSteps.find((step) => step.uses?.startsWith("actions/checkout@"));
   assert.equal(checkout.with.ref, "${{ needs.resolve-release.outputs.release_commit }}");
   assert.equal(checkout.with["persist-credentials"], false);
-  const draft = draftSteps.find((step) => step.name === "Create or update draft release").run;
+  const draftStep = draftSteps.find((step) => step.name === "Create or update draft release");
+  const draft = draftStep.run;
   assert.ok(draft.includes('cp "release-notices/${VERSION}.md" "$notes_file"'));
-  assert.ok(draft.includes('--notes-file "$notes_file"'));
-  assert.ok(draft.includes('--draft --title "Lex ${tag}"'));
-  assert.ok(draft.includes('if [[ "$VERSION" == *-* ]]; then'));
-  assert.ok(draft.includes('release_flags+=(--prerelease)'));
+  // Creation flags and resulting body/channel are behavior-tested for both
+  // stable and RC in lex-ios-release.test.mjs. This shell owns only the wiring.
+  assert.ok(draft.includes('node scripts/publish-lex-draft.mjs "$notes_file"'));
+  assert.equal(draftStep.env.VERSION, "${{ needs.resolve-release.outputs.version }}");
+  assert.equal(draftStep.env.RELEASE_COMMIT, "${{ needs.resolve-release.outputs.release_commit }}");
+  assert.equal(draftStep.env.LEX_ANDROID_CERT_SHA256, "${{ vars.LEX_ANDROID_CERT_SHA256 }}");
+  assert.ok(checkout.with['sparse-checkout'].split('\n').includes('apps/desktop/scripts/ci'));
   assert.ok(draft.includes('桌面构建：**%s**。%s'));
   assert.ok(draft.includes("signing_label='已签名'"));
   assert.ok(draft.includes("signing_label='未使用发行证书签名'"));

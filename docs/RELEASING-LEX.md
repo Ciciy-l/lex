@@ -1,6 +1,6 @@
 # Releasing Lex
 
-Lex has a combined desktop/Android release path and a desktop-only preview path:
+Lex has a combined desktop/Android/iOS release path and separate preview paths:
 
 - **Versioned release (recommended)**: `desktop-release-auto` is triggered by a
   `v*` tag or manually with a SemVer version. Its default `auto` mode checks the
@@ -9,15 +9,20 @@ Lex has a combined desktop/Android release path and a desktop-only preview path:
   unsigned release. Both modes create the same normal GitHub Release and update
   manifest, so early testing builds can update normally. Android always requires
   its own persistent signing credentials, even when desktop mode is unsigned.
+  iOS always builds a real unsigned arm64 iPhone IPA, independent of desktop
+  signing mode. Users supply signing and installation themselves.
 - **Local preview artifact**: `desktop-preview-unsigned` remains available for
   ad-hoc branch testing. It produces a short-lived, versionless `0.0.0` Actions
   Artifact only; it does not enter the public update channel.
+- **iPhone verification artifact**: manually dispatch `mobile-ios.yml` with a
+  valid version. It builds the same unsigned IPA and metadata with read-only
+  repository permissions; it cannot create a Release or update a channel.
 
 Before creating a versioned tag, wait for the `client-ci` **push** run on the
 exact merged `main` commit to succeed. `desktop-release-auto` verifies that
 immutable result rather than reinstalling dependencies and rerunning the full
 source-level test suite. It still performs release-specific checks, signing
-preflight, and native packaging on every supported desktop platform and Android.
+preflight, and native packaging on every supported desktop platform, Android and iOS.
 
 Release titles use `Lex v<version>` without a signing suffix. The draft body uses
 the committed concise Simplified Chinese `release-notices/<version>.md` from the exact
@@ -116,6 +121,13 @@ The workflow builds the same clearly named asset set with or without signing:
 - `Lex-<version>-macOS-Apple-Silicon.dmg` and its `Auto-Update.zip`;
 - `Lex-<version>-macOS-Intel.dmg` and its `Auto-Update.zip`;
 - `Lex-<version>-Linux-x64.deb`.
+- `Lex-<version>-Android.apk` and `Lex-<version>-Android.update.json`;
+- `Lex-<version>-iOS-unsigned.ipa` and `Lex-<version>-iOS-unsigned.update.json`.
+
+The tag or manual version input is the release version source: Desktop temporarily
+writes it into its packaged manifest, and Mobile receives `LEX_MOBILE_VERSION`.
+Do not bump the development placeholders in package.json or app.json. iOS maps
+SemVer to numeric Apple versions as described in [iOS distribution](lex-ios-distribution.md).
 
 The DMG files are the manual macOS install surface: users mount the image and
 drag `Lex.app` into Applications. The ZIP files are intentionally labelled
@@ -128,6 +140,20 @@ enabled. Every package job runs on its target operating system because the
 repository contains native modules (`better-sqlite3`, `node-pty`, `sharp`, and
 `sqlite-vec`). The publish job uploads installers, hotfix archives, and a
 `SHA256SUMS.txt` file to the draft Release.
+The publish job waits for every platform, including iOS. Before any GitHub write,
+the publisher requires exactly 12 assets: the seven Desktop packages, two Android
+files, two iOS files listed above, and SHA256SUMS.txt. The checksum file must cover
+each of the other 11 files exactly once with its actual SHA-256; missing, empty,
+extra, wrong-version, duplicate or mismatched files fail before draft creation.
+build-info.json is CI evidence only and is excluded from this set. The publisher
+also validates the IPA metadata/source commit and Android metadata against the
+pinned LEX_ANDROID_CERT_SHA256 repository variable. Same-version publish
+jobs are serialized. A retry may upload missing assets only after comparing all
+existing assets byte-for-byte; it never uses `--clobber`. A rebuilt binary can
+differ even at the same source commit: reuse the original Actions artifacts for
+an interrupted upload, or choose a higher version. Published versions and existing
+tags pointing elsewhere are rejected. A manual draft without a Git tag is tied
+to its exact `target_commitish` until promotion.
 
 ## Promote safely
 
@@ -239,17 +265,49 @@ review in `docs/dev-rules/mobile-development.md`. iOS uses its own native transp
 
 ## iOS distribution
 
-This change does not produce a public IPA or claim iOS installability. A normal iPhone
-cannot install an arbitrary GitHub IPA. A future iOS distribution needs a Lex App ID,
-Apple Developer membership, iOS distribution certificate/provisioning, App Store Connect
-configuration and TestFlight/App Store review. Desktop macOS Developer ID certificates
-are not iOS signing credentials. The homepage states that iOS is not yet available;
-add the real TestFlight/App Store URL when that channel exists. iOS Simulator builds
-are not phone installation packages.
+`mobile-ios.yml` uses macOS, Xcode 26.3, CocoaPods 1.17.0, Node 22 and the root
+pnpm pin/frozen lockfile. `scripts/build-lex-ios.mjs` prebuilds the existing Lex
+variant and archives Release for `iphoneos`, `arm64`, without a signing identity.
+JavaScript/resources are bundled offline. It checks the existing native WebSocket
+pod, device executable, Info.plist and main.jsbundle, strips signatures/profiles
+from a temporary copy, and packs `Payload/<app>.app`. The artifact sidecar records
+the actual byte size, SHA-256, minimum OS, bundle/version/build and source commit.
+No Apple credentials, paid account, EAS, TestFlight upload or automatic re-signing
+service is used. App Store/TestFlight and ordinary phone installation remain
+separate signing/distribution concerns.
 
-The Personal Team (free Apple ID) investigation and the limits of scheduled GitHub
-Actions re-signing are documented in [Lex iOS distribution](lex-ios-distribution.md).
-A new build does not renew an installed app or supply an installation channel.
+After the reviewed draft is published, `lex-updates.yml` downloads the uploaded
+IPA and sidecar, verifies them against the tagged commit and five-language notice,
+then atomically pushes `manifest-ios.json` (stable) and `manifest-ios-beta.json`
+(prereleases and stable) to `updates`. Older tags without the iOS publisher remain
+replayable. New tags missing either iOS asset fail before the updates-branch push.
+The global updates concurrency and monotonic iOS pointers prevent backport rollback;
+same-version changed bytes are rejected. This creates no new Release event loop.
+
+The iOS app checks at startup/foreground (six-hour limit), reminds at most once
+per target per 24 hours, and supports manual checks, channel preference and ignore.
+Only validated Lex GitHub URLs can open; low-OS targets display the minimum OS
+without offering a download. A download opens the unsigned IPA URL; it does not
+install or renew the installed signature. See [installation and signing limits](lex-ios-distribution.md).
+
+### Preparing 0.1.15
+
+The required tag is `v0.1.15`; Desktop/Android/iOS must all report `0.1.15`.
+Android versionCode is `1001599`; iOS short version is `0.1.15`, build `2.15.99`.
+Release notes live in `release-notices/0.1.15.md` and `.json`, not the homepage.
+After source tests, IPA acceptance, review and merge, wait for successful main CI
+at the merge SHA. Trigger `desktop-release.yml` by the new tag or manual
+`version=0.1.15, mode=auto` at that exact commit. Verify all listed assets and
+SHA256SUMS before promotion; a missing IPA is a release blocker, not a follow-up.
+Then publish the draft and wait for `lex-updates.yml`. If the publishing token
+does not trigger another workflow, dispatch `lex-updates.yml` with `tag=v0.1.15`.
+Verify both iOS manifests and download their exact `file` URL again to compare
+size/SHA-256 with the uploaded sidecar. Never manually fabricate size/hash values.
+
+The initial implementation has not established user-signed physical-device
+installation, overwrite/data retention or Apple capability acceptance. A successful
+unsigned archive alone does not establish those claims. Record those results
+separately before claiming compatibility with any particular signing tool.
 
 ## Upstream synchronization
 

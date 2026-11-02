@@ -6103,8 +6103,8 @@
       "preview": "Preview {{count}} tasks",
       "import": "Import copies",
       "errors": {
-        "sourceRunning": "Cindy is still running. Quit it and scan again.",
-        "sourceUnreadable": "The source could not be read or its process state could not be verified. Check permissions, quit Cindy and scan again.",
+        "sourceRunning": "Cindy is using the selected source. Quit Cindy, then scan again.",
+        "sourceUnreadable": "Could not read the source or verify its process state. Check directory permissions and scan again.",
         "sourceMissing": "The source is no longer available. Choose it again.",
         "sourceChanged": "Source data changed. Keep Cindy closed and scan again.",
         "schemaUnsupported": "This database schema is not supported. Update {{appName}} or use a Cindy share file.",
@@ -6123,7 +6123,8 @@
         "confirmationRequired": "Choose the required directory and confirm missing items first.",
         "alreadyImported": "This task already has a copy in this {{appName}} account.",
         "importFailed": "Import failed. Check the source and local model settings, then reopen the importer to retry.",
-        "diskFull": "Not enough free disk space to safely prepare this import. Free space and try again."
+        "diskFull": "Not enough free disk space to safely prepare this import. Free space and try again.",
+        "sourceBusy": "The source database is in use. Quit the app using it, then scan again."
       },
       "results": {
         "imported": "Imported",
@@ -6133,7 +6134,7 @@
       },
       "account": "Account {{count}}",
       "restart": "Choose a source again",
-      "scanHint": "Click Scan to read the selected Cindy account.",
+      "scanHint": "Scanning starts when the source is ready. After quitting Cindy, select Scan to retry.",
       "alsoImportNative": "Confirming will also import the {{count}} selected Codex / Claude Code tasks.",
       "backToList": "Back to list"
     }

@@ -6101,8 +6101,8 @@
       "preview": "작업 {{count}}개 사전 확인",
       "import": "복사본 가져오기",
       "errors": {
-        "sourceRunning": "Cindy가 실행 중입니다. 종료한 뒤 다시 검색하세요.",
-        "sourceUnreadable": "소스를 읽거나 실행 상태를 확인할 수 없습니다. 권한을 확인하고 Cindy를 종료한 뒤 다시 검색하세요.",
+        "sourceRunning": "Cindy가 선택한 소스를 사용 중입니다. Cindy를 종료한 후 다시 스캔하세요.",
+        "sourceUnreadable": "소스를 읽거나 실행 상태를 확인할 수 없습니다. 폴더 권한을 확인한 후 다시 스캔하세요.",
         "sourceMissing": "소스를 사용할 수 없습니다. 다시 선택하세요.",
         "sourceChanged": "소스 데이터가 변경되었습니다. Cindy를 닫고 다시 검색하세요.",
         "schemaUnsupported": "지원되지 않는 데이터베이스 구조입니다. {{appName}}를 업데이트하거나 Cindy 공유 파일을 사용하세요.",
@@ -6121,7 +6121,8 @@
         "confirmationRequired": "필요한 디렉터리를 선택하고 누락 항목을 확인하세요.",
         "alreadyImported": "이 {{appName}} 계정에 이미 복사본이 있습니다.",
         "importFailed": "가져오기에 실패했습니다. 소스와 로컬 모델 설정을 확인하고 화면을 다시 열어 재시도하세요.",
-        "diskFull": "가져오기를 안전하게 준비할 디스크 공간이 부족합니다. 공간을 확보한 뒤 다시 시도하세요."
+        "diskFull": "가져오기를 안전하게 준비할 디스크 공간이 부족합니다. 공간을 확보한 뒤 다시 시도하세요.",
+        "sourceBusy": "소스 데이터베이스가 사용 중입니다. 사용 중인 앱을 종료한 후 다시 스캔하세요."
       },
       "results": {
         "imported": "가져옴",
@@ -6131,7 +6132,7 @@
       },
       "account": "계정 {{count}}",
       "restart": "소스 다시 선택",
-      "scanHint": "스캔을 눌러 선택한 Cindy 계정을 읽으세요.",
+      "scanHint": "소스가 준비되면 자동으로 스캔합니다. Cindy를 종료한 후 스캔을 눌러 다시 시도할 수 있습니다.",
       "alsoImportNative": "확인하면 선택한 Codex / Claude Code 작업 {{count}}개도 가져옵니다.",
       "backToList": "목록으로 돌아가기"
     }

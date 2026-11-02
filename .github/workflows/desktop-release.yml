@@ -25,7 +25,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: desktop-release-${{ github.ref }}
+  group: desktop-release-${{ inputs.version || github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -111,6 +111,7 @@ jobs:
         run: |
           set -euo pipefail
           node -e 'require("./scripts/shared/lex-mobile-config.cjs").androidVersionCode(process.env.RELEASE_VERSION)'
+          node -e 'require("./scripts/shared/lex-ios-release.cjs").iosReleaseIdentity(process.env.RELEASE_VERSION)'
           for name in LEX_ANDROID_KEYSTORE_BASE64 LEX_ANDROID_KEYSTORE_PASSWORD LEX_ANDROID_KEY_ALIAS LEX_ANDROID_KEY_PASSWORD LEX_ANDROID_CERT_SHA256; do
             if [ -z "${!name}" ]; then
               echo "Missing $name; configure the persistent Android signing identity before releasing." >&2
@@ -443,11 +444,22 @@ jobs:
       LEX_ANDROID_KEY_ALIAS: ${{ secrets.LEX_ANDROID_KEY_ALIAS }}
       LEX_ANDROID_KEY_PASSWORD: ${{ secrets.LEX_ANDROID_KEY_PASSWORD }}
 
+  ios:
+    name: Package unsigned iOS
+    needs: [eligibility, resolve-release]
+    uses: ./.github/workflows/mobile-ios.yml
+    with:
+      version: ${{ needs.resolve-release.outputs.version }}
+
   publish:
     name: Create GitHub Release draft
+    concurrency:
+      group: lex-draft-${{ needs.resolve-release.outputs.version }}
+      cancel-in-progress: false
     needs:
       - package
       - android
+      - ios
       - resolve-release
     runs-on: ubuntu-latest
     permissions:
@@ -458,7 +470,10 @@ jobs:
         with:
           ref: ${{ needs.resolve-release.outputs.release_commit }}
           persist-credentials: false
-          sparse-checkout: release-notices
+          sparse-checkout: |
+            release-notices
+            scripts
+            apps/desktop/scripts/ci
 
       - name: Download packaged artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -488,6 +503,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.resolve-release.outputs.version }}
           SIGNING_MODE: ${{ needs.resolve-release.outputs.signing_mode }}
+          RELEASE_COMMIT: ${{ needs.resolve-release.outputs.release_commit }}
+          LEX_ANDROID_CERT_SHA256: ${{ vars.LEX_ANDROID_CERT_SHA256 }}
         shell: bash
         run: |
           set -euo pipefail
@@ -501,23 +518,6 @@ jobs:
           fi
           notes_file="$RUNNER_TEMP/lex-release-notes.md"
           cp "release-notices/${VERSION}.md" "$notes_file"
-          printf '\n\n---\n\n### 构建与签名\n\n桌面构建：**%s**。%s\n\nAndroid 沿用 Lex 永久签名，本次不提供 iOS 安装包。\n' \
+          printf '\n\n---\n\n### 构建与签名\n\n桌面构建：**%s**。%s\n\nAndroid 沿用 Lex 永久签名。iOS 提供未签名 IPA，需用户自行签名安装；下载不等于安装或续签。\n' \
             "$signing_label" "$notes" >> "$notes_file"
-          release_flags=()
-          if [[ "$VERSION" == *-* ]]; then
-            release_flags+=(--prerelease)
-          fi
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $tag already exists; refusing to replace immutable versioned assets." >&2
-            echo 'Use a new, higher SemVer tag for a changed signing mode or rebuilt package.' >&2
-            exit 1
-          fi
-          gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            "${release_flags[@]}" \
-            --draft --title "Lex ${tag}" \
-            --notes-file "$notes_file"
-          while IFS= read -r -d '' file; do
-            gh release upload "$tag" "$file" --repo "$GITHUB_REPOSITORY" --clobber
-          done < <(find dist -type f ! -name build-info.json ! -name SHA256SUMS.txt -print0)
-          gh release upload "$tag" dist/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --clobber
+          node scripts/publish-lex-draft.mjs "$notes_file"

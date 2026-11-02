@@ -60,6 +60,22 @@
       "STORAGE_UNAVAILABLE": "Not enough writable storage. Free up space and retry.",
       "INVALID_METADATA": "Invalid update manifest. Retry later or visit Lex releases.",
       "NETWORK_OR_INSTALL_FAILED": "The update request or system installer failed. Check your connection and installation permission, then retry."
+    },
+    "ios": {
+      "download": "Download IPA",
+      "help": "View Installation Guide",
+      "ignore": "Ignore This Version",
+      "ignored": "Automatic reminders for this version are disabled. You can still download it or check manually.",
+      "build": "Build: {{build}}",
+      "unpublished": "No iOS update manifest has been published on this channel.",
+      "incompatible": "This version requires iOS {{version}} or later. Update iOS first.",
+      "installHint": "This IPA is unsigned. You must sign and install it yourself. Downloading an update does not renew the installed app’s signature; changing signing identity may affect local data.",
+      "errors": {
+        "CHECK_FAILED": "Could not check for updates. Check your connection and retry.",
+        "INVALID_METADATA": "Invalid update manifest. Retry later or visit Lex releases.",
+        "STORAGE_FAILED": "Could not save update preferences. Check available storage and retry.",
+        "LINK_FAILED": "Could not open the download link. Check browser settings and retry."
+      }
     }
   }
 }

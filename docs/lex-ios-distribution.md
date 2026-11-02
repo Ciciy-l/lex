@@ -1,48 +1,58 @@
-# Lex iOS 安装与更新方案
+# Lex iOS 下载、签名与更新
 
-本轮目标是让 iOS 连接 Lex Admin，并评估「GitHub Actions 定期续签，App 提醒用户更新」。
-用户目前只有普通 Apple ID，且不希望最终用户安装或操作重签工具。
+Lex 提供面向 iPhone/iPad 真机的未签名 IPA。构建不需要发行方的 Apple 签名凭据或付费开发者账号；普通 iPhone 仍不能直接安装未签名 IPA。用户需要自行选择签名与安装方法。
 
-## 免费签名的实际边界
+## 下载与安装
 
-Apple 的 Personal Team 面向本人设备开发测试：最多登记 10 个 App ID、3 台设备，
-每台设备最多安装 3 个 App；安装用 provisioning profile 在签发 7 天后过期。
-Apple 要求周期性重新生成配置、构建并重新安装。这个期限由 profile 决定，
-重复用同一个 profile 签名不会延长它的有效期。
+1. 在 [Lex Releases](https://github.com/Ciciy-l/lex/releases) 选择所需版本，下载名称为 `Lex-<version>-iOS-unsigned.ipa` 的文件。正式版和预发布版请按自己的更新偏好选择。
+2. 查看同名 `.update.json` 与 `SHA256SUMS.txt`，核对文件大小和 SHA-256；最低 iOS 版本以该包的元数据为准。
+3. 使用自己信任的工具签名并安装。Lex 不接收 Apple ID 密码、证书或个人 provisioning profile，也不替用户操作这些工具。
+4. 更新时尽量沿用原来的签名工具、团队与安装身份，并先备份重要数据。不要把更换签名身份、改变 bundle ID 或卸载重装当作无损升级；这些操作可能使原数据、Keychain 或账号状态不可访问。
 
-因此，Actions 能构建新包、校验产物、发布更新元数据，但这些步骤并不能提供
-Personal Team 的通用安装授权。包仍绑定签名团队和指定设备，不是所有用户都能安装的
-公开 IPA。免费账号的配置由 Xcode 管理；没有已验证的、无需交互即可长期生成新免费
-profile 的官方 CI 流程。不能把 Apple ID 密码、二次验证或私人登录会话作为公共仓库的
-定时工作流配置。
+可自行评估的路径包括 Xcode Personal Team 本人设备开发安装、AltStore Classic/AltServer、Sideloadly，以及已拥有有效开发者凭据的签名工具。工具的版本、设备/iOS、App ID 和 entitlement 支持不同；本仓未逐项验证兼容性，不保证所有工具都能重签此 IPA。Xcode 是源码构建/开发部署路径，不是“点开下载 IPA 即可安装”。
 
-即使某次成功生成了新签名包，服务器上的新包也不会更新手机上已安装的签名。
-用户必须通过可用的安装渠道完成覆盖安装。普通 iOS App 无法像 Android APK 更新器
-那样自行安装下载的 IPA；免费 Personal Team 不提供面向普通用户的公开 OTA 分发渠道。
-包过期后 App 无法启动，也不能指望过期后再从 App 内检查更新。
+[AltStore Classic](https://faq.altstore.io/) 依赖自己的安装与刷新流程；它与欧盟替代应用市场 AltStore PAL 不是同一分发途径。这里不提供 PAL 安装承诺。本轮未增加 AltStore source JSON；先使用真实 Release 文件手动导入工具，不要将 GitHub Release 页误当成 source URL。
 
-## 当前可执行的选择
+## 应用内检查更新
 
-| 使用场景 | 构建与安装 | 用户负担与限制 |
-| --- | --- | --- |
-| 当前本机开发 | Mac 构建模拟器包；真机通过 Xcode Personal Team 安装 | 真机需要设备配对、开发者模式、7 天内重新部署；不作为公开分发 |
-| 免费侧载实验 | CI 可构建未签名 IPA，再由电脑/手机重签工具安装刷新 | 需要重签工具或等价的设备配对服务，不满足本轮「普通用户不用工具」目标 |
-| 普通用户测试 | 付费 Apple Developer + Actions 构建上传 + TestFlight | 用户只需 TestFlight；可接收更新，每个测试构建最多有效 90 天，外部测试受 Beta Review 管理 |
-| 正式公开使用 | 付费 Apple Developer + App Store | 经审核发布，安装更新走系统渠道 |
+Lex iOS 启动或回到前台时自动检查，最多每六小时一次；同一版本的自动提醒间隔至少 24 小时。设置中可随时手动检查、切换是否接收预发布版，或忽略当前版本。手动检查仍可找到被忽略的版本。预发布安装默认接收 beta，正式安装默认接收 stable；明确保存的用户选择优先，切换 Cindy 服务区不会改变更新来源。
 
-建议保留「有新版本时提醒并跳转安装渠道」的产品交互，将真正分发通道与 Android
-实现分开。当前先交付 iOS 连接能力和本地验证，不开放无可安装产物的下载/更新按钮，
-不建立一个会把旧 profile 重新打包后误报为「续签成功」的定时任务。
+更新页显示发行说明、大小、构建号和最低系统要求。系统过旧时先提示升级 iOS，不提供不兼容的下载按钮。“下载 IPA”只打开下载链接，“查看安装说明”打开本页；不会调用 Android 安装器或承诺自动安装。无清单、离线或清单损坏会分别提示，不能当作“已经最新”。
 
-若后续选择 TestFlight，再实现受保护的发布工作流：签名材料仅放 CI secret/临时钥匙串，
-上传使用受限 App Store Connect API key，成功回执包含构建号、处理/审核状态和真实
-安装入口；未审核/未可用时不得向客户端宣告可安装。无需在客户端实现 7 天免费续签。
-目前没有生成真机签名包、部署续签服务或发布 iOS 更新通道。
+发布流程从已上传的真实 IPA 生成 stable/beta 清单，包含版本/build、最低 OS、大小、SHA-256 和发行说明。App 仅接受 Lex 官方仓库的固定 Release 路径，检查不携带登录凭据，不接受远程任意下载地址或重定向清单。IPA 文件由外部浏览器/工具下载，用户仍需核对下载文件；App 不声称在浏览器中完成了文件校验。
 
-## 依据（2026-10-31 核对）
+## 签名到期与版本更新是两件事
 
-- [Apple Developer account overview](https://developer.apple.com/help/account/basics/about-your-developer-account/)：Personal Team 的设备、App ID、安装数量与 7 天限制；分发所需会员能力。
-- [TestFlight overview](https://developer.apple.com/help/app-store-connect/test-a-beta-version/testflight-overview/)：90 天构建有效期、测试邀请、外部审核及用户安装更新流程。
+Personal Team 免费开发配置通常七天到期，并受 App ID、设备数和同时安装数量限制。以 Apple 当前规则和工具实际显示为准。签名/profile 到期后，即使没有新 Lex 版本，也可能需要重新签名安装；有新版本也不会延长手机上旧包的签名。过期 App 可能无法启动，不能依赖它过期后再提醒。
 
-模拟器的可运行证据不等于 iPhone 签名、安装、续期或发布验收。实际签名方案确定后仍需
-在真机验证首次安装、覆盖升级、数据保留、账号恢复和证书/profile 过期处理。
+重复使用过期或同一份 profile 签名不会延长期限。GitHub Actions 生成新 IPA 不会给用户设备提供安装授权，也不能替代用户的刷新流程。项目不配置定期免费续签、Apple ID 自动登录、收费 CI 平台或 App Store/TestFlight 上传。
+
+当前原生工程保留既有权限描述、URL scheme、推送/Apple 登录等 capability 配置。未签名 IPA 不携带授予这些能力的签名 entitlement/profile；重签工具可能要求调整或剥离不支持的 entitlement，相关能力随后可能不可用。普通本地/远程功能、通知、社交登录、Universal Link、Keychain 和服务端注册身份须按实际签名环境分别验收，不能用编译成功证明已获得 Apple 能力。
+
+## 开发与制品核验
+
+`.github/workflows/mobile-ios.yml` 支持手动仅生成 CI artifact，不创建正式 Release。正式发行由 `desktop-release.yml` 统一编排，必须等待 iOS 成功。完整顺序见 [Releasing Lex](RELEASING-LEX.md)。
+
+本机在干净的独立检出中使用 Node 22、根 packageManager 指定的 pnpm、Xcode 26.3 和 CocoaPods 1.17.0。先遵守 [环境准备规则](dev-rules/environment-setup.md)。构建器拒绝覆盖已存在的 `apps/mobile/ios` 或同名输出；请保留原目录，不要为重试删除开发者工程。
+
+```sh
+pnpm install --frozen-lockfile
+# 仅缺少该忽略文件时，从仓库公开模板建立 Metro 解析所需的占位文件。
+[ -e config/endpoint.dev.json ] || cp config/endpoint.dev.json.example config/endpoint.dev.json
+DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer LEX_MOBILE_BUILD=1 LEX_MOBILE_VERSION=0.1.15 node scripts/build-lex-ios.mjs
+```
+
+产物在 `dist/ios/`，必须包含 `Payload/<app>.app`、arm64 真机二进制、离线 `main.jsbundle` 和资源；`CFBundleSupportedPlatforms` 必须是 `iPhoneOS`。最低 OS 从实际归档 Info.plist 读取，不能以模拟器支持版本代替。既有 LexServiceWebSocketModule 由 Expo/CocoaPods 自动链接，缺少该 pod 会阻断构建。
+源码有未提交修改时生成的本地制品标记 `sourceDirty: true`，仅供验证；发行上传器和客户端清单拒绝该标记。正式构建必须来自干净的已审核 commit。
+
+SemVer 主版本/次版本沿用现有 mobile 限额，iOS patch 额外限制为 0–99。Apple short version 使用 `major.minor.patch`；build 为 `(major*100+minor+1).patch.slot`，alpha 的 slot 为 N、beta 为 30+N、rc 为 60+N、stable 为 99，N 为 1–29。首段加一保证非零；同一版本重试不产生新 build。0.1.15 对应 short version 0.1.15、build 2.15.99。修改仅作用于新构建生成的 plist，既有原生配置/依赖不为此重写。
+
+Xcode/CocoaPods 选择依据 [macos-15 runner 软件清单](https://github.com/actions/runner-images/blob/main/images/macos/macos-15-Readme.md)（2026-11-02 查阅）；工作流明确检查所需工具，不在版本缺失时静默改用最新。pnpm 依赖使用 frozen lockfile。生成的 Podfile.lock 随 CI 构建证据保留；尚未建立跨 runner 的二进制逐字节可复现保证。同源重建的字节也可能不同，因此同版本上传重试必须复用原产物，不覆盖已存在字节。
+
+本轮实现尚未完成签名后的 iPhone 首次安装、覆盖升级、数据保留、过期恢复及 Apple capability 真机验收。模拟器、源码单测、unsigned archive 各自只证明相应范围。验收时记录设备/iOS、签名工具/身份、原版本和结果，避免把“下载成功”写成“安装成功”。
+
+## 参考
+
+- [Apple Developer account overview](https://developer.apple.com/help/account/basics/about-your-developer-account/)：Personal Team 与分发权限。
+- [TestFlight overview](https://developer.apple.com/help/app-store-connect/test-a-beta-version/testflight-overview/)：受管理的测试分发与构建期限。
+- [AltStore Classic source 格式](https://faq.altstore.io/developers/make-a-source)、[更新规则](https://faq.altstore.io/developers/updating-apps)：后续若增加源，须由真实产物生成并单独验收，不能复用 PAL 的安装口径。

@@ -60,6 +60,14 @@ jobs:
               --pattern '*-Android.apk' --pattern '*-Android.update.json'
           fi
 
+      - name: Download uploaded iOS artifacts
+        run: |
+          # Old tags remain replayable. New tags require both immutable assets.
+          if [ -f scripts/lex-ios-updates.mjs ]; then
+            gh release download "$RELEASE_TAG" --repo "$REPOSITORY" --dir release-assets \
+              --pattern '*-iOS-unsigned.ipa' --pattern '*-iOS-unsigned.update.json'
+          fi
+
       - name: Build platform manifests with checksums
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
@@ -220,6 +228,10 @@ jobs:
           node scripts/lex-release-notices.mjs "$RELEASE_TAG" "$worktree/repo"
           if [ -f scripts/lex-android-updates.mjs ]; then
             node scripts/lex-android-updates.mjs release-assets "$worktree/repo"
+          fi
+          if [ -f scripts/lex-ios-updates.mjs ]; then
+            export RELEASE_COMMIT="$(git rev-parse HEAD)"
+            node scripts/lex-ios-updates.mjs release-assets "$worktree/repo"
           fi
           git -C "$worktree/repo" config user.name 'github-actions[bot]'
           git -C "$worktree/repo" config user.email '41898282+github-actions[bot]@users.noreply.github.com'

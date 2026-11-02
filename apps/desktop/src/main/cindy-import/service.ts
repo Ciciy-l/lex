@@ -67,7 +67,7 @@ export class CindyImportService {
   private async checkSource(): Promise<void> {
     this.assertCurrent();
     if (!this.source) throw importError('sourceMissing');
-    await assertSourceStopped(this.source.root);
+    await assertSourceStopped(this.source.root, this.source.file);
     if (this.stamp && await databaseStamp(this.source.file) !== this.stamp) throw importError('sourceChanged');
     await this.adapter?.assertFilesUnchanged();
     this.assertCurrent();
@@ -264,5 +264,8 @@ function sanitizePreferences(value: CindyImportCommit['preferences']) {
 }
 export function errorCode(error: unknown): string {
   const code = (error as { code?: unknown })?.code;
+  if (code === 'EBUSY' || code === 'SQLITE_BUSY' || code === 'SQLITE_LOCKED') return 'sourceBusy';
+  if (code === 'EACCES' || code === 'EPERM') return 'sourceUnreadable';
+  if (code === 'ENOENT') return 'sourceMissing';
   return typeof code === 'string' && /^[A-Za-z_]{1,64}$/.test(code) ? code : 'importFailed';
 }

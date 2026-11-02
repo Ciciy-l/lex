@@ -60,6 +60,22 @@
       "STORAGE_UNAVAILABLE": "手机存储空间不足或无法写入，请释放空间后重试。",
       "INVALID_METADATA": "更新清单无效，请稍后重试或查看 Lex 发布页。",
       "NETWORK_OR_INSTALL_FAILED": "更新请求或系统安装操作失败，请检查网络与安装权限后重试。"
+    },
+    "ios": {
+      "download": "下载 IPA",
+      "help": "查看安装说明",
+      "ignore": "忽略此版本",
+      "ignored": "已忽略此版本的自动提醒，仍可下载或手动检查。",
+      "build": "构建号：{{build}}",
+      "unpublished": "此通道尚未发布 iOS 更新清单。",
+      "incompatible": "此版本需要 iOS {{version}} 或更高版本，请先更新系统。",
+      "installHint": "IPA 未由发布方签名，需要你自行签名安装。下载新版不会续签已安装的应用；更换签名身份可能影响本地数据。",
+      "errors": {
+        "CHECK_FAILED": "无法检查更新，请检查网络连接后重试。",
+        "INVALID_METADATA": "更新清单无效，请稍后重试或查看 Lex 发布页面。",
+        "STORAGE_FAILED": "无法保存更新偏好，请检查可用存储空间后重试。",
+        "LINK_FAILED": "无法打开下载链接，请检查浏览器设置后重试。"
+      }
     }
   }
 }

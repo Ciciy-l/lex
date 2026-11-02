@@ -1,0 +1,70 @@
+name: lex-ios-unsigned
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Artifact-only version (major.minor.patch or -alpha.N/-beta.N/-rc.N)'
+        required: true
+        default: '0.1.15'
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  ios:
+    name: Build unsigned iPhone IPA
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      CI: '1'
+      LEX_MOBILE_BUILD: '1'
+      LEX_MOBILE_VERSION: ${{ inputs.version }}
+      EXPO_PUBLIC_CINDY_AUTH_REGION: global
+      EXPO_NO_DOTENV: '1'
+      XDT_SKIP_AGENT_BIN_INSTALL: '1'
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      NODE_OPTIONS: '--max-old-space-size=8192'
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: true
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Verify pinned Apple toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          test "$(pod _1.17.0_ --version)" = '1.17.0'
+      - run: pnpm install --frozen-lockfile
+      - name: Check iOS publishing contracts
+        run: node --test scripts/__tests__/lex-ios-release.test.mjs
+      - name: Materialize public development manifest for Metro resolution
+        run: |
+          if [ ! -e config/endpoint.dev.json ]; then
+            cp config/endpoint.dev.json.example config/endpoint.dev.json
+          fi
+      - name: Build offline Release for iphoneos arm64 without signing credentials
+        run: node scripts/build-lex-ios.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mobile-ios-${{ inputs.version }}
+          path: |
+            dist/ios/Lex-${{ inputs.version }}-iOS-unsigned.ipa
+            dist/ios/Lex-${{ inputs.version }}-iOS-unsigned.update.json
+            dist/ios/build-info.json
+          if-no-files-found: error
+          retention-days: 14
