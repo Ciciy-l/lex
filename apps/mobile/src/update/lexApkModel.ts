@@ -54,7 +54,7 @@ export function parseLexApkManifest(value: unknown, channel: LexUpdateChannel): 
   return m;
 }
 
-export function lexApkNotes(manifest: LexApkManifest, locale: string): string {
+export function lexApkNotes(manifest: Pick<LexApkManifest, 'contentByLocale'>, locale: string): string {
   const content = manifest.contentByLocale[locale] ?? manifest.contentByLocale.en;
   return [content.intro, ...content.topics.map(topic => topic.title + '\n' + topic.text)].join('\n\n');
 }

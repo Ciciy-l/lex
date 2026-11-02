@@ -4747,8 +4747,27 @@ export async function updateServerProfile(
   };
 }
 
+let lexGuestStartupChecked = false;
+
+/** File absence does not require Keychain access. Never decrypt/probe a missing
+ * credential just to enter Lex's account-free workspace on a new Mac. Existing
+ * files, backups, permission errors and dangling links retain auth recovery. */
+function lexStartupHasNoCredentialFiles(): boolean {
+  for (const key of [AUTH_SESSION_KEY, AUTH_ACCOUNT_VAULT_KEY, LEGACY_RESOURCE_REFRESH_TOKEN_KEY,
+    LEGACY_ACCOUNT_REFRESH_TOKEN_KEY, LEGACY_REFRESH_TOKEN_KEY]) {
+    for (const suffix of ['.enc', '.enc.bak']) {
+      try { fs.lstatSync(path.join(SAFE_STORAGE_DIR(), key + suffix)); return false; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return false; }
+    }
+  }
+  return true;
+}
+
 export async function initialize(options: AuthInitializeOptions = {}): Promise<AuthState> {
   if (isOwnerChangeShellPending()) return snapshotLoggedOutAuthState(true);
+  const isLex = BRAND_IDENTITY.executableName === 'Lex';
+  const allowGuestDefault = !lexGuestStartupChecked;
+  lexGuestStartupChecked = true;
   // Local mode is a committed account-free session. It must win before any
   // persisted cloud refresh token is inspected or any auth network call runs.
   if (getActiveAppSession().mode === 'local') {
@@ -4844,6 +4863,11 @@ export async function initialize(options: AuthInitializeOptions = {}): Promise<A
     return finishColdStartSignedOut('cold-start-relogin-required');
   }
 
+  if (isLex && allowGuestDefault && !isPassiveSharedUserDataInstance() && lexStartupHasNoCredentialFiles()) {
+    await recoverAccountFreeOwnerAtStartup('local', 'cold-start-empty-lex-profile');
+    return snapshotAuthState();
+  }
+
   // Old Feishu-auth refresh tokens are intentionally not portable to auth-server.
   // 早期测试版曾持久化 account refresh token；该会话现已收窄为登录期内存态。
   //
@@ -4897,6 +4921,9 @@ export async function initialize(options: AuthInitializeOptions = {}): Promise<A
     ) {
       return finishColdStartSignedOut('cold-start-credential-absence-unconfirmed');
     }
+    // Explicit exit-local/logout followed by renderer initialization must keep
+    // the requested login page. The guest default applies at process startup.
+    if (isLex && !allowGuestDefault) return finishColdStartSignedOut('explicit-sign-in');
     // An account is optional. Establish the real account-free owner before
     // releasing startup, without granting cloud access or accepting consent.
     // Existing credentials and their recovery/error paths above stay intact.

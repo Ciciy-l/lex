@@ -6,6 +6,8 @@ import { IS_LEX_MOBILE, LEX_PRODUCT } from '@/config/lexMobile';
 import { getLoginLanguage } from '@/auth/loginMessages';
 import { ActionInfoRow, InfoRow, SettingsGroup, SettingsSwitchRow } from '@/session/SettingsGroupRows';
 import { lexApkNotes } from './lexApkModel';
+import { lexIosAvailable } from './lexIosUpdater';
+import { LexIosUpdateBridge, LexIosVersionSection } from './LexIosUpdate';
 import {
   cancelLexApk, checkLexApk, claimLexApkReminder, downloadLexApk, getLexApkState,
   hydrateLexApk, installLexApk, lexApkAvailable, openLexInstallPermission,
@@ -77,7 +79,7 @@ export function LexMobileUpdateBridge() {
       { text: t('update.lex.permissionAction'), onPress: () => { void openLexInstallPermission(); } },
     ]);
   }, [foreground, state.phase, state.target, t]);
-  return null;
+  return lexIosAvailable ? <LexIosUpdateBridge /> : null;
 }
 
 export function LexMobileInfoSection() {
@@ -89,7 +91,7 @@ export function LexMobileInfoSection() {
   const target = state.target;
   const open = (url: string) => { void Linking.openURL(url).catch(() => Alert.alert(t('update.lex.linkFailed'))); };
   return <>
-    <SettingsGroup title={t('settings.version.sectionTitle')} footer={lexApkAvailable ? t('update.lex.installHint') : undefined}>
+    {lexIosAvailable ? <LexIosVersionSection /> : <SettingsGroup title={t('settings.version.sectionTitle')} footer={lexApkAvailable ? t('update.lex.installHint') : undefined}>
       <InfoRow label={t('update.lex.appVersion')} value={APP_BINARY_VERSION} />
       {lexApkAvailable ? [
         <SettingsSwitchRow key="channel" accessibilityLabel={t('update.lex.beta')} label={t('update.lex.beta')}
@@ -109,7 +111,7 @@ export function LexMobileInfoSection() {
         state.phase === 'permission-required' ? <ActionInfoRow key="permission" accessibilityLabel={t('update.lex.permissionAction')}
           label={t('update.lex.permissionAction')} detail={t('update.lex.permissionHint')} onPress={() => { void openLexInstallPermission(); }} /> : null,
       ] : <InfoRow label={t('update.lex.manual')} value="" detail={t('update.lex.manualHint')} />}
-    </SettingsGroup>
+    </SettingsGroup>}
     <SettingsGroup title={t('update.lex.about')} footer={t('update.lex.attribution')}>
       {(['homepageUrl', 'supportUrl', 'downloadPageUrl'] as const).map(key => <ActionInfoRow key={key}
         accessibilityRole="link" accessibilityLabel={t('update.lex.' + key)} label={t('update.lex.' + key)}

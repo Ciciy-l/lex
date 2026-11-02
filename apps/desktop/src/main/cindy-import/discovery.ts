@@ -1,13 +1,12 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { readDesktopProcessIdentity, isReusedDesktopInstancePid } from '../desktopProcessIdentity';
+import { sourceDatabaseHolders } from './occupancy';
 import { importError, inside, localPath } from './snapshot';
 import type { CindyImportSource } from '../../shared/cindyImport';
 
 export interface Source extends CindyImportSource { root: string; file: string; owner: string; key: string }
-const execute = promisify(execFile);
 export const OFFICIAL_ROOTS = ['Cindy', 'CindyGlobal', 'xdt-maker'];
 export async function discoverSources(roots: string[], lexRoot: string): Promise<Source[]> {
   const excluded = await fs.realpath(lexRoot);
@@ -42,53 +41,42 @@ function profileHolderProcess(name: string): boolean {
   const executable = name.replaceAll(String.fromCharCode(92), '/').split('/').pop()?.toLowerCase();
   return recognizedCindyProcess(name) || ['electron', 'electron.exe', 'cindydev', 'cindydev.exe'].includes(executable ?? '');
 }
-async function readProcessName(pid: number): Promise<string | null> {
-  try {
-    if (process.platform === 'win32') {
-      const { stdout } = await execute('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-        'Get-Process -Id ' + String(pid) + ' -ErrorAction Stop | Select-Object -ExpandProperty ProcessName'],
-      { timeout: 5_000, maxBuffer: 4096, windowsHide: true });
-      return stdout.trim() || null;
-    }
-    const { stdout } = await execute('/bin/ps', ['-p', String(pid), '-o', 'comm='], { timeout: 5_000, maxBuffer: 4096 });
-    return stdout.trim() || null;
-  } catch { throw importError('sourceUnreadable'); }
-}
-/** Only executable names are inspected; command-line arguments may contain secrets. */
-export async function assertSourceStopped(root: string): Promise<void> {
-  const records = await fs.readdir(path.join(root, '.dev-instances')).catch((e) => {
-    if (e.code === 'ENOENT') return []; throw importError('sourceUnreadable');
+/** Read-only provenance under the selected profile, followed by exact file holders.
+ * A globally running Cindy using another profile is not evidence of occupancy. */
+export async function assertSourceStopped(root: string, file?: string): Promise<void> {
+  const records = await fs.readdir(path.join(root, '.dev-instances')).catch((error) => {
+    if (error.code === 'ENOENT') return []; throw importError('sourceUnreadable');
   });
+  const alive = (pid: number): boolean => {
+    if (!Number.isSafeInteger(pid) || pid <= 0 || pid === process.pid) return false;
+    try { process.kill(pid, 0); return true; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false; throw importError('sourceUnreadable'); }
+  };
   for (const name of records) {
     const match = /^(\d+)\.json(?:\.bak)?$/.exec(name);
-    if (!match) continue;
-    const pid = Number(match[1]);
-    try { process.kill(pid, 0); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') continue; }
-    const command = await readProcessName(pid);
-    if (command && profileHolderProcess(command)) throw importError('sourceRunning');
+    if (!match || !alive(Number(match[1]))) continue;
+    let record: { userDataDir?: string; startedAtMs?: number; processIdentity?: unknown; rootDir?: string };
+    try { record = JSON.parse(await fs.readFile(path.join(root, '.dev-instances', name), 'utf8')); }
+    catch { throw importError('sourceUnreadable'); }
+    if (!record || typeof record !== 'object') throw importError('sourceUnreadable');
+    if (typeof record.userDataDir !== 'string' || !record.userDataDir) continue; // Legacy/partial record: use exact file holders.
+    const recordedRoot = await fs.realpath(record.userDataDir).catch(() => null);
+    if (recordedRoot !== root) continue;
+    const identity = await readDesktopProcessIdentity(Number(match[1]));
+    if (!identity) { if (alive(Number(match[1]))) throw importError('sourceUnreadable'); continue; }
+    if (isReusedDesktopInstancePid(record, identity)
+      || (typeof record.startedAtMs === 'number' && identity.startedAtMs > record.startedAtMs + 2000)) continue;
+    if (profileHolderProcess(identity.executablePath)) throw importError('sourceRunning');
   }
-  const lock = await fs.readlink(path.join(root, 'SingletonLock')).catch((e) => {
-    if (e.code === 'ENOENT' || e.code === 'EINVAL') return ''; throw importError('sourceUnreadable');
-  });
-  const pid = /-(\d+)$/.exec(lock)?.[1];
-  if (pid) {
-    const lockPid = Number(pid);
-    let lockAlive = true;
-    try { process.kill(lockPid, 0); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') lockAlive = false; else throw importError('sourceUnreadable'); }
-    if (lockAlive) {
-      const command = await readProcessName(lockPid);
-      if (command && profileHolderProcess(command)) throw importError('sourceRunning');
+  // SingletonLock/WAL/SHM leftovers alone never establish a live instance.
+  if (file) {
+    const holders = (await sourceDatabaseHolders(file)).filter(pid => pid !== process.pid);
+    for (const pid of holders) {
+      const identity = await readDesktopProcessIdentity(pid);
+      if (identity && recognizedCindyProcess(identity.executablePath)) throw importError('sourceRunning');
     }
+    if (holders.length) throw importError('sourceBusy');
   }
-  let names: string;
-  try {
-    names = process.platform === 'win32'
-      ? (await execute('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-          "Get-Process | Where-Object { $_.ProcessName -in @('Cindy','CindyGlobal','xdt-maker') } | Select-Object -ExpandProperty ProcessName"],
-        { timeout: 10_000, maxBuffer: 64 * 1024, windowsHide: true })).stdout
-      : (await execute('/bin/ps', ['-axo', 'comm='], { timeout: 10_000, maxBuffer: 8 * 1024 * 1024 })).stdout;
-  } catch { throw importError('sourceUnreadable'); }
-  if (names.split(/\r?\n/).some((name) => recognizedCindyProcess(name.trim()))) throw importError('sourceRunning');
 }
 
 export async function databaseStamp(file: string): Promise<string> {

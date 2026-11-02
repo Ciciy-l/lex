@@ -26,6 +26,32 @@ beforeEach(() => {
   native.importSelected.mockResolvedValue({ inserted: 1, updated: 0 });
 });
 afterEach(cleanup);
+
+it.each(['sourceRunning', 'sourceBusy', 'sourceUnreadable'])('shows %s from automatic scan and recovers through explicit rescan', async (code) => {
+  api.scan.mockRejectedValueOnce(new Error('[SHARE_IMPORT_FAILED] ' + code));
+  render(<StrictMode><SessionImportSection /></StrictMode>);
+  await ready(); fireEvent.click(button('settings.sessionImport.filters.cindy'));
+  await screen.findByText('settings.cindyImport.errors.' + code);
+  expect(api.scan).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole('checkbox', { name: /Cindy task/ })).toBeNull();
+  expect(api.preview).not.toHaveBeenCalled(); expect(api.commit).not.toHaveBeenCalled();
+  fireEvent.click(button('settings.sessionImport.scan'));
+  await screen.findByRole('checkbox', { name: /Cindy task/ });
+  expect(screen.queryByRole('alert')).toBeNull(); expect(api.scan).toHaveBeenCalledTimes(2);
+});
+
+it('automatically scans a newly chosen source and never rescans merely for a filter change', async () => {
+  api.chooseSource.mockResolvedValue([{ id: 'chosen', label: 'Cindy', location: '/synthetic/chosen', accountIndex: 1 }]);
+  render(<SessionImportSection />); await scanCindy();
+  fireEvent.click(checkbox(/Cindy task/));
+  fireEvent.click(button('settings.sessionImport.filters.codex'));
+  fireEvent.click(button('settings.sessionImport.filters.cindy'));
+  expect(checkbox(/Cindy task/).checked).toBe(true); expect(api.scan).toHaveBeenCalledTimes(1);
+  fireEvent.click(button('settings.cindyImport.chooseSource'));
+  await waitFor(() => expect(api.scan).toHaveBeenLastCalledWith('chosen'));
+  await screen.findByRole('checkbox', { name: /Cindy task/ });
+  expect(checkbox(/Cindy task/).checked).toBe(false); expect(api.commit).not.toHaveBeenCalled();
+});
 function button(name: string) { return screen.getByRole('button', { name }) as HTMLButtonElement; }
 function checkbox(name: RegExp | string) { return screen.getByRole('checkbox', { name }) as HTMLInputElement; }
 async function ready() {
@@ -34,7 +60,7 @@ async function ready() {
 async function scanCindy() {
   await ready();
   fireEvent.click(button('settings.sessionImport.filters.cindy'));
-  fireEvent.click(button('settings.sessionImport.scan'));
+  if (screen.queryByRole('alert')) fireEvent.click(button('settings.sessionImport.scan'));
   await screen.findByRole('checkbox', { name: /Cindy task/ });
 }
 async function prepareCindy() {
@@ -43,7 +69,7 @@ async function prepareCindy() {
   fireEvent.click(button('settings.sessionImport.importSelected'));
   await screen.findByText('settings.cindyImport.historyOnly');
 }
-it('offers Cindy next to Codex and Claude Code, without a modal or automatic account scan', async () => {
+it('automatically loads Cindy records on tab entry once, retaining the snapshot across filters', async () => {
   const view = render(<StrictMode><SessionImportSection /></StrictMode>);
   await ready();
   const sources = screen.getByRole('group', { name: 'settings.sessionImport.filters.source' });
@@ -51,11 +77,25 @@ it('offers Cindy next to Codex and Claude Code, without a modal or automatic acc
   expect(api.discover).toHaveBeenCalledTimes(1); expect(native.scan).toHaveBeenCalledTimes(1);
   expect(api.scan).not.toHaveBeenCalled(); expect(api.cancel).not.toHaveBeenCalled();
   fireEvent.click(button('settings.sessionImport.filters.cindy'));
+  await screen.findByRole('checkbox', { name: /Cindy task/ });
+  expect(api.scan).toHaveBeenCalledExactlyOnceWith('source');
+  const summary = screen.getByText('settings.sessionImport.summary.total').parentElement!;
+  expect(within(summary).getByText('1')).toBeTruthy(); // Excludes the hidden native task.
   expect(screen.queryByRole('alertdialog')).toBeNull();
   fireEvent.click(button('settings.sessionImport.filters.codex'));
   expect(api.cancel).not.toHaveBeenCalled();
   view.unmount();
   await waitFor(() => expect(api.cancel).toHaveBeenCalledTimes(1));
+});
+it('does not show a generic empty result while a Cindy scan is pending', async () => {
+  let finish!: (value: unknown) => void;
+  api.scan.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+  render(<SessionImportSection />); await ready(); fireEvent.click(button('settings.sessionImport.filters.cindy'));
+  await waitFor(() => expect(api.scan).toHaveBeenCalledTimes(1));
+  expect(screen.queryByText('settings.sessionImport.noCandidates')).toBeNull();
+  expect(button('settings.sessionImport.scanning').disabled).toBe(true);
+  await act(async () => { finish({ scanId: 'scan', candidates: [candidate], excluded: 0 }); });
+  expect(checkbox(/Cindy task/)).toBeTruthy();
 });
 it('retains selections across source filters and includes Cindy in All and mixed imports', async () => {
   render(<SessionImportSection />); await ready();
@@ -110,13 +150,14 @@ it('invalidates Cindy selection on account changes, but keeps native selection',
   fireEvent.click(button('Cindy · settings.cindyImport.account 2'));
   expect(screen.queryByRole('checkbox', { name: /Cindy task/ })).toBeNull();
   expect(screen.getByText('settings.sessionImport.selected 1')).toBeTruthy();
-  fireEvent.click(button('settings.sessionImport.scan'));
   await waitFor(() => expect(api.scan).toHaveBeenLastCalledWith('second'));
+  await screen.findByRole('checkbox', { name: /Cindy task/ });
+  expect(checkbox(/Cindy task/).checked).toBe(false);
 });
 it('caps Cindy bulk selection at 100, skips imported rows, and can clear a capped selection', async () => {
   api.scan.mockResolvedValue({ scanId: 'scan', excluded: 0, candidates: Array.from({ length: 102 }, (_, i) => ({ ...candidate, id: String(i), title: 'Cindy task ' + i, imported: i === 101 })) });
   render(<SessionImportSection />); await ready(); fireEvent.click(button('settings.sessionImport.filters.cindy'));
-  fireEvent.click(button('settings.sessionImport.scan')); await screen.findByRole('checkbox', { name: /Cindy task 101/ });
+  await screen.findByRole('checkbox', { name: /Cindy task 101/ });
   const all = checkbox('settings.sessionImport.selectAll 101');
   fireEvent.click(all);
   expect(screen.getByText('settings.sessionImport.selected 100')).toBeTruthy();
@@ -127,12 +168,13 @@ it('ignores a late scan after cancel and can restart without leaving settings', 
   let finish!: (value: unknown) => void;
   api.scan.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
   render(<SessionImportSection />); await ready(); fireEvent.click(button('settings.sessionImport.filters.cindy'));
-  fireEvent.click(button('settings.sessionImport.scan'));
   fireEvent.click(await screen.findByRole('button', { name: 'settings.cindyImport.cancel' }));
   await act(async () => { finish({ scanId: 'late', candidates: [candidate], excluded: 0 }); });
   expect(screen.queryByRole('checkbox', { name: /Cindy task/ })).toBeNull();
+  api.scan.mockResolvedValue({ scanId: 'retry', candidates: [candidate], excluded: 0 });
   fireEvent.click(button('settings.cindyImport.restart'));
   await waitFor(() => expect(api.discover).toHaveBeenCalledTimes(2));
+  await screen.findByRole('checkbox', { name: /Cindy task/ });
 });
 it('keeps native-only imports on their existing direct path', async () => {
   render(<SessionImportSection />); await ready(); fireEvent.click(checkbox(/Native task/));

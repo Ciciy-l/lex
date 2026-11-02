@@ -60,6 +60,22 @@
       "STORAGE_UNAVAILABLE": "手機儲存空間不足或無法寫入，請釋放空間後重試。",
       "INVALID_METADATA": "更新清單無效，請稍後重試或查看 Lex 發行頁。",
       "NETWORK_OR_INSTALL_FAILED": "更新請求或系統安裝操作失敗，請檢查網路與安裝權限後重試。"
+    },
+    "ios": {
+      "download": "下載 IPA",
+      "help": "查看安裝說明",
+      "ignore": "忽略此版本",
+      "ignored": "已忽略此版本的自動提醒，仍可下載或手動檢查。",
+      "build": "組建編號：{{build}}",
+      "unpublished": "此通道尚未發布 iOS 更新清單。",
+      "incompatible": "此版本需要 iOS {{version}} 或更新版本，請先更新系統。",
+      "installHint": "IPA 未由發布者簽署，需要你自行簽署安裝。下載新版不會延長已安裝應用程式的簽署有效期；更換簽署身分可能影響本機資料。",
+      "errors": {
+        "CHECK_FAILED": "無法檢查更新，請檢查網路連線後重試。",
+        "INVALID_METADATA": "更新清單無效，請稍後重試或查看 Lex 發布頁面。",
+        "STORAGE_FAILED": "無法儲存更新偏好，請檢查可用儲存空間後重試。",
+        "LINK_FAILED": "無法開啟下載連結，請檢查瀏覽器設定後重試。"
+      }
     }
   }
 }

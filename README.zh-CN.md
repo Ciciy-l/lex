@@ -115,11 +115,12 @@ Cindy 服务区：
 | 源码基础与上游修复 | Cindy 开源项目 |
 
 Cindy 在线服务受其官方条款、区域可用性和支持政策约束。Lex 不运营这些服务，也不销售另一套
-订阅。发版流程现覆盖 **Lex Desktop 与 Lex Mobile Android**。可扫描
+订阅。发版流程覆盖 **Lex Desktop 与 Lex Mobile**。可扫描
 [移动端下载页](https://ciciy-l.github.io/lex/#mobile-download)的二维码查看已发布 APK。
 Android 需登录 Cindy 账号连接桌面设备，不在手机上本地运行桌面 Agent 引擎。
-Lex Mobile 使用独立包名，通过新 APK 升级，暂不启用 OTA。iOS 尚未开放安装，
-需要后续配置 TestFlight / App Store 分发。
+Lex Mobile 使用独立包名，暂不启用 OTA。Android 通过完整 APK 升级；iOS 提供未签名
+真机 IPA 与应用内更新检查，由用户自行签名安装。签名期限及数据保留限制见
+[iOS 安装说明](docs/lex-ios-distribution.md)。
 
 Lex 将沿自己的路线发展，按需引入上游安全、稳定性和兼容修复，已停用每周自动同步。
 

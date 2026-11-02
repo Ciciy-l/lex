@@ -8,7 +8,7 @@ import type { CindyImportSource, CindyImportScan, CindyImportPreview, CindyImpor
 
 // Owned by the import page, not by a source tab: filtering must not cancel work
 // or lose selections. Only leaving the page disposes the Main-side controller.
-export function useCindyImport() {
+export function useCindyImport(active = false) {
   const api = window.electronAPI.localDb.cindyImport;
   const [sources, setSources] = useState<CindyImportSource[]>([]);
   const [sourceId, setSourceId] = useState('');
@@ -23,6 +23,7 @@ export function useCindyImport() {
   const initialized = useRef(false);
   const inFlight = useRef(false);
   const canceled = useRef(false);
+  const attemptedSource = useRef('');
 
   function clearReview() {
     setPreview(undefined); setResults(undefined); setAllowIncomplete(false);
@@ -50,6 +51,7 @@ export function useCindyImport() {
   }
   const discover = () => perform(async () => {
     canceled.current = false;
+    attemptedSource.current = '';
     clearScan(); setSources([]); setSourceId('');
     const items = await api.discover();
     if (mounted.current && !canceled.current) {
@@ -66,10 +68,17 @@ export function useCindyImport() {
   }, []);
 
   const runScan = () => perform(async () => {
+    attemptedSource.current = sourceId;
     clearScan();
     const value = await api.scan(sourceId);
     if (mounted.current && !canceled.current) setScan(value);
   });
+  useEffect(() => {
+    // One attempt per selected source. Failures remain visible until the user
+    // retries; filter changes preserve the snapshot and selection handles.
+    if (active && sourceId && !busy && !needsRestart && !scan
+      && attemptedSource.current !== sourceId) void runScan();
+  }, [active, sourceId, busy, needsRestart, scan]);
   const chooseSource = () => perform(async () => {
     const items = await api.chooseSource();
     if (!mounted.current || canceled.current || !items.length) return;
@@ -110,7 +119,7 @@ export function useCindyImport() {
   return { sources, sourceId, scan, preview, results, busy, error, allowIncomplete, needsRestart,
     discover, runScan, chooseSource, prepare, chooseProject, commit, cancel, clearReview,
     setAllowIncomplete,
-    selectSource(id: string) { if (!inFlight.current) { clearScan(); setError(''); setSourceId(id); } },
+    selectSource(id: string) { if (!inFlight.current && id !== sourceId) { clearScan(); setError(''); setSourceId(id); } },
   };
 }
 

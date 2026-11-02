@@ -2,43 +2,56 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-const execute = vi.hoisted(() => vi.fn());
-vi.mock('node:child_process', () => ({ execFile: Object.assign(execute, {
-  [Symbol.for('nodejs.util.promisify.custom')]: (...args: unknown[]) => new Promise((resolve, reject) => {
-    execute(...args, (error: Error | null, stdout: string, stderr: string) => error ? reject(error) : resolve({ stdout, stderr }));
-  }),
-}) }));
+const probe = vi.hoisted(() => ({ identity: vi.fn(), holders: vi.fn() }));
+vi.mock('../../desktopProcessIdentity', async original => ({
+  ...await original<typeof import('../../desktopProcessIdentity')>(), readDesktopProcessIdentity: probe.identity,
+}));
+vi.mock('../occupancy', () => ({ sourceDatabaseHolders: probe.holders }));
 import { assertSourceStopped, discoverSources } from '../discovery';
 let root: string;
 beforeEach(async () => {
   root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'lex-cindy-discovery-')));
-  execute.mockReset().mockImplementation((_file, _args, _options, callback) => callback(null, '', ''));
+  probe.identity.mockReset().mockResolvedValue(null); probe.holders.mockReset().mockResolvedValue([]);
 });
 afterEach(async () => { vi.restoreAllMocks(); await fs.rm(root, { recursive: true, force: true }); });
-it('accepts a stopped source without touching SQLite or process arguments', async () => {
-  await expect(assertSourceStopped(root)).resolves.toBeUndefined();
-  expect(execute).toHaveBeenCalledTimes(1);
-  const args = execute.mock.calls[0][1] as string[];
-  expect(args.join(' ')).not.toMatch(/CommandLine|args=|command=/);
+it('accepts a stopped source and ignores residual WAL/SHM/lock files', async () => {
+  const file = path.join(root, 'cindy-owner.db');
+  for (const suffix of ['', '-wal', '-shm']) await fs.writeFile(file + suffix, 'synthetic residue');
+  await fs.writeFile(path.join(root, 'SingletonLock'), 'stale');
+  await expect(assertSourceStopped(root, file)).resolves.toBeUndefined();
+  expect(probe.holders).toHaveBeenCalledWith(file); expect(probe.identity).not.toHaveBeenCalled();
 });
-it('rejects a running release process independently of stale/missing locks', async () => {
-  execute.mockImplementation((_file, _args, _options, callback) => callback(null, 'Cindy', ''));
-  await expect(assertSourceStopped(root)).rejects.toMatchObject({ code: 'sourceRunning' });
+it('checks exact database holders without treating Lex or unrelated Cindy instances as the source', async () => {
+  probe.holders.mockResolvedValue([process.pid]);
+  await expect(assertSourceStopped(root, '/synthetic/db')).resolves.toBeUndefined();
+  probe.holders.mockResolvedValue([12345]);
+  probe.identity.mockResolvedValue({ executablePath: process.platform === 'win32' ? 'C:\\apps\\Cindy.exe' : '/Apps/Cindy.app/Contents/MacOS/Cindy', startedAtMs: 1000 });
+  await expect(assertSourceStopped(root, '/synthetic/db')).rejects.toMatchObject({ code: 'sourceRunning' });
+  probe.identity.mockResolvedValue({ executablePath: process.execPath, startedAtMs: 1000 });
+  await expect(assertSourceStopped(root, '/synthetic/db')).rejects.toMatchObject({ code: 'sourceBusy' });
+  probe.holders.mockResolvedValue([]);
+  await expect(assertSourceStopped(root, '/synthetic/db')).resolves.toBeUndefined();
 });
-it('detects a live Electron development instance registered in the source profile', async () => {
+it('uses the selected profile registry and ignores dead or copied records', async () => {
   await fs.mkdir(path.join(root, '.dev-instances'));
-  await fs.writeFile(path.join(root, '.dev-instances', '12345.json'), '{}');
+  const record = path.join(root, '.dev-instances', '12345.json');
+  await fs.writeFile(record, JSON.stringify({ userDataDir: root, startedAtMs: 1000 }));
   vi.spyOn(process, 'kill').mockReturnValue(true);
-  execute.mockImplementation((_file, _args, _options, callback) => callback(null, 'Electron', ''));
+  probe.identity.mockResolvedValue({ executablePath: process.platform === 'win32' ? 'C:\\apps\\electron.exe' : '/Apps/Electron.app/Contents/MacOS/Electron', startedAtMs: 1000 });
   await expect(assertSourceStopped(root)).rejects.toMatchObject({ code: 'sourceRunning' });
-});
-it('rejects unverifiable process state and ignores dead profile records', async () => {
-  execute.mockImplementationOnce((_file, _args, _options, callback) => callback(new Error('unavailable'), '', ''));
-  await expect(assertSourceStopped(root)).rejects.toMatchObject({ code: 'sourceUnreadable' });
-  await fs.mkdir(path.join(root, '.dev-instances'));
-  await fs.writeFile(path.join(root, '.dev-instances', '12345.json'), '{}');
-  vi.spyOn(process, 'kill').mockImplementation(() => { throw Object.assign(new Error('gone'), { code: 'ESRCH' }); });
+  await fs.writeFile(record, JSON.stringify({ userDataDir: path.join(root, 'other'), startedAtMs: 1000 }));
   await expect(assertSourceStopped(root)).resolves.toBeUndefined();
+  await fs.writeFile(record, JSON.stringify({ userDataDir: '', startedAtMs: 1000 }));
+  await expect(assertSourceStopped(root)).resolves.toBeUndefined();
+  await fs.writeFile(record, JSON.stringify({ userDataDir: root, startedAtMs: 1000 }));
+  probe.identity.mockResolvedValue({ executablePath: '/Apps/Electron.app/Contents/MacOS/Electron', startedAtMs: 10000 });
+  await expect(assertSourceStopped(root)).resolves.toBeUndefined();
+  vi.mocked(process.kill).mockImplementation(() => { throw Object.assign(new Error('gone'), { code: 'ESRCH' }); });
+  await expect(assertSourceStopped(root)).resolves.toBeUndefined();
+});
+it('does not mislabel process inspection or permission errors as a running source', async () => {
+  probe.holders.mockRejectedValue(Object.assign(new Error('unavailable'), { code: 'sourceUnreadable' }));
+  await expect(assertSourceStopped(root, '/synthetic/db')).rejects.toMatchObject({ code: 'sourceUnreadable' });
 });
 it('excludes source dev sandboxes and every Lex subdirectory', async () => {
   const lex = path.join(root, 'Lex'); await fs.mkdir(lex);

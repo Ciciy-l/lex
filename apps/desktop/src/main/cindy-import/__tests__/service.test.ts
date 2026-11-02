@@ -22,7 +22,7 @@ vi.mock('../../session-share/sessionShareExport', () => ({
 }));
 vi.mock('../../session-share/sessionShareImport', () => ({ inspectShareFile: async () => ({ draftId: 'draft' }), cancelShareDraft: () => undefined, commitShareImport: commit }));
 vi.mock('../discovery', async (original) => ({ ...await original<typeof import('../discovery')>(), assertSourceStopped: async () => { if (!state.stopped) throw Object.assign(new Error('sourceRunning'), { code: 'sourceRunning' }); } }));
-import { CindyImportService } from '../service';
+import { CindyImportService, errorCode } from '../service';
 let service: CindyImportService;
 let root: string;
 beforeEach(async () => {
@@ -50,6 +50,21 @@ async function prepare() {
   return service.run(() => service.preview(scan.scanId, scan.candidates.map((c) => c.id)));
 }
 async function directories() { return fs.readdir(path.join(state.lex, 'dialogues')).catch(() => []); }
+it('blocks automatic/manual scans while the source is running, then permits a fresh retry', async () => {
+  const [source] = await service.run(() => service.discover());
+  state.stopped = false;
+  await expect(service.run(() => service.scan(source.id))).rejects.toMatchObject({ code: 'sourceRunning' });
+  expect(dbClient.query).not.toHaveBeenCalled(); expect(commit).not.toHaveBeenCalled();
+  state.stopped = true;
+  expect((await service.run(() => service.scan(source.id))).candidates).toHaveLength(3);
+});
+it('distinguishes real busy errors from access, missing and schema failures', () => {
+  expect(errorCode({ code: 'EBUSY' })).toBe('sourceBusy');
+  expect(errorCode({ code: 'SQLITE_BUSY' })).toBe('sourceBusy');
+  expect(errorCode({ code: 'EACCES' })).toBe('sourceUnreadable');
+  expect(errorCode({ code: 'ENOENT' })).toBe('sourceMissing');
+  expect(errorCode({ code: 'schemaUnsupported' })).toBe('schemaUnsupported');
+});
 it('keeps earlier successes and cleans only a deterministically failed item in a batch', async () => {
   const preview = await prepare();
   state.outcomes = [null, new Error('failure'), null];

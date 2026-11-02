@@ -6101,8 +6101,8 @@
       "preview": "预检 {{count}} 个任务",
       "import": "导入副本",
       "errors": {
-        "sourceRunning": "Cindy 仍在运行。请退出后重新扫描。",
-        "sourceUnreadable": "无法读取来源或核验其运行状态。请检查权限、退出 Cindy 后重新扫描。",
+        "sourceRunning": "Cindy 正在使用所选来源，请先退出 Cindy，再重新扫描。",
+        "sourceUnreadable": "无法读取来源或核验其运行状态，请检查目录权限后重新扫描。",
         "sourceMissing": "来源已不可用，请重新选择。",
         "sourceChanged": "来源数据已变化。请保持 Cindy 关闭并重新扫描。",
         "schemaUnsupported": "暂不支持此数据库结构。请更新 {{appName}}，或使用 Cindy 分享文件导入。",
@@ -6121,7 +6121,8 @@
         "confirmationRequired": "请先选择必要的目录，并确认缺失项。",
         "alreadyImported": "此 {{appName}} 账号中已存在该任务副本。",
         "importFailed": "导入失败。请检查来源及本地模型设置，重新打开导入入口后重试。",
-        "diskFull": "可用磁盘空间不足，无法安全准备导入。请释放空间后重试。"
+        "diskFull": "可用磁盘空间不足，无法安全准备导入。请释放空间后重试。",
+        "sourceBusy": "来源数据库正在被占用。请退出使用它的应用，再重新扫描。"
       },
       "results": {
         "imported": "已导入",
@@ -6131,7 +6132,7 @@
       },
       "account": "账号 {{count}}",
       "restart": "重新选择来源",
-      "scanHint": "点击“扫描”读取所选 Cindy 账号。",
+      "scanHint": "来源就绪后会自动扫描；退出 Cindy 后可点击“扫描”重试。",
       "alsoImportNative": "确认后还会导入已勾选的 {{count}} 个 Codex / Claude Code 任务。",
       "backToList": "返回列表"
     }

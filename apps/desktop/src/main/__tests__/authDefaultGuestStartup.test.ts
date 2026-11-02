@@ -15,6 +15,7 @@ const names = new Set([
   'readPersistedAuthSession', 'reconcileDesktopActiveAuthSession',
   'writePersistedAuthSession', 'writePersistedAuthSessionOrThrow',
   'recoverAccountFreeOwnerAtStartup', 'finishColdStartSignedOut',
+  'lexStartupHasNoCredentialFiles',
 ]);
 const functions = ast.statements.filter(node => ts.isFunctionDeclaration(node)
   && node.name && names.has(node.name.text)).map(node => node.getText(ast).replace(/^export /, ''));
@@ -36,6 +37,7 @@ interface Faults {
 }
 const SESSION = 'fixture-auth-session-v1';
 const LEGACY = 'fixture-legacy-resource';
+const VAULT = 'fixture-vault';
 const FAKE_TOKEN = 'synthetic-token-never-valid';
 const tempDirectories: string[] = [];
 
@@ -55,7 +57,7 @@ afterEach(() => {
   }
 });
 
-function harness(root: string, faults: Faults = {}, options: { passive?: boolean; ownerPending?: boolean } = {}) {
+function harness(root: string, faults: Faults = {}, options: { passive?: boolean; ownerPending?: boolean; brand?: string } = {}) {
   const safeDir = path.join(root, 'safe-storage');
   const sessionFile = path.join(root, 'synthetic-app-session.json');
   let mode: Mode = fs.existsSync(sessionFile)
@@ -71,6 +73,10 @@ function harness(root: string, faults: Faults = {}, options: { passive?: boolean
   const unavailable = () => Object.assign(new Error('Synthetic credential access unavailable'), { code: 'EACCES' });
   const io = {
     constants: fs.constants,
+    lstatSync: (file: string) => {
+      if (faults.access && isFaultFile(file)) throw unavailable();
+      return fs.lstatSync(file);
+    },
     existsSync: (file: string) => !(faults.access && isFaultFile(file)) && fs.existsSync(file),
     accessSync: (file: string, access: number) => {
       if (faults.access && isFaultFile(file)) throw unavailable();
@@ -81,10 +87,10 @@ function harness(root: string, faults: Faults = {}, options: { passive?: boolean
       return fs.readFileSync(file, encoding);
     },
     mkdirSync: fs.mkdirSync,
-    writeFileSync: (file: string, data: string, encoding: BufferEncoding) => {
+    writeFileSync: vi.fn((file: string, data: string, encoding: BufferEncoding) => {
       if (faults.migrationWrite && file === fileOf(SESSION)) throw unavailable();
       fs.writeFileSync(file, data, encoding);
-    },
+    }),
   };
   const safeStorage = {
     isEncryptionAvailable: vi.fn(() => !faults.encryption),
@@ -94,7 +100,12 @@ function harness(root: string, faults: Faults = {}, options: { passive?: boolean
       return value.toString('utf8');
     }),
   };
-  const recoverOwner = vi.fn(async ({ nextMode }: { nextMode: Mode }) => commit(nextMode));
+  // Match withAccountFreeOwnerCommit's passive branch: the owner recovery is
+  // valid, but commits only this process's volatile signed-out state.
+  const recoverOwner = vi.fn(async ({ nextMode }: { nextMode: Mode }) => {
+    if (options.passive) mode = nextMode;
+    else commit(nextMode);
+  });
   const refresh = vi.fn(async (_token: string, _realm: string) => {
     commit('cloud');
     return snapshot();
@@ -104,7 +115,8 @@ function harness(root: string, faults: Faults = {}, options: { passive?: boolean
   const dependencies = {
     fs: io, path, Buffer, safeStorage, AuthApiError, storedAuthServiceScope, parseAuthSessionRecord, serializeAuthSessionRecord,
     SAFE_STORAGE_DIR: () => safeDir,
-    AUTH_SESSION_KEY: SESSION, LEGACY_RESOURCE_REFRESH_TOKEN_KEY: LEGACY,
+    AUTH_SESSION_KEY: SESSION, LEGACY_RESOURCE_REFRESH_TOKEN_KEY: LEGACY, AUTH_ACCOUNT_VAULT_KEY: VAULT,
+    BRAND_IDENTITY: { executableName: options.brand ?? 'Lex' },
     LEGACY_ACCOUNT_REFRESH_TOKEN_KEY: 'fixture-old-account', LEGACY_REFRESH_TOKEN_KEY: 'fixture-old-feishu',
     AUTH_REGION: 'global', activeAuthRealm: 'global', LOCAL_DATA_OWNER_ID: 'local-v1',
     COLD_START_AUTH_GATE_TIMEOUT_MS: 100,
@@ -118,7 +130,7 @@ function harness(root: string, faults: Faults = {}, options: { passive?: boolean
     snapshotAuthState: snapshot,
     snapshotLoggedOutAuthState: (pending = false) => ({ mode, isAuthenticated: false, ownerBoundaryPending: pending }),
     readReloginFlag: () => null,
-    removeSafe: (key: string) => { if (fs.existsSync(fileOf(key))) fs.unlinkSync(fileOf(key)); },
+    removeSafe: vi.fn((key: string) => { if (fs.existsSync(fileOf(key))) fs.unlinkSync(fileOf(key)); }),
     withCrossProcessLock: async (_file: string, _options: unknown, run: (status: { held: boolean }) => unknown) => run({ held: true }),
     authAccountVaultLockPath: () => path.join(root, 'synthetic-vault.lock'),
     readAuthAccountVault: () => {
@@ -134,9 +146,11 @@ function harness(root: string, faults: Faults = {}, options: { passive?: boolean
     'const {' + Object.keys(dependencies).join(',') + '} = deps;'
     + 'let accessToken=null,currentUser=null,lastAcceptedRefreshToken=null,pendingAccountToken=null;'
     + 'let passiveLocalSignOut=false,foreignDeviceLocalSignOut=false,coldStartAuthInFlight=null;'
+    + 'let lexGuestStartupChecked=false;'
     + compiled + '\nreturn initialize;') as (deps: typeof dependencies) => () => Promise<StartupSnapshot>;
   return {
     initialize: createInitialize(dependencies), recoverOwner, refresh, loadEndpoints, safeStorage, mirror,
+    writeCredential: io.writeFileSync, removeCredential: dependencies.removeSafe,
     savedMode: () => JSON.parse(fs.readFileSync(sessionFile, 'utf8')).mode as Mode,
     put: (key: string, value: string) => {
       fs.mkdirSync(safeDir, { recursive: true });
@@ -206,6 +220,7 @@ describe('default guest startup requires confirmed credential absence', () => {
 
   it('retains recovery when encryption is unavailable or a session is malformed', async () => {
     const unavailable = harness(directory(), { encryption: true });
+    unavailable.put(SESSION, serializeAuthSessionRecord('global', FAKE_TOKEN));
     expect((await unavailable.initialize()).mode).toBe('signed-out');
     expect(unavailable.savedMode()).toBe('signed-out');
     const malformed = harness(directory());
@@ -247,8 +262,61 @@ describe('default guest startup requires confirmed credential absence', () => {
     expect(await pending.initialize()).toMatchObject({ mode: 'signed-out', ownerBoundaryPending: true });
     expect(pending.recoverOwner).not.toHaveBeenCalled();
     const unavailable = harness(directory(), { vault: true });
+    unavailable.put(VAULT, 'synthetic-unreadable-vault');
     expect((await unavailable.initialize()).mode).toBe('signed-out');
     expect(unavailable.savedMode()).toBe('signed-out');
     expect(unavailable.refresh).not.toHaveBeenCalled();
+  });
+
+  it('opens a fresh Mac profile without consulting an unavailable Keychain and restores local mode on restart', async () => {
+    const root = directory();
+    const runtime = harness(root, { encryption: true });
+    expect((await runtime.initialize()).mode).toBe('local');
+    expect(runtime.safeStorage.isEncryptionAvailable).not.toHaveBeenCalled();
+    expect(runtime.refresh).not.toHaveBeenCalled();
+    expect((await harness(root, { encryption: true }).initialize()).mode).toBe('local');
+  });
+
+  it('preserves explicit login navigation after local startup without faking authentication', async () => {
+    const runtime = harness(directory());
+    expect((await runtime.initialize()).mode).toBe('local');
+    runtime.commit('signed-out');
+    expect(await runtime.initialize()).toMatchObject({ mode: 'signed-out', isAuthenticated: false });
+  });
+
+  it('does not apply the Lex Keychain-free startup policy to Cindy', async () => {
+    const runtime = harness(directory(), { encryption: true }, { brand: 'Cindy' });
+    expect((await runtime.initialize()).mode).toBe('signed-out');
+  });
+
+  it.each([false, true])('keeps passive signed-out recovery volatile and preserves credentials (files present: %s)', async (present) => {
+    const root = directory();
+    const runtime = harness(root, { encryption: true }, { passive: true });
+    const keys = [SESSION, LEGACY, VAULT, 'fixture-old-account', 'fixture-old-feishu'];
+    if (present) for (const key of keys) runtime.put(key, key === SESSION ? serializeAuthSessionRecord('global', FAKE_TOKEN) : FAKE_TOKEN);
+    const before = keys.map(key => present ? runtime.bytes(key) : null);
+    expect((await runtime.initialize()).mode).toBe('signed-out');
+    expect(runtime.recoverOwner).toHaveBeenCalledExactlyOnceWith({
+      nextMode: 'signed-out', reason: 'cold-start-credential-absence-unconfirmed',
+      preservePersistedRefreshToken: true, notify: false, clearOnFailure: true,
+    });
+    expect(runtime.writeCredential).not.toHaveBeenCalled();
+    expect(runtime.removeCredential).not.toHaveBeenCalled();
+    expect(runtime.refresh).not.toHaveBeenCalled();
+    expect(runtime.mirror).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(root, 'synthetic-app-session.json'))).toBe(false);
+    for (const [index, key] of keys.entries()) {
+      expect(runtime.has(key)).toBe(present);
+      if (present) expect(runtime.bytes(key)).toEqual(before[index]);
+    }
+  });
+
+  it('does not mistake a recoverable vault backup for an empty profile', async () => {
+    const root = directory();
+    const runtime = harness(root, { encryption: true, vault: true });
+    const vaultFile = path.join(root, 'safe-storage', VAULT + '.enc.bak');
+    fs.mkdirSync(path.dirname(vaultFile), { recursive: true }); fs.writeFileSync(vaultFile, 'synthetic-backup');
+    expect((await runtime.initialize()).mode).toBe('signed-out');
+    expect(fs.readFileSync(vaultFile, 'utf8')).toBe('synthetic-backup');
   });
 });

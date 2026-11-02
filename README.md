@@ -139,8 +139,9 @@ and service region used on your computer. Lex Mobile keeps its own package and s
 identity. Builds with the APK updater check Lex Releases automatically; download is
 manual and Android confirms installation. The first updater-enabled APK must be
 installed manually once. RC/stable channels are independent of the login region;
-EAS/self-host JS OTA stays disabled. iOS is not available yet; it needs a
-TestFlight/App Store channel.
+EAS/self-host JS OTA stays disabled. iOS releases include an unsigned device IPA
+and in-app update checks; users sign and install the IPA themselves. See the
+[iOS installation guide](docs/lex-ios-distribution.md) for signing, expiry and data-retention limits.
 
 Lex follows its own roadmap. Upstream security and compatibility fixes are adopted
 selectively; weekly automatic upstream synchronization is disabled.

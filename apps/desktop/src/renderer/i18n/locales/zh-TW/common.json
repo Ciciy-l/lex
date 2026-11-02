@@ -6101,8 +6101,8 @@
       "preview": "預檢 {{count}} 個任務",
       "import": "匯入副本",
       "errors": {
-        "sourceRunning": "Cindy 仍在執行。請退出後重新掃描。",
-        "sourceUnreadable": "無法讀取來源或核驗執行狀態。請檢查權限、退出 Cindy 後重新掃描。",
+        "sourceRunning": "Cindy 正在使用所選來源，請先退出 Cindy，再重新掃描。",
+        "sourceUnreadable": "無法讀取來源或確認其執行狀態，請檢查目錄權限後重新掃描。",
         "sourceMissing": "來源已不可用，請重新選擇。",
         "sourceChanged": "來源資料已變更。請保持 Cindy 關閉並重新掃描。",
         "schemaUnsupported": "暫不支援此資料庫結構。請更新 {{appName}}，或使用 Cindy 分享檔案匯入。",
@@ -6121,7 +6121,8 @@
         "confirmationRequired": "請先選擇必要目錄，並確認缺失項目。",
         "alreadyImported": "此 {{appName}} 帳號中已存在該任務副本。",
         "importFailed": "匯入失敗。請檢查來源及本機模型設定，重新開啟匯入入口後重試。",
-        "diskFull": "可用磁碟空間不足，無法安全準備匯入。請釋放空間後重試。"
+        "diskFull": "可用磁碟空間不足，無法安全準備匯入。請釋放空間後重試。",
+        "sourceBusy": "來源資料庫正在被占用。請退出使用它的應用程式，再重新掃描。"
       },
       "results": {
         "imported": "已匯入",
@@ -6131,7 +6132,7 @@
       },
       "account": "帳號 {{count}}",
       "restart": "重新選擇來源",
-      "scanHint": "點選「掃描」讀取所選 Cindy 帳號。",
+      "scanHint": "來源就緒後會自動掃描；退出 Cindy 後可按「掃描」重試。",
       "alsoImportNative": "確認後還會匯入已勾選的 {{count}} 個 Codex / Claude Code 任務。",
       "backToList": "返回清單"
     }
