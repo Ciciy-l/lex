@@ -1,137 +1,137 @@
 {
   "schemaVersion": 1,
-  "version": "0.1.14",
-  "versionCode": 1001499,
+  "version": "0.1.15",
+  "versionCode": 1001599,
   "packageName": "io.github.ciciyl.lex",
-  "size": 129591550,
-  "sha256": "34f72532dbefbbc95893cb51ecdd89fea9049dbabf115b6a734582d779b7aac7",
+  "size": 129625390,
+  "sha256": "17327d1b96c9ab63fba65a585be350e5e8e982022d073c0f24df80799fc8e888",
   "certificateSha256": "86261bb1fea32e9122a7934f5f62d3b100c2248e032d148837ea997ce0b33a14",
   "platform": "android",
-  "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.14/Lex-0.1.14-Android.apk",
-  "releaseUrl": "https://github.com/Ciciy-l/lex/releases/tag/v0.1.14",
+  "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.15/Lex-0.1.15-Android.apk",
+  "releaseUrl": "https://github.com/Ciciy-l/lex/releases/tag/v0.1.15",
   "contentByLocale": {
     "zh-CN": {
-      "intro": "Lex 0.1.14 新增 Cindy 任务导入，让模型选择与 Fast 开关更顺手。",
+      "intro": "Lex 0.1.15 新增 iOS 未签名 IPA 与更新提醒，并改善 Mac 启动和 Cindy 任务导入。",
       "topics": [
         {
+          "id": "ios",
+          "title": "iOS 下载与更新",
+          "text": "发行页提供未签名 iPhone IPA。Lex iOS 可在启动、回到前台或设置中检查新版本，支持正式版与预发布版、忽略版本及最低系统提示。下载后需自行签名安装；下载新版不会续签手机上已安装的 App，签名工具兼容性和 Apple 能力以实际环境为准。"
+        },
+        {
+          "id": "startup",
+          "title": "Mac 默认进入主界面",
+          "text": "没有登录凭据的 Lex Mac 首次启动可直接进入本地工作界面，不再因钥匙串暂不可用停在登录页。已有账号仍按原流程恢复，用户可主动登录；需要账号的服务继续要求认证。"
+        },
+        {
           "id": "import",
-          "title": "导入 Cindy 的常规任务",
-          "text": "桌面端任务导入新增与 Codex、Claude Code 并列的 Cindy 来源，支持分组、勾选与批量导入。仅导入常规任务，自动排除伙伴及伙伴群聊相关记录。请先退出源 Cindy，再扫描并预检；导入会创建独立副本，不修改源数据。缺失的历史或附件会在确认前提示，原有登录凭证不会导入。"
-        },
-        {
-          "id": "layout",
-          "title": "模型名称充分利用可用空间",
-          "text": "修复 GUI 输入框下方模型名称过早折叠的问题：空间足够时显示更多名称，仅在工具栏拥挤时截断。"
-        },
-        {
-          "id": "fast",
-          "title": "一键切换 Fast",
-          "text": "桌面和移动端在模型选择右侧新增闪电开关，无需展开模型配置。开关与模型配置同步，按当前引擎和模型能力显示；实际速度、可用性及计费由供应商决定。"
+          "title": "Cindy 导入自动显示任务",
+          "text": "进入 Cindy 导入标签页并选好有效来源后，自动加载可筛选的任务列表。来源 Cindy 正在运行或数据库被占用时会提示先退出，再点击扫描重试。导入仍需勾选并确认，仅创建独立副本，不修改源数据。"
         },
         {
           "id": "upgrade",
-          "title": "升级须知",
-          "text": "Android 请使用完整 APK 覆盖安装，不要先卸载。桌面安装包实际签名与公证状态以发行页为准；暂不提供 iOS 安装包。"
+          "title": "安装须知",
+          "text": "Android 使用完整 APK 覆盖安装，不要先卸载。iOS 签名到期独立于版本更新；更换签名身份、bundle ID 或卸载可能影响数据，请先备份。暂不提供自动安装、自动续签或 TestFlight/App Store 渠道。桌面签名与公证状态以发行页为准。"
         }
       ]
     },
     "zh-TW": {
-      "intro": "Lex 0.1.14 新增 Cindy 任務匯入，讓模型選擇與 Fast 開關更順手。",
+      "intro": "Lex 0.1.15 新增 iOS 未簽章 IPA 與更新提醒，並改善 Mac 啟動和 Cindy 任務匯入。",
       "topics": [
         {
+          "id": "ios",
+          "title": "iOS 下載與更新",
+          "text": "發行頁提供未簽章 iPhone IPA。Lex iOS 可在啟動、回到前景或設定中檢查新版，支援正式版與預發布版、忽略版本及最低系統提示。下載後須自行簽章安裝；下載新版不會續簽手機上已安裝的 App，工具相容性和 Apple 能力以實際環境為準。"
+        },
+        {
+          "id": "startup",
+          "title": "Mac 預設進入主畫面",
+          "text": "沒有登入憑證的 Lex Mac 首次啟動可直接進入本機工作畫面，不再因鑰匙圈暫時不可用停在登入頁。既有帳號仍依原流程恢復，使用者可主動登入；需要帳號的服務仍須驗證。"
+        },
+        {
           "id": "import",
-          "title": "匯入 Cindy 的一般任務",
-          "text": "桌面版任務匯入新增與 Codex、Claude Code 並列的 Cindy 來源，支援分組、勾選與批次匯入。僅匯入一般任務，自動排除夥伴及夥伴群聊相關記錄。請先結束來源 Cindy，再掃描並預檢；匯入會建立獨立副本，不修改來源資料。缺少的歷史或附件會在確認前提示，原有登入憑證不會匯入。"
-        },
-        {
-          "id": "layout",
-          "title": "模型名稱充分利用可用空間",
-          "text": "修正 GUI 輸入框下方模型名稱過早摺疊的問題：空間足夠時顯示更多名稱，僅在工具列擁擠時截斷。"
-        },
-        {
-          "id": "fast",
-          "title": "一鍵切換 Fast",
-          "text": "桌面與行動版在模型選擇右側新增閃電開關，無須展開模型設定。開關與模型設定同步，依目前引擎和模型能力顯示；實際速度、可用性及計費由供應商決定。"
+          "title": "Cindy 匯入自動顯示任務",
+          "text": "進入 Cindy 匯入分頁並選好有效來源後，自動載入可篩選的任務清單。來源 Cindy 正在執行或資料庫被占用時，會提示先結束程式，再點選掃描重試。匯入仍須勾選並確認，只建立獨立副本，不修改來源資料。"
         },
         {
           "id": "upgrade",
-          "title": "升級須知",
-          "text": "Android 請使用完整 APK 覆蓋安裝，請勿先解除安裝。桌面安裝包實際簽章與公證狀態以發行頁為準；暫不提供 iOS 安裝包。"
+          "title": "安裝須知",
+          "text": "Android 請使用完整 APK 覆蓋安裝，不要先解除安裝。iOS 簽章到期與版本更新無關；更換簽章身分、bundle ID 或解除安裝可能影響資料，請先備份。暫不提供自動安裝、自動續簽或 TestFlight/App Store 管道。桌面簽章與公證狀態以發行頁為準。"
         }
       ]
     },
     "en": {
-      "intro": "Lex 0.1.14 adds Cindy task import and easier model and Fast controls.",
+      "intro": "Lex 0.1.15 adds unsigned iOS IPA downloads and update checks, and improves Mac startup and Cindy task import.",
       "topics": [
         {
+          "id": "ios",
+          "title": "iOS downloads and update checks",
+          "text": "Releases now include an unsigned iPhone IPA. Lex iOS checks at startup, on returning to the foreground, or manually in Settings, with stable/prerelease channels, ignored versions and minimum-system guidance. You must sign and install the download yourself. Downloading a new version does not renew the installed app’s signature; signing-tool compatibility and Apple capabilities depend on your setup."
+        },
+        {
+          "id": "startup",
+          "title": "Mac opens the workspace by default",
+          "text": "A Lex Mac profile without login credentials can open the local workspace on first launch, even when Keychain is temporarily unavailable. Saved accounts retain their recovery flow, explicit sign-in stays available, and account-backed services still require authentication."
+        },
+        {
           "id": "import",
-          "title": "Import regular Cindy tasks",
-          "text": "Desktop task import now lists Cindy alongside Codex and Claude Code, with grouping, selection and batch import. Only regular tasks are included; companion and companion-group records are excluded. Quit the source Cindy app before scanning and reviewing. Imports create independent copies without changing the source. Missing history or attachments are shown before confirmation; login credentials are not imported."
-        },
-        {
-          "id": "layout",
-          "title": "More room for model names",
-          "text": "Fixed premature model-name truncation below the GUI input box. Names now use the available space and shorten only when the toolbar is crowded."
-        },
-        {
-          "id": "fast",
-          "title": "Switch Fast with one tap",
-          "text": "Desktop and mobile now have a lightning switch to the right of model selection, without opening model settings. It shares the same preference and appears according to the current engine and model capabilities. Actual speed, availability and pricing depend on the provider."
+          "title": "Cindy import loads tasks automatically",
+          "text": "Opening the Cindy import tab with a valid source automatically loads the filterable task list. If the source Cindy instance is running or its database is in use, the page asks you to quit it and scan again. Import still requires selection and confirmation, creates independent copies, and leaves the source unchanged."
         },
         {
           "id": "upgrade",
-          "title": "Upgrading",
-          "text": "On Android, install the full APK over the existing app without uninstalling first. See the release page for desktop signing and notarization status. No iOS installation package is available yet."
+          "title": "Installation notes",
+          "text": "On Android, install the full APK over the existing app without uninstalling. iOS signature expiry is separate from version updates. Changing signing identity or bundle ID, or uninstalling, can affect data: back up first. There is no automatic installation, automatic re-signing or TestFlight/App Store channel. See the release page for desktop signing and notarization status."
         }
       ]
     },
     "ja": {
-      "intro": "Lex 0.1.14 では Cindy のタスク取り込みを追加し、モデル選択と Fast の操作を改善しました。",
+      "intro": "Lex 0.1.15 は未署名の iOS IPA と更新確認を追加し、Mac の起動と Cindy タスクの取り込みを改善します。",
       "topics": [
         {
+          "id": "ios",
+          "title": "iOS のダウンロードと更新確認",
+          "text": "リリースページで未署名の iPhone IPA を提供します。Lex iOS は起動時、前面に戻ったとき、設定での手動操作で更新を確認します。安定版・プレリリースの選択、バージョンの無視、必要な iOS の案内に対応します。署名とインストールは利用者自身で行ってください。新しい版のダウンロードはインストール済みアプリの署名を延長しません。署名ツールとの互換性と Apple の機能は環境に依存します。"
+        },
+        {
+          "id": "startup",
+          "title": "Mac は最初に作業画面を表示",
+          "text": "ログイン認証情報がない Lex Mac は、キーチェーンが一時的に利用できなくても初回起動でローカルの作業画面に進めます。保存済みアカウントの復元手順と任意のログインは維持され、アカウントが必要なサービスでは引き続き認証が必要です。"
+        },
+        {
           "id": "import",
-          "title": "Cindy の通常タスクを取り込む",
-          "text": "デスクトップのタスク取り込みで、Codex、Claude Code と並んで Cindy を選べます。グループ表示、複数選択、一括取り込みに対応します。通常タスクのみを対象とし、パートナーやパートナーグループの記録は除外します。取り込み元の Cindy を終了してからスキャンし、内容を確認してください。元データを変更せず独立したコピーを作成します。履歴や添付ファイルの不足は確定前に表示され、ログイン認証情報は取り込みません。"
-        },
-        {
-          "id": "layout",
-          "title": "モデル名の表示領域を改善",
-          "text": "GUI 入力欄の下でモデル名が早く省略される問題を修正しました。利用可能な幅を使い、ツールバーが狭い場合のみ省略します。"
-        },
-        {
-          "id": "fast",
-          "title": "Fast をワンタップで切り替え",
-          "text": "デスクトップとモバイルのモデル選択の右側に稲妻スイッチを追加しました。モデル設定を開かずに切り替えられ、設定画面と同じ状態を使用します。現在のエンジンとモデルの対応状況に応じて表示されます。実際の速度、利用可否、料金はプロバイダーによって異なります。"
+          "title": "Cindy のタスクを自動で表示",
+          "text": "有効な取り込み元を選んで Cindy タブを開くと、絞り込み可能なタスク一覧を自動で読み込みます。取り込み元の Cindy が起動中、またはデータベースが使用中の場合は、終了してから再スキャンするよう案内します。取り込みには選択と確認が必要で、元データを変更せず独立したコピーを作成します。"
         },
         {
           "id": "upgrade",
-          "title": "更新について",
-          "text": "Android はアンインストールせず、完全版 APK を上書きインストールしてください。デスクトップの署名と公証の状況はリリースページを確認してください。iOS インストールパッケージはまだ提供していません。"
+          "title": "インストールについて",
+          "text": "Android はアンインストールせず完全版 APK を上書きしてください。iOS の署名期限はバージョン更新とは別です。署名の身元や bundle ID の変更、アンインストールはデータに影響する可能性があるため、先にバックアップしてください。自動インストール、自動再署名、TestFlight/App Store 配布は提供しません。デスクトップの署名と公証はリリースページを確認してください。"
         }
       ]
     },
     "ko": {
-      "intro": "Lex 0.1.14는 Cindy 작업 가져오기를 추가하고 모델 선택 및 Fast 조작을 개선합니다.",
+      "intro": "Lex 0.1.15는 서명되지 않은 iOS IPA와 업데이트 확인을 추가하고 Mac 시작 및 Cindy 작업 가져오기를 개선합니다.",
       "topics": [
         {
+          "id": "ios",
+          "title": "iOS 다운로드와 업데이트 확인",
+          "text": "릴리스 페이지에서 서명되지 않은 iPhone IPA를 제공합니다. Lex iOS는 시작할 때, 다시 포그라운드로 돌아올 때 또는 설정의 수동 확인으로 새 버전을 찾습니다. 안정판·사전 출시 채널, 버전 무시, 최소 시스템 안내를 지원합니다. 사용자가 직접 서명하고 설치해야 합니다. 새 버전을 다운로드해도 설치된 앱의 서명이 갱신되지는 않으며, 서명 도구 호환성과 Apple 기능은 환경에 따라 달라집니다."
+        },
+        {
+          "id": "startup",
+          "title": "Mac에서 작업 화면으로 바로 시작",
+          "text": "로그인 자격 증명이 없는 Lex Mac은 키체인을 일시적으로 사용할 수 없어도 처음 시작할 때 로컬 작업 화면으로 들어갑니다. 저장된 계정 복원과 직접 로그인은 유지되며 계정이 필요한 서비스는 계속 인증을 요구합니다."
+        },
+        {
           "id": "import",
-          "title": "Cindy 일반 작업 가져오기",
-          "text": "데스크톱 작업 가져오기에서 Codex, Claude Code와 함께 Cindy를 선택할 수 있습니다. 그룹 표시, 선택 및 일괄 가져오기를 지원합니다. 일반 작업만 가져오며 파트너와 파트너 그룹 기록은 제외합니다. 원본 Cindy를 종료한 후 스캔하고 내용을 확인하세요. 원본을 변경하지 않고 독립된 사본을 만듭니다. 누락된 기록이나 첨부 파일은 확인 전에 표시되며 로그인 자격 증명은 가져오지 않습니다."
-        },
-        {
-          "id": "layout",
-          "title": "모델 이름 표시 공간 개선",
-          "text": "GUI 입력창 아래에서 모델 이름이 너무 일찍 줄어드는 문제를 수정했습니다. 사용 가능한 공간을 활용하고 도구 모음이 좁을 때만 이름을 줄입니다."
-        },
-        {
-          "id": "fast",
-          "title": "한 번에 Fast 전환",
-          "text": "데스크톱과 모바일의 모델 선택 오른쪽에 번개 스위치를 추가했습니다. 모델 설정을 열지 않고 전환할 수 있으며 설정 화면과 같은 상태를 사용합니다. 현재 엔진과 모델의 지원 여부에 따라 표시됩니다. 실제 속도, 사용 가능 여부 및 요금은 공급업체에 따라 다릅니다."
+          "title": "Cindy 작업 목록 자동 표시",
+          "text": "유효한 원본을 선택하고 Cindy 가져오기 탭을 열면 필터링할 수 있는 작업 목록을 자동으로 불러옵니다. 원본 Cindy가 실행 중이거나 데이터베이스를 사용 중이면 종료 후 다시 스캔하라는 안내를 표시합니다. 가져오기는 여전히 선택과 확인이 필요하며 원본을 변경하지 않고 독립된 사본을 만듭니다."
         },
         {
           "id": "upgrade",
-          "title": "업그레이드 안내",
-          "text": "Android에서는 먼저 앱을 삭제하지 말고 전체 APK를 덮어 설치하세요. 데스크톱 서명 및 공증 상태는 릴리스 페이지를 확인하세요. iOS 설치 패키지는 아직 제공하지 않습니다."
+          "title": "설치 안내",
+          "text": "Android에서는 앱을 먼저 삭제하지 말고 전체 APK를 덮어 설치하세요. iOS 서명 만료는 버전 업데이트와 별개입니다. 서명 신원이나 bundle ID 변경 또는 삭제는 데이터에 영향을 줄 수 있으므로 먼저 백업하세요. 자동 설치, 자동 재서명 및 TestFlight/App Store 배포는 제공하지 않습니다. 데스크톱 서명과 공증 상태는 릴리스 페이지를 확인하세요."
         }
       ]
     }

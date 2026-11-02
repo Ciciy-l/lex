@@ -1,0 +1,131 @@
+{
+  "version": "0.1.15",
+  "date": "2026-11-02",
+  "contentByLocale": {
+    "zh-CN": {
+      "intro": "Lex 0.1.15 新增 iOS 未签名 IPA 与更新提醒，并改善 Mac 启动和 Cindy 任务导入。",
+      "topics": [
+        {
+          "id": "ios",
+          "title": "iOS 下载与更新",
+          "text": "发行页提供未签名 iPhone IPA。Lex iOS 可在启动、回到前台或设置中检查新版本，支持正式版与预发布版、忽略版本及最低系统提示。下载后需自行签名安装；下载新版不会续签手机上已安装的 App，签名工具兼容性和 Apple 能力以实际环境为准。"
+        },
+        {
+          "id": "startup",
+          "title": "Mac 默认进入主界面",
+          "text": "没有登录凭据的 Lex Mac 首次启动可直接进入本地工作界面，不再因钥匙串暂不可用停在登录页。已有账号仍按原流程恢复，用户可主动登录；需要账号的服务继续要求认证。"
+        },
+        {
+          "id": "import",
+          "title": "Cindy 导入自动显示任务",
+          "text": "进入 Cindy 导入标签页并选好有效来源后，自动加载可筛选的任务列表。来源 Cindy 正在运行或数据库被占用时会提示先退出，再点击扫描重试。导入仍需勾选并确认，仅创建独立副本，不修改源数据。"
+        },
+        {
+          "id": "upgrade",
+          "title": "安装须知",
+          "text": "Android 使用完整 APK 覆盖安装，不要先卸载。iOS 签名到期独立于版本更新；更换签名身份、bundle ID 或卸载可能影响数据，请先备份。暂不提供自动安装、自动续签或 TestFlight/App Store 渠道。桌面签名与公证状态以发行页为准。"
+        }
+      ]
+    },
+    "zh-TW": {
+      "intro": "Lex 0.1.15 新增 iOS 未簽章 IPA 與更新提醒，並改善 Mac 啟動和 Cindy 任務匯入。",
+      "topics": [
+        {
+          "id": "ios",
+          "title": "iOS 下載與更新",
+          "text": "發行頁提供未簽章 iPhone IPA。Lex iOS 可在啟動、回到前景或設定中檢查新版，支援正式版與預發布版、忽略版本及最低系統提示。下載後須自行簽章安裝；下載新版不會續簽手機上已安裝的 App，工具相容性和 Apple 能力以實際環境為準。"
+        },
+        {
+          "id": "startup",
+          "title": "Mac 預設進入主畫面",
+          "text": "沒有登入憑證的 Lex Mac 首次啟動可直接進入本機工作畫面，不再因鑰匙圈暫時不可用停在登入頁。既有帳號仍依原流程恢復，使用者可主動登入；需要帳號的服務仍須驗證。"
+        },
+        {
+          "id": "import",
+          "title": "Cindy 匯入自動顯示任務",
+          "text": "進入 Cindy 匯入分頁並選好有效來源後，自動載入可篩選的任務清單。來源 Cindy 正在執行或資料庫被占用時，會提示先結束程式，再點選掃描重試。匯入仍須勾選並確認，只建立獨立副本，不修改來源資料。"
+        },
+        {
+          "id": "upgrade",
+          "title": "安裝須知",
+          "text": "Android 請使用完整 APK 覆蓋安裝，不要先解除安裝。iOS 簽章到期與版本更新無關；更換簽章身分、bundle ID 或解除安裝可能影響資料，請先備份。暫不提供自動安裝、自動續簽或 TestFlight/App Store 管道。桌面簽章與公證狀態以發行頁為準。"
+        }
+      ]
+    },
+    "en": {
+      "intro": "Lex 0.1.15 adds unsigned iOS IPA downloads and update checks, and improves Mac startup and Cindy task import.",
+      "topics": [
+        {
+          "id": "ios",
+          "title": "iOS downloads and update checks",
+          "text": "Releases now include an unsigned iPhone IPA. Lex iOS checks at startup, on returning to the foreground, or manually in Settings, with stable/prerelease channels, ignored versions and minimum-system guidance. You must sign and install the download yourself. Downloading a new version does not renew the installed app’s signature; signing-tool compatibility and Apple capabilities depend on your setup."
+        },
+        {
+          "id": "startup",
+          "title": "Mac opens the workspace by default",
+          "text": "A Lex Mac profile without login credentials can open the local workspace on first launch, even when Keychain is temporarily unavailable. Saved accounts retain their recovery flow, explicit sign-in stays available, and account-backed services still require authentication."
+        },
+        {
+          "id": "import",
+          "title": "Cindy import loads tasks automatically",
+          "text": "Opening the Cindy import tab with a valid source automatically loads the filterable task list. If the source Cindy instance is running or its database is in use, the page asks you to quit it and scan again. Import still requires selection and confirmation, creates independent copies, and leaves the source unchanged."
+        },
+        {
+          "id": "upgrade",
+          "title": "Installation notes",
+          "text": "On Android, install the full APK over the existing app without uninstalling. iOS signature expiry is separate from version updates. Changing signing identity or bundle ID, or uninstalling, can affect data: back up first. There is no automatic installation, automatic re-signing or TestFlight/App Store channel. See the release page for desktop signing and notarization status."
+        }
+      ]
+    },
+    "ja": {
+      "intro": "Lex 0.1.15 は未署名の iOS IPA と更新確認を追加し、Mac の起動と Cindy タスクの取り込みを改善します。",
+      "topics": [
+        {
+          "id": "ios",
+          "title": "iOS のダウンロードと更新確認",
+          "text": "リリースページで未署名の iPhone IPA を提供します。Lex iOS は起動時、前面に戻ったとき、設定での手動操作で更新を確認します。安定版・プレリリースの選択、バージョンの無視、必要な iOS の案内に対応します。署名とインストールは利用者自身で行ってください。新しい版のダウンロードはインストール済みアプリの署名を延長しません。署名ツールとの互換性と Apple の機能は環境に依存します。"
+        },
+        {
+          "id": "startup",
+          "title": "Mac は最初に作業画面を表示",
+          "text": "ログイン認証情報がない Lex Mac は、キーチェーンが一時的に利用できなくても初回起動でローカルの作業画面に進めます。保存済みアカウントの復元手順と任意のログインは維持され、アカウントが必要なサービスでは引き続き認証が必要です。"
+        },
+        {
+          "id": "import",
+          "title": "Cindy のタスクを自動で表示",
+          "text": "有効な取り込み元を選んで Cindy タブを開くと、絞り込み可能なタスク一覧を自動で読み込みます。取り込み元の Cindy が起動中、またはデータベースが使用中の場合は、終了してから再スキャンするよう案内します。取り込みには選択と確認が必要で、元データを変更せず独立したコピーを作成します。"
+        },
+        {
+          "id": "upgrade",
+          "title": "インストールについて",
+          "text": "Android はアンインストールせず完全版 APK を上書きしてください。iOS の署名期限はバージョン更新とは別です。署名の身元や bundle ID の変更、アンインストールはデータに影響する可能性があるため、先にバックアップしてください。自動インストール、自動再署名、TestFlight/App Store 配布は提供しません。デスクトップの署名と公証はリリースページを確認してください。"
+        }
+      ]
+    },
+    "ko": {
+      "intro": "Lex 0.1.15는 서명되지 않은 iOS IPA와 업데이트 확인을 추가하고 Mac 시작 및 Cindy 작업 가져오기를 개선합니다.",
+      "topics": [
+        {
+          "id": "ios",
+          "title": "iOS 다운로드와 업데이트 확인",
+          "text": "릴리스 페이지에서 서명되지 않은 iPhone IPA를 제공합니다. Lex iOS는 시작할 때, 다시 포그라운드로 돌아올 때 또는 설정의 수동 확인으로 새 버전을 찾습니다. 안정판·사전 출시 채널, 버전 무시, 최소 시스템 안내를 지원합니다. 사용자가 직접 서명하고 설치해야 합니다. 새 버전을 다운로드해도 설치된 앱의 서명이 갱신되지는 않으며, 서명 도구 호환성과 Apple 기능은 환경에 따라 달라집니다."
+        },
+        {
+          "id": "startup",
+          "title": "Mac에서 작업 화면으로 바로 시작",
+          "text": "로그인 자격 증명이 없는 Lex Mac은 키체인을 일시적으로 사용할 수 없어도 처음 시작할 때 로컬 작업 화면으로 들어갑니다. 저장된 계정 복원과 직접 로그인은 유지되며 계정이 필요한 서비스는 계속 인증을 요구합니다."
+        },
+        {
+          "id": "import",
+          "title": "Cindy 작업 목록 자동 표시",
+          "text": "유효한 원본을 선택하고 Cindy 가져오기 탭을 열면 필터링할 수 있는 작업 목록을 자동으로 불러옵니다. 원본 Cindy가 실행 중이거나 데이터베이스를 사용 중이면 종료 후 다시 스캔하라는 안내를 표시합니다. 가져오기는 여전히 선택과 확인이 필요하며 원본을 변경하지 않고 독립된 사본을 만듭니다."
+        },
+        {
+          "id": "upgrade",
+          "title": "설치 안내",
+          "text": "Android에서는 앱을 먼저 삭제하지 말고 전체 APK를 덮어 설치하세요. iOS 서명 만료는 버전 업데이트와 별개입니다. 서명 신원이나 bundle ID 변경 또는 삭제는 데이터에 영향을 줄 수 있으므로 먼저 백업하세요. 자동 설치, 자동 재서명 및 TestFlight/App Store 배포는 제공하지 않습니다. 데스크톱 서명과 공증 상태는 릴리스 페이지를 확인하세요."
+        }
+      ]
+    }
+  }
+}
