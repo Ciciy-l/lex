@@ -12,7 +12,7 @@ import {
 } from 'electron';
 
 import { createLogger } from '../logger';
-import { activeOwnerScopeKey, isAppSessionBoundaryPending } from '../appSessionState';
+import { activeOwnerScopeKey, isAppSessionBoundaryPending, onAppSessionInvalidated } from '../appSessionState';
 import { t } from '../i18n';
 import type { SupportedLocale } from '../../shared/locale';
 import {
@@ -65,6 +65,7 @@ let active: RegionScreenshotSession | null = null;
 const pool = new OverlayPool();
 const recordingPreview = new RecordingPreview();
 const editor = new ScreenshotEditor((result) => {
+  if (!screenshotOwnerCurrent(result.ownerScope ?? '')) return;
   lastRegions.set(result.display.id, result.selection);
   void runAction(result);
 });
@@ -95,6 +96,12 @@ export function initRegionScreenshot(): void {
       syncShortcut();
     }),
   );
+  disposers.push(onAppSessionInvalidated(() => {
+    active?.close();
+    editor.invalidate();
+    lastRegions.clear();
+    pool.reset();
+  }));
   const onDisplaysChanged = () => {
     active?.close();
     pool.reset();
@@ -256,6 +263,7 @@ async function startRegionScreenshot(): Promise<void> {
     const sessionHelper = helper;
     let result: RegionScreenshotResult | null = null;
     const session = new RegionScreenshotSession({
+      ownerScope,
       pool,
       captures,
       helper: sessionHelper,
@@ -269,6 +277,7 @@ async function startRegionScreenshot(): Promise<void> {
       openEditor: (image, display, selection) => editor.open(image, display, selection, ownerScope),
       openRecording: (bytes, format, display) => recordingPreview.open(bytes, format, display, ownerScope),
       onResult: (value) => {
+        if (!screenshotOwnerCurrent(ownerScope)) return;
         result = value;
         lastRegions.set(value.display.id, value.selection);
         void runAction({ ...value, ownerScope });
@@ -313,11 +322,12 @@ function takesFocus(action: RegionScreenshotAction | null): boolean {
 }
 
 async function runAction({ action, image, display, selection, ownerScope, translationLanguage }: RegionScreenshotResult) {
+  if (!ownerScope || !screenshotOwnerCurrent(ownerScope)) return;
   try {
     if (action === 'copy') {
       clipboard.writeImage(image);
     } else if (action === 'save') {
-      await saveScreenshotImage(image);
+      await saveScreenshotImage(image, () => screenshotOwnerCurrent(ownerScope));
     } else if (action === 'pin') {
       openPin(image, {
         x: Math.round(display.bounds.x + selection.x),
@@ -331,6 +341,10 @@ async function runAction({ action, image, display, selection, ownerScope, transl
   } catch (error) {
     log.warn('screenshot action failed', { action, error });
   }
+}
+
+function screenshotOwnerCurrent(ownerScope: string): boolean {
+  return !isAppSessionBoundaryPending() && ownerScope === activeOwnerScopeKey();
 }
 
 /**

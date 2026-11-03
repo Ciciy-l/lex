@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   frontmostPid: vi.fn(async () => null),
   screenInsets: vi.fn(async () => new Map()),
   activeSession: null as null | { close: () => void },
+  invalidations: new Set<() => void>(),
+  closeAllPins: vi.fn(),
 }));
 vi.mock('electron', () => ({
   app: {},
@@ -31,7 +33,14 @@ vi.mock('electron', () => ({
   systemPreferences: { getMediaAccessStatus: () => 'granted' },
 }));
 vi.mock('../../logger', () => ({ createLogger: () => ({ info: vi.fn(), warn: vi.fn() }) }));
-vi.mock('../../appSessionState', () => ({ activeOwnerScopeKey: () => 'owner-a:1', isAppSessionBoundaryPending: () => false, onAppSessionInvalidated: () => () => {} }));
+vi.mock('../../appSessionState', () => ({
+  activeOwnerScopeKey: () => 'owner-a:1',
+  isAppSessionBoundaryPending: () => false,
+  onAppSessionInvalidated: (listener: () => void) => {
+    mocks.invalidations.add(listener);
+    return () => { mocks.invalidations.delete(listener); };
+  },
+}));
 vi.mock('../../i18n', () => ({ t: (key: string) => key }));
 vi.mock('../../app-shortcuts', () => ({
   getAppShortcutStore: () => ({
@@ -52,7 +61,7 @@ vi.mock('../compose', () => ({
   handOffScreenshotToTask: vi.fn(),
   registerScreenshotComposeIpc: vi.fn(),
 }));
-vi.mock('../pins', () => ({ closeAllPins: vi.fn(), openPin: vi.fn(), registerPinIpc: vi.fn() }));
+vi.mock('../pins', () => ({ closeAllPins: mocks.closeAllPins, openPin: vi.fn(), registerPinIpc: vi.fn() }));
 vi.mock('../save', () => ({ saveScreenshotImage: vi.fn() }));
 vi.mock('../overlays', () => ({
   OverlayPool: class {
@@ -99,6 +108,19 @@ describe('screenshot startup cleanup', () => {
     stopRegionScreenshot();
     vi.useRealTimers();
   });
+  it('closes the active capture when the account owner is invalidated', async () => {
+    mocks.capture.mockResolvedValueOnce([{ display_id: '1', thumbnail: { isEmpty: () => false } }]);
+    mocks.shortcut!();
+    await vi.advanceTimersByTimeAsync(0);
+    const close = vi.spyOn(mocks.activeSession!, 'close');
+
+    for (const invalidate of [...mocks.invalidations]) invalidate();
+
+    expect(close).toHaveBeenCalledOnce();
+    expect(mocks.closeAllPins).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mocks.dispose).toHaveBeenCalledOnce();
+  });
   // User-selected lazy lifecycle: registration must not schedule shell creation,
   // capture, or native compilation. Earlier tests only invoked the shortcut.
   it('does not prepare or capture anything before the first shortcut', async () => {
@@ -144,4 +166,5 @@ describe('screenshot startup cleanup', () => {
     expect(mocks.dispose).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
   });
+
 });

@@ -10,7 +10,7 @@ import {
 } from 'electron';
 
 import { createLogger } from '../logger';
-import { activeOwnerScopeKey } from '../appSessionState';
+import { activeOwnerScopeKey, isAppSessionBoundaryPending, onAppSessionInvalidated } from '../appSessionState';
 import { getResolvedMainLocale, t } from '../i18n';
 import {
   REGION_SCREENSHOT_PIN_CHANNEL as C,
@@ -57,10 +57,16 @@ interface Pin {
 const pins = new Map<number, Pin>();
 let ipcRegistered = false;
 
+function pinCurrent(pin: Pin): boolean {
+  return !isAppSessionBoundaryPending()
+    && pin.ownerScope === activeOwnerScopeKey()
+    && !pin.window.isDestroyed();
+}
+
 function pinFor(event: IpcMainEvent): Pin | null {
   if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame) return null;
   const pin = pins.get(event.sender.id);
-  return pin && !pin.window.isDestroyed() ? pin : null;
+  return pin && pinCurrent(pin) ? pin : null;
 }
 
 function sendState(pin: Pin): void {
@@ -73,6 +79,7 @@ function sendState(pin: Pin): void {
 }
 
 export function openPin(image: NativeImage, bounds: Rectangle, ownerScope = activeOwnerScopeKey()): void {
+  if (isAppSessionBoundaryPending() || ownerScope !== activeOwnerScopeKey()) return;
   // A stitched image can be much taller than the original selection. Fit its
   // actual aspect ratio into the target screen, without changing the pixels.
   const size = image.getSize();
@@ -170,12 +177,18 @@ function setPassThrough(pin: Pin, passThrough: boolean): void {
 }
 
 function runCommand(pin: Pin, command: RegionScreenshotPinCommand): void {
+  if (!pinCurrent(pin)) {
+    if (!pin.window.isDestroyed()) pin.window.destroy();
+    return;
+  }
   switch (command) {
     case 'copy':
       clipboard.writeImage(pin.image);
       return;
     case 'save':
-      void saveScreenshotImage(pin.image);
+      void saveScreenshotImage(pin.image, () => pinCurrent(pin)).catch((error: unknown) => {
+        log.warn('pin save failed', { error });
+      });
       return;
     case 'ask':
       void handOffScreenshotToTask(pin.image, 'ask', pin.ownerScope).catch((error: unknown) => {
@@ -232,6 +245,7 @@ const finiteNumber = (value: unknown): value is number =>
 export function registerPinIpc(): void {
   if (ipcRegistered) return;
   ipcRegistered = true;
+  onAppSessionInvalidated(closeAllPins);
   ipcMain.on(C.SHELL_READY, (event) => {
     const pin = pinFor(event);
     if (!pin) return;

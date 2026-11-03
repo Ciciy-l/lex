@@ -10,6 +10,7 @@ import {
 import { randomUUID } from 'node:crypto';
 
 import { createLogger } from '../logger';
+import { activeOwnerScopeKey, isAppSessionBoundaryPending } from '../appSessionState';
 import { getResolvedMainLocale } from '../i18n';
 import { onScreenshotTranslationPreferenceChanged, readScreenshotTranslationPreference, writeScreenshotTranslationPreference } from './translationPreferences';
 import { isScreenshotTranslationLanguage, resolveScreenshotTranslationLanguage, type ScreenshotTranslationLanguage } from '../../shared/screenshotTranslation';
@@ -65,6 +66,8 @@ interface Member {
 }
 
 export interface RegionScreenshotSessionDeps {
+  /** Owner captured before the asynchronous screen grab completed. */
+  ownerScope?: string;
   pool: OverlayPool;
   captures: readonly DisplayCapture[];
   helper: SnapshotHelper;
@@ -96,6 +99,7 @@ function toLocal(rect: RegionRect, display: Display): RegionRect {
  */
 export class RegionScreenshotSession {
   readonly token = randomUUID();
+  private readonly ownerScope: string;
   private readonly members = new Map<number, Member>();
   private closed = false;
   private releaseTranslationPreference: (() => void) | null = null;
@@ -122,7 +126,9 @@ export class RegionScreenshotSession {
       this.onDisplaysChanged();
   };
 
-  constructor(private readonly deps: RegionScreenshotSessionDeps) {}
+  constructor(private readonly deps: RegionScreenshotSessionDeps) {
+    this.ownerScope = deps.ownerScope ?? activeOwnerScopeKey();
+  }
 
   get isClosed(): boolean {
     return this.closed;
@@ -131,7 +137,7 @@ export class RegionScreenshotSession {
   get hasEditor(): boolean { return this.handedToEditor; }
 
   setLocale(locale: string): void {
-    if (this.closed) return;
+    if (this.closed || !this.ownerCurrent()) return;
     for (const { overlay } of this.members.values()) {
       if (!overlay.window.isDestroyed()) overlay.window.webContents.send(
         REGION_SCREENSHOT_CHANNEL.LOCALE_CHANGED, { token: this.token, locale });
@@ -140,6 +146,7 @@ export class RegionScreenshotSession {
 
   /** 打开浮层; 一块屏都没准备好时返回 false 并结束会话。 */
   async open(): Promise<boolean> {
+    if (!this.ownerCurrent()) return false;
     this.releaseTranslationPreference = onScreenshotTranslationPreferenceChanged((preference) => {
       if (this.closed) return;
       for (const { overlay } of this.members.values()) {
@@ -273,7 +280,7 @@ export class RegionScreenshotSession {
     frame: Electron.WebFrameMain | null,
     token: unknown,
   ): Member | null {
-    if (this.closed || token !== this.token) return null;
+    if (this.closed || !this.ownerCurrent() || token !== this.token) return null;
     const member = this.members.get(sender.id);
     if (!member || member.overlay.window.isDestroyed()) return null;
     if (!frame || frame !== sender.mainFrame) return null;
@@ -281,7 +288,11 @@ export class RegionScreenshotSession {
   }
 
   owns(overlay: OverlayWindow): boolean {
-    return [...this.members.values()].some((m) => m.overlay === overlay);
+    return this.ownerCurrent() && [...this.members.values()].some((m) => m.overlay === overlay);
+  }
+
+  private ownerCurrent(): boolean {
+    return !isAppSessionBoundaryPending() && this.ownerScope === activeOwnerScopeKey();
   }
 
   painted(sender: WebContents, frame: Electron.WebFrameMain | null, token: unknown): void {

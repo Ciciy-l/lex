@@ -24,7 +24,11 @@ function defaultFileName(now = new Date()): string {
  * 弹出系统保存框把截图存为 PNG / JPEG (按用户选的扩展名)。用户取消返回 false;
  * 写入失败给出系统提示, 不抛错。
  */
-export async function saveScreenshotImage(image: NativeImage): Promise<boolean> {
+export async function saveScreenshotImage(
+  image: NativeImage,
+  isCurrent: () => boolean = () => true,
+): Promise<boolean> {
+  if (!isCurrent()) return false;
   const directory = lastDirectory ?? app.getPath('pictures');
   const result = await dialog.showSaveDialog({
     defaultPath: path.join(directory, defaultFileName()),
@@ -33,12 +37,14 @@ export async function saveScreenshotImage(image: NativeImage): Promise<boolean> 
       { name: 'JPEG', extensions: ['jpg', 'jpeg'] },
     ],
   });
-  if (result.canceled || !result.filePath) return false;
+  if (result.canceled || !result.filePath || !isCurrent()) return false;
   const extension = path.extname(result.filePath).toLowerCase();
   const isJpeg = extension === '.jpg' || extension === '.jpeg';
   const filePath = extension ? result.filePath : `${result.filePath}.png`;
   try {
-    await fs.writeFile(filePath, await encodeScreenshotImage(image, isJpeg));
+    const encoded = await encodeScreenshotImage(image, isJpeg);
+    if (!isCurrent()) return false;
+    await fs.writeFile(filePath, encoded);
     lastDirectory = path.dirname(filePath);
     return true;
   } catch (error) {

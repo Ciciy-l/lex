@@ -28,6 +28,9 @@ const mocks = vi.hoisted(() => ({
   unregister: vi.fn(),
   liveCapture: vi.fn(),
   saveRecording: vi.fn(async () => true),
+  saveImage: vi.fn(async () => true),
+  clipboardImage: vi.fn(),
+  handOff: vi.fn(async () => {}),
   translationListeners: new Set<(value: ScreenshotTranslationPreference) => void>(),
   copyRecording: vi.fn<(bytes: Uint8Array, format: string, isCurrent: () => boolean) => Promise<void>>(async () => {}),
 }));
@@ -40,7 +43,7 @@ vi.mock('electron', () => ({
       removeSwitch: (flag: string) => { mocks.switches.delete(flag); },
     },
   },
-  clipboard: { writeImage: vi.fn(), writeText: vi.fn() },
+  clipboard: { writeImage: mocks.clipboardImage, writeText: vi.fn() },
   screen: mocks.screen,
   nativeTheme: { shouldUseDarkColors: false },
   globalShortcut: { register: mocks.register, unregister: mocks.unregister },
@@ -71,7 +74,7 @@ vi.mock('../../appSessionState', () => ({
   },
 }));
 vi.mock('../pageWindow', () => ({ createScreenshotPageWindow: mocks.create }));
-vi.mock('../compose', () => ({ handOffScreenshotToTask: vi.fn() }));
+vi.mock('../compose', () => ({ handOffScreenshotToTask: mocks.handOff }));
 vi.mock('../translationPreferences', () => ({
   readScreenshotTranslationPreference: () => mocks.translationPreference,
   onScreenshotTranslationPreferenceChanged: (listener: (value: ScreenshotTranslationPreference) => void) => {
@@ -84,7 +87,7 @@ vi.mock('../translationPreferences', () => ({
     return value;
   }),
 }));
-vi.mock('../save', () => ({ saveScreenshotImage: vi.fn(), saveRegionRecording: mocks.saveRecording }));
+vi.mock('../save', () => ({ saveScreenshotImage: mocks.saveImage, saveRegionRecording: mocks.saveRecording }));
 vi.mock('../recordingClipboard', () => ({ copyRegionRecording: mocks.copyRecording }));
 vi.mock('../liveCapture', () => ({ captureLiveRegion: mocks.liveCapture, RegionVideoCapture: class { frame = mocks.liveCapture; stop() {} } }));
 vi.mock('../../i18n', () => ({ getResolvedMainLocale: () => mocks.locale, t: (key: string) => key }));
@@ -593,6 +596,75 @@ describe('screenshot window lifecycle', () => {
       expect(preview.open(clip, 'webm', display)).toBe(true);
     } finally { preview.dispose(); }
     expect(mocks.invalidations.size).toBe(0);
+  });
+
+  it('rejects an overlay token from a prior owner even before the invalidation cleanup runs', async () => {
+    const overlay = pool.ensure(display)!;
+    const contents = overlay.window.webContents as unknown as Electron.WebContents;
+    pool.markShellReady(contents, contents.mainFrame);
+    const session = new RegionScreenshotSession({
+      ownerScope: 'owner-a:1', pool, captures: [{ display, image }], helper: {} as SnapshotHelper,
+      windows: [], lastRegions: new Map(), onClosed: vi.fn(), onResult: vi.fn(),
+    });
+    await session.open();
+    session.painted(contents, contents.mainFrame, session.token);
+
+    mocks.ownerScope = 'owner-b:2';
+    expect(session.owns(overlay)).toBe(false);
+    expect(session.export(contents, contents.mainFrame, session.token, {
+      action: 'copy', selection: { x: 0, y: 0, width: 2, height: 2 },
+      image: { width: 4, height: 4, data: new Uint8Array(64) },
+    })).toBe(false);
+    expect(mocks.clipboardImage).not.toHaveBeenCalled();
+    session.close();
+  });
+
+  it('destroys an old editor image and blocks its token after owner invalidation', () => {
+    const result = vi.fn();
+    const editor = new ScreenshotEditor(result);
+    editor.registerIpc();
+    const bitmap = { width: 2, height: 2, data: new Uint8Array(16) };
+    const selection = { x: 0, y: 0, width: 2, height: 2 };
+    try {
+      expect(editor.open(bitmap, display, selection, 'owner-a:1')).toBe(true);
+      const win = windows.at(-1)!;
+      const event = { sender: win.webContents, senderFrame: win.webContents.mainFrame };
+      mocks.handlers.get(E.READY)!(event);
+      const doc = win.webContents.send.mock.calls.find(([name]) => name === E.BEGIN)![1];
+      mocks.handlers.get(E.PAINTED)!(event, doc.token);
+
+      mocks.ownerScope = 'owner-b:2';
+      for (const invalidate of [...mocks.invalidations]) invalidate();
+
+      expect(win.isDestroyed()).toBe(true);
+      expect(mocks.handlers.get(E.EXPORT)!(event, doc.token, {
+        action: 'copy', image: bitmap,
+      })).toBe(false);
+      expect(result).not.toHaveBeenCalled();
+      expect(mocks.clipboardImage).not.toHaveBeenCalled();
+      expect(editor.open(bitmap, display, selection, 'owner-b:2')).toBe(true);
+    } finally { editor.dispose(); }
+  });
+
+  it('closes old pins and suppresses their local actions after owner invalidation', () => {
+    registerPinIpc();
+    mocks.ownerScope = 'owner-a:1';
+    openPin(image, { x: 1, y: 2, width: 2, height: 2 }, 'owner-a:1');
+    const win = windows.at(-1)!;
+    const event = { sender: win.webContents, senderFrame: win.webContents.mainFrame };
+    mocks.handlers.get(P.SHELL_READY)!(event);
+    mocks.handlers.get(P.PAINTED)!(event);
+
+    mocks.ownerScope = 'owner-b:2';
+    for (const invalidate of [...mocks.invalidations]) invalidate();
+
+    expect(win.isDestroyed()).toBe(true);
+    mocks.handlers.get(P.COMMAND)!(event, 'copy');
+    mocks.handlers.get(P.COMMAND)!(event, 'save');
+    mocks.handlers.get(P.COMMAND)!(event, 'ask');
+    expect(mocks.clipboardImage).not.toHaveBeenCalled();
+    expect(mocks.saveImage).not.toHaveBeenCalled();
+    expect(mocks.handOff).not.toHaveBeenCalled();
   });
 
   // 用户选择首次按需创建、后续复用。最小输入：导出后立即再截图，旧 PAINTED

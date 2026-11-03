@@ -1,6 +1,6 @@
 import { app, ipcMain, nativeImage, nativeTheme, screen, type BrowserWindow, type Display, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
 import { randomUUID } from 'node:crypto';
-import { activeOwnerScopeKey } from '../appSessionState';
+import { activeOwnerScopeKey, isAppSessionBoundaryPending, onAppSessionInvalidated } from '../appSessionState';
 import path from 'node:path';
 import { ResourceUsageWindowController } from '../resource-usage-window/controller';
 import { getResolvedMainLocale, t } from '../i18n';
@@ -25,6 +25,7 @@ export class ScreenshotEditor {
   private document: EditorDocument | null = null;
   private readonly controller: ResourceUsageWindowController;
   private readonly releaseTranslationPreference: () => void;
+  private readonly releaseOwnerInvalidation: () => void;
 
   constructor(private readonly onResult: (result: RegionScreenshotResult) => void) {
     this.controller = new ResourceUsageWindowController({
@@ -51,6 +52,7 @@ export class ScreenshotEditor {
       onCloseRequested: () => this.close(),
       onUnavailable: () => { this.document = null; },
     });
+    this.releaseOwnerInvalidation = onAppSessionInvalidated(() => this.invalidate());
     this.releaseTranslationPreference = onScreenshotTranslationPreferenceChanged((preference) => {
       if (!this.document || !this.window || this.window.isDestroyed()) return;
       this.document.payload.translationPreference = preference;
@@ -60,7 +62,18 @@ export class ScreenshotEditor {
   }
 
   prewarm(): void { this.controller.prewarm(); }
-  dispose(): void { this.document = null; this.releaseTranslationPreference(); this.controller.dispose(); }
+  dispose(): void {
+    this.invalidate();
+    this.releaseTranslationPreference();
+    this.releaseOwnerInvalidation();
+    this.controller.dispose();
+  }
+
+  invalidate(): void {
+    this.document = null;
+    const window = this.window;
+    if (window && !window.isDestroyed()) window.destroy();
+  }
 
   setLocale(locale: SupportedLocale): void {
     this.controller.setLocale(locale);
@@ -73,7 +86,7 @@ export class ScreenshotEditor {
 
   open(image: RegionScreenshotBitmap, display: Display, selection: RegionRect, ownerScope = activeOwnerScopeKey()): boolean {
     // Do not overwrite an unfinished image if another capture reaches Edit.
-    if (this.document) return false;
+    if (this.document || isAppSessionBoundaryPending() || ownerScope !== activeOwnerScopeKey()) return false;
     this.controller.prewarm();
     const window = this.window;
     if (!window || window.isDestroyed()) return false;
@@ -99,6 +112,8 @@ export class ScreenshotEditor {
   private owns(event: IpcMainEvent | IpcMainInvokeEvent, token?: unknown): boolean {
     return !!this.window && !this.window.isDestroyed() && event.sender === this.window.webContents
       && event.senderFrame === event.sender.mainFrame
+      && !isAppSessionBoundaryPending()
+      && (!this.document || this.document.ownerScope === activeOwnerScopeKey())
       && (token === undefined || token === this.document?.payload.token);
   }
 
