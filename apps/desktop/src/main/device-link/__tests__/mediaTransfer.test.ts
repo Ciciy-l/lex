@@ -12,7 +12,7 @@
  * 两个 fetch 分开 mock:PUT 与 GET 走的是不同网络栈(undici 不吃系统代理,
  * Electron net 吃),把它们混成一个 mock 就测不出回退是否真的换了栈。
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import { PassThrough, Readable, addAbortSignal } from 'node:stream';
 
