@@ -9,6 +9,7 @@ import { sessionCollaborationLabel, sessionWorktreeLabel } from './sessionIdenti
 import { isDefaultDraftSessionTitle } from './sessionTitle.js';
 import { getSessionListCollapseView } from './sessionListCollapse.js';
 import { collapseWorktreeDirForGrouping } from './worktreePaths.js';
+import { normalizeProjectOrderPath } from './projectOrderSync.js';
 
 let sessionListCollator: Intl.Collator | undefined;
 /** Call when the host resumes after system locale/region preferences may change. */
@@ -246,7 +247,7 @@ export function summarizeRemoteSessionOverview(
     if (session.pinnedAt) pinned += 1;
     // 与 buildProjectSections 同一把折叠口径:worktree 会话算进它所属主仓,
     // 否则概览里的项目数会比列表里的项目分区多出来。
-    if (session.workingDir) projects.add(collapseWorktreeDirForGrouping(session.workingDir));
+    if (session.workingDir) projects.add(normalizeProjectOrderPath(session.workingDir));
     if ((pendingInteractionIndex.get(session.id) ?? 0) > 0) waiting += 1;
     if (isAutomationSession(session, scheduleIndex)) automation += 1;
   }
@@ -397,15 +398,18 @@ function buildProjectSections(
     if (isDialogueSession(item.session)) continue;
     // worktree 会话按 base repo 归组(与首页 projectGroupKey、桌面侧栏同一口径),
     // 否则每个 worktree 会单独成一个随机名分区。
-    const key = item.session.workingDir ? collapseWorktreeDirForGrouping(item.session.workingDir) : 'unknown';
+    const key = item.session.workingDir ? normalizeProjectOrderPath(item.session.workingDir) : 'unknown';
     const list = projectGroups.get(key) ?? [];
     list.push(item);
     projectGroups.set(key, list);
   }
   for (const [workingDir, data] of [...projectGroups].sort(([a], [b]) => compareSessionListStrings(a, b))) {
+    const displayDir = collapseWorktreeDirForGrouping(
+      (data[0].session.workingDir ?? workingDir).trim(),
+    );
     sections.push({
       key: `project:${workingDir}`,
-      title: projectTitle(workingDir),
+      title: projectTitle(displayDir),
       data: groupAutomationListItems(data, now, groupAutomations, undefined, localizer),
     });
   }
