@@ -18681,58 +18681,80 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           `context window budget must be null or an integer within [${MIN_CONTEXT_WINDOW_BUDGET}, ${MAX_CONTEXT_WINDOW_BUDGET}]`,
         );
       }
-      await assertReviewSettingsUnlocked(sessionId);
-      const [row] = await getDbClient()
-        .drizzle.select({
+      const snapshot = getCurrentDbClientSnapshot();
+      const ownerScope = activeOwnerScopeKey();
+      const assertOwnerCurrent = () => {
+        if (isAppSessionBoundaryPending()
+          || !snapshot
+          || snapshot !== getCurrentDbClientSnapshot()
+          || ownerScope !== activeOwnerScopeKey()) {
+          throwIpcError('PRECONDITION_FAILED', 'Account changed during context budget update');
+        }
+      };
+      assertOwnerCurrent();
+      return withSessionPermissionChange(sessionId, async () => {
+        assertOwnerCurrent();
+        await assertReviewSettingsUnlocked(sessionId);
+        assertOwnerCurrent();
+        const [row] = await snapshot!.client.drizzle.select({
           agentKind: sessions.agentKind,
           model: sessions.model,
           providerId: sessions.providerId,
         })
-        .from(sessions)
-        .where(eq(sessions.id, sessionId))
-        .limit(1);
-      if (!row) throwIpcError('NOT_FOUND', 'session not found');
-      const agentKind = dbToMakerAgentKind(row.agentKind);
-      if (agentKind === 'omp') {
-        throwIpcError(
-          'UNSUPPORTED_CAPABILITY',
-          'OMP task context budgets are read-only in this version',
-        );
-      }
-      const live = maker.getSession(sessionId);
-      const providerId = getSessionProvider(sessionId) ?? row.providerId ?? null;
-      const previous = readSessionContextWindowBudget(sessionId);
-      const changesEffectiveWindow = contextWindowBudgetChangesEffectiveWindow({
-        catalog: getActiveCatalog(),
-        agent: agentKind,
-        providerId,
-        modelId: live?.model ?? row.model,
-        previous,
-        next: budget,
-      });
-      writeSessionContextWindowBudget(sessionId, budget);
-      try {
-        if (live && changesEffectiveWindow) {
-          await applyRuntimeSetModelChange({
-            maker,
-            sessionId,
-            model: live.model,
-            providerId,
-            forceSessionRebuild: true,
-            contextWindowBudget: budget,
-            isSessionInTurn,
-            registerPendingCredentialSwitch: registerPendingCredentialSwitchForSession,
-            clearPendingCredentialSwitch: clearPendingCredentialSwitchForSession,
-            getPendingCredentialSwitch: getPendingCredentialSwitchTarget,
-            wakeSessionInputQueue: wakeSessionInputAfterCredentialSwitch,
-            codexAuthInjection: getCodexProxyAuthInjectionState(),
-            logger: log,
-          });
+          .from(sessions)
+          .where(eq(sessions.id, sessionId))
+          .limit(1);
+        assertOwnerCurrent();
+        if (!row) throwIpcError('NOT_FOUND', 'session not found');
+        const agentKind = dbToMakerAgentKind(row.agentKind);
+        if (agentKind === 'omp') {
+          throwIpcError(
+            'UNSUPPORTED_CAPABILITY',
+            'OMP task context budgets are read-only in this version',
+          );
         }
-      } catch (error) {
-        writeSessionContextWindowBudget(sessionId, previous);
-        throw error;
-      }
+        const live = maker.getSession(sessionId);
+        const providerId = getSessionProvider(sessionId) ?? row.providerId ?? null;
+        const previous = readSessionContextWindowBudget(sessionId);
+        assertOwnerCurrent();
+        const changesEffectiveWindow = contextWindowBudgetChangesEffectiveWindow({
+          catalog: getActiveCatalog(),
+          agent: agentKind,
+          providerId,
+          modelId: live?.model ?? row.model,
+          previous,
+          next: budget,
+        });
+        writeSessionContextWindowBudget(sessionId, budget);
+        try {
+          if (live && changesEffectiveWindow) {
+            await applyRuntimeSetModelChange({
+              maker,
+              sessionId,
+              model: live.model,
+              providerId,
+              forceSessionRebuild: true,
+              contextWindowBudget: budget,
+              isSessionInTurn,
+              registerPendingCredentialSwitch: registerPendingCredentialSwitchForSession,
+              clearPendingCredentialSwitch: clearPendingCredentialSwitchForSession,
+              getPendingCredentialSwitch: getPendingCredentialSwitchTarget,
+              wakeSessionInputQueue: wakeSessionInputAfterCredentialSwitch,
+              codexAuthInjection: getCodexProxyAuthInjectionState(),
+              logger: log,
+            });
+          }
+          assertOwnerCurrent();
+        } catch (error) {
+          if (!isAppSessionBoundaryPending()
+            && snapshot === getCurrentDbClientSnapshot()
+            && ownerScope === activeOwnerScopeKey()) {
+            writeSessionContextWindowBudget(sessionId, previous);
+          }
+          throw error;
+        }
+        return true;
+      });
     },
   );
 
@@ -18745,9 +18767,19 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (typeof sessionId !== 'string' || sessionId.length === 0) {
         throwIpcError('INVALID_PARAMS', 'sessionId required');
       }
+      const snapshot = getCurrentDbClientSnapshot();
+      const ownerScope = activeOwnerScopeKey();
+      const assertOwnerCurrent = () => {
+        if (isAppSessionBoundaryPending()
+          || !snapshot
+          || snapshot !== getCurrentDbClientSnapshot()
+          || ownerScope !== activeOwnerScopeKey()) {
+          throwIpcError('PRECONDITION_FAILED', 'Account changed during context budget lookup');
+        }
+      };
+      assertOwnerCurrent();
       const requestedRoute = normalizeSessionContextWindowBoundsRoute(route);
-      const [row] = await getDbClient()
-        .drizzle.select({
+      const [row] = await snapshot!.client.drizzle.select({
           agentKind: sessions.agentKind,
           model: sessions.model,
           providerId: sessions.providerId,
@@ -18755,6 +18787,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         .from(sessions)
         .where(eq(sessions.id, sessionId))
         .limit(1);
+      assertOwnerCurrent();
       if (!row && !requestedRoute) return null;
       const agent = requestedRoute?.agent ?? dbToMakerAgentKind(row?.agentKind);
       const providerId = requestedRoute
