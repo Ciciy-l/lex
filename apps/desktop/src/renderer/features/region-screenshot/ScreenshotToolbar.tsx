@@ -30,7 +30,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { Tip } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import '@/components/ui/button.css';
 import type { RegionScreenshotAiAction } from '../../../shared/regionScreenshot';
 import { SCREENSHOT_TRANSLATION_LANGUAGES, resolveScreenshotTranslationLanguage, screenshotTranslationLanguageName, type ScreenshotTranslationPreference } from '../../../shared/screenshotTranslation';
 import type { RegionCaptureMode } from '../../../shared/regionCapture';
