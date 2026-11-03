@@ -212,6 +212,10 @@ export const MAKER_INVOKE = {
   SET_THINKING_ENABLED: 'maker:set-thinking-enabled',
   /** 计划模式一级开关(与 permissionMode 正交), runtime-only; 持久化由 renderer sessions:update / device-link 回流负责 */
   SET_PLAN_MODE: 'maker:set-plan-mode',
+  /** Task-level working context budget; null restores the route default. */
+  SET_CONTEXT_WINDOW_BUDGET: 'maker:set-context-window-budget',
+  /** Read-only authoritative bounds for the task context budget control. */
+  GET_CONTEXT_WINDOW_BOUNDS: 'maker:get-context-window-bounds',
   /** 会话导出 HTML(pi 原生 export_html)。主进程弹保存对话框 + 导出 + 在文件管理器中显示;返回写入路径或 null(取消)。 */
   EXPORT_SESSION_HTML: 'maker:export-session-html',
   /** 手动压缩会话上下文(pi 原生 compact,可带聚焦指令)。返回 {tokensBefore?, estimatedTokensAfter?} 或 null(会话不在/不支持)。 */

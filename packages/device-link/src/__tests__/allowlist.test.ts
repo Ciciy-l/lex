@@ -75,6 +75,8 @@ describe('REMOTE_INVOKE_ALLOWLIST', () => {
       'maker:input:compact',
       'maker:compact-session',
       'maker:set-model',
+      'maker:set-context-window-budget',
+      'maker:get-context-window-bounds',
       'maker:switch-session-agent',
       'maker:get-session-agent-switch-intent',
       'local-db:sessions:list',

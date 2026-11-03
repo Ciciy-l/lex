@@ -57,7 +57,23 @@ import { isCodexAccountProvider, codexAccountState, codexAccountLoginName, login
 
 import { readCodexContextWindowInfo } from '../maker-host/codex-context-window.js';
 import { prepareCodexCustomContextCatalog } from '../maker-host/codex-custom-context-catalog.js';
-import { resolveConfiguredContextWindow, resolveDesktopModelContextProviderId } from '../maker-host/model-context-settings.js';
+import {
+  contextWindowBudgetChangesEffectiveWindow,
+  readStoredSessionContextWindowBudget,
+  resolveConfiguredContextWindow,
+  resolveDesktopModelContextProviderId,
+  resolveSessionContextWindowBounds,
+} from '../maker-host/model-context-settings.js';
+import {
+  isSessionContextWindowBudgetCustomized,
+  readSessionContextWindowBudget,
+  writeSessionContextWindowBudget,
+} from '../maker-host/session-context-budget-store.js';
+import {
+  MAX_CONTEXT_WINDOW_BUDGET,
+  MIN_CONTEXT_WINDOW_BUDGET,
+} from '../../shared/sessionContextWindowBudget.js';
+import { normalizeSessionContextWindowBoundsRoute } from '../../shared/sessionContextWindowBounds.js';
 import { getCodexHome } from '../maker-host/auth-adapters.js';
 import { getCachedBinaryStatus } from '../agent-binaries/index.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -18629,6 +18645,122 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         throwIpcError('INVALID_PARAMS', 'sessionId + enabled required');
       }
       return handleSetPlanMode(sessionId, enabled);
+    },
+  );
+
+  ipcMain.handle(
+    MAKER_INVOKE.SET_CONTEXT_WINDOW_BUDGET,
+    async (event, sessionId: unknown, budget: unknown) => {
+      if (!isDeviceLinkInvoke()) {
+        assertTrustedAppRendererEvent(event as Parameters<typeof assertTrustedAppRendererEvent>[0]);
+      }
+      if (typeof sessionId !== 'string' || sessionId.length === 0) {
+        throwIpcError('INVALID_PARAMS', 'sessionId required');
+      }
+      if (
+        budget !== null
+        && (typeof budget !== 'number'
+          || !Number.isSafeInteger(budget)
+          || budget < MIN_CONTEXT_WINDOW_BUDGET
+          || budget > MAX_CONTEXT_WINDOW_BUDGET)
+      ) {
+        throwIpcError(
+          'INVALID_PARAMS',
+          `context window budget must be null or an integer within [${MIN_CONTEXT_WINDOW_BUDGET}, ${MAX_CONTEXT_WINDOW_BUDGET}]`,
+        );
+      }
+      await assertReviewSettingsUnlocked(sessionId);
+      const [row] = await getDbClient()
+        .drizzle.select({
+          agentKind: sessions.agentKind,
+          model: sessions.model,
+          providerId: sessions.providerId,
+        })
+        .from(sessions)
+        .where(eq(sessions.id, sessionId))
+        .limit(1);
+      if (!row) throwIpcError('NOT_FOUND', 'session not found');
+      const agentKind = dbToMakerAgentKind(row.agentKind);
+      if (agentKind === 'omp') {
+        throwIpcError(
+          'UNSUPPORTED_CAPABILITY',
+          'OMP task context budgets are read-only in this version',
+        );
+      }
+      const live = maker.getSession(sessionId);
+      if (live?.agentKind === 'pi' && isSessionInTurn(sessionId)) {
+        throwIpcError('PRECONDITION_FAILED', 'Wait for the current Pi turn to finish before changing its context budget');
+      }
+      const providerId = getSessionProvider(sessionId) ?? row.providerId ?? null;
+      const previous = readSessionContextWindowBudget(sessionId);
+      const changesEffectiveWindow = contextWindowBudgetChangesEffectiveWindow({
+        catalog: getActiveCatalog(),
+        agent: agentKind,
+        providerId,
+        modelId: live?.model ?? row.model,
+        previous,
+        next: budget,
+      });
+      writeSessionContextWindowBudget(sessionId, budget);
+      try {
+        if (live && changesEffectiveWindow) {
+          await applyRuntimeSetModelChange({
+            maker,
+            sessionId,
+            model: live.model,
+            providerId,
+            forceSessionRebuild: true,
+            contextWindowBudget: budget,
+            isSessionInTurn,
+            registerPendingCredentialSwitch: registerPendingCredentialSwitchForSession,
+            clearPendingCredentialSwitch: clearPendingCredentialSwitchForSession,
+            getPendingCredentialSwitch: getPendingCredentialSwitchTarget,
+            wakeSessionInputQueue: wakeSessionInputAfterCredentialSwitch,
+            codexAuthInjection: getCodexProxyAuthInjectionState(),
+            logger: log,
+          });
+        }
+      } catch (error) {
+        writeSessionContextWindowBudget(sessionId, previous);
+        throw error;
+      }
+    },
+  );
+
+  ipcMain.handle(
+    MAKER_INVOKE.GET_CONTEXT_WINDOW_BOUNDS,
+    async (event, sessionId: unknown, route: unknown) => {
+      if (!isDeviceLinkInvoke()) {
+        assertTrustedAppRendererEvent(event as Parameters<typeof assertTrustedAppRendererEvent>[0]);
+      }
+      if (typeof sessionId !== 'string' || sessionId.length === 0) {
+        throwIpcError('INVALID_PARAMS', 'sessionId required');
+      }
+      const requestedRoute = normalizeSessionContextWindowBoundsRoute(route);
+      const [row] = await getDbClient()
+        .drizzle.select({
+          agentKind: sessions.agentKind,
+          model: sessions.model,
+          providerId: sessions.providerId,
+        })
+        .from(sessions)
+        .where(eq(sessions.id, sessionId))
+        .limit(1);
+      if (!row && !requestedRoute) return null;
+      const agent = requestedRoute?.agent ?? dbToMakerAgentKind(row?.agentKind);
+      const providerId = requestedRoute
+        ? requestedRoute.providerId ?? null
+        : getSessionProvider(sessionId) ?? row?.providerId ?? null;
+      const modelId = requestedRoute?.model ?? row?.model ?? null;
+      if (!modelId) return null;
+      return resolveSessionContextWindowBounds({
+        catalog: getActiveCatalog(),
+        agent,
+        providerId,
+        modelId,
+        budget: readSessionContextWindowBudget(sessionId),
+        budgetCustomized: isSessionContextWindowBudgetCustomized(sessionId),
+      });
     },
   );
 

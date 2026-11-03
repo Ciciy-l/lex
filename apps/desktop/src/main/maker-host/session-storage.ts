@@ -26,6 +26,7 @@ import { sessions } from '../localDb/schema.js';
 import { normalizeRemoteHostId } from '../localDb/mapper.js';
 import { DESKTOP_VISIBLE_SESSION_SOURCES } from '../../shared/sessionSource.js';
 import { normalizeWorkingDirForStorage } from '../../shared/workingDir.js';
+import { pruneSessionContextWindowBudget } from './session-context-budget-store.js';
 
 type DbAgentKind = 'cc' | 'codex' | 'pi' | 'omp';
 
@@ -153,6 +154,7 @@ export class DesktopSessionStorage implements SessionStorage {
   async delete(id: string): Promise<void> {
     const db = getDbClient().drizzle;
     await db.delete(sessions).where(eq(sessions.id, id));
+    pruneSessionContextWindowBudget(id);
   }
 }
 

@@ -21,6 +21,7 @@ import { computeForkSourceMessagesDigest } from '../localDb/forkRecoverySnapshot
 import { commitContextRebuild, createMessage } from '../localDb/ipc/messages.js';
 import { getMaker } from '../maker-host/index.js';
 import { inferProviderIdForModel } from '../maker-host/provider-route.js';
+import { copySessionContextWindowBudget } from '../maker-host/session-context-budget-store.js';
 import { createBusinessSessionId } from '../sessionIds.js';
 import {
   dbToMakerAgentKind,
@@ -1081,6 +1082,7 @@ export async function forkSessionAtMessage(
       newMessageIds,
       recoveryMarker,
     });
+    copySessionContextWindowBudget(sourceSessionId, newSessionId);
   } catch (err) {
     // 轮 40-w4-t13 HIGH:SDK 侧已创建新 session file(forkSdkSession), DB 事务
     // 失败时该文件成孤儿 —— 调用方收到失败, 但孤儿累积不可达。至少记录
@@ -1260,6 +1262,7 @@ export async function forkSessionStripEncrypted(sourceSessionId: string): Promis
     newMessageIds,
     recoveryMarker,
   });
+  copySessionContextWindowBudget(sourceSessionId, newSessionId);
 
   const [row] = await db.select().from(sessions).where(eq(sessions.id, newSessionId));
   if (!row) {

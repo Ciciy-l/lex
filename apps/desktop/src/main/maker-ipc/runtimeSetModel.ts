@@ -26,15 +26,15 @@ interface RuntimeSetModelSession {
   model: string;
   setModel: (
     model: string,
-    opts?: { providerId?: string | null; effort?: Effort },
+    opts?: { providerId?: string | null; effort?: Effort; contextWindowBudget?: number | null },
   ) => Promise<void>;
   requiresModelSwitchRebuild?: (
     model: string,
-    opts?: { providerId?: string | null },
+    opts?: { providerId?: string | null; contextWindowBudget?: number | null },
   ) => boolean | Promise<boolean>;
   previewModelSwitch?: (
     model: string,
-    opts?: { providerId?: string | null },
+    opts?: { providerId?: string | null; contextWindowBudget?: number | null },
   ) => Promise<{
     action: 'hot' | 'refresh' | 'rebuild' | 'unavailable';
     targetContextWindow: number | null;
@@ -72,6 +72,8 @@ export interface ApplyRuntimeSetModelChangeInput {
    * 形态相同，也必须沿用 credential-switch 的 idle close / busy defer 边界。
    */
   forceSessionRebuild?: boolean;
+  /** Already-clamped task budget for the target route; undefined preserves current. */
+  contextWindowBudget?: number | null;
   /** Re-evaluate the current Pi descriptor, including immutable spawn inputs. */
   refreshPiConfiguration?: boolean;
   /** Fail closed before an otherwise-required runtime replacement mutates route state. */
@@ -208,7 +210,12 @@ export async function applyRuntimeSetModelChange(
   const piRouteChanged = sess?.agentKind === 'pi' &&
     (sess.model !== model || currentProviderId !== nextProviderId);
   const piPreview = piRouteChanged || (sess?.agentKind === 'pi' && input.refreshPiConfiguration === true)
-    ? await sess.previewModelSwitch?.(model, { providerId: nextProviderId })
+    ? await sess.previewModelSwitch?.(model, {
+        providerId: nextProviderId,
+        ...(input.contextWindowBudget !== undefined
+          ? { contextWindowBudget: input.contextWindowBudget }
+          : {}),
+      })
     : undefined;
   if ((piRouteChanged || (sess?.agentKind === 'pi' && input.refreshPiConfiguration === true)) && !piPreview) {
     throw new Error('Pi model switch preview is unavailable; runtime selection was not changed');
@@ -224,7 +231,12 @@ export async function applyRuntimeSetModelChange(
     input.forceSessionRebuild !== true &&
     !credentialModeRequiresRebuild &&
     !requiresCodexThreadRelink
-      ? await sess.requiresModelSwitchRebuild?.(model, { providerId: nextProviderId }) ?? false
+      ? await sess.requiresModelSwitchRebuild?.(model, {
+          providerId: nextProviderId,
+          ...(input.contextWindowBudget !== undefined
+            ? { contextWindowBudget: input.contextWindowBudget }
+            : {}),
+        }) ?? false
       : false;
   const shouldCloseSession = Boolean(sess) && (
     input.forceSessionRebuild === true ||
@@ -433,6 +445,9 @@ export async function applyRuntimeSetModelChange(
         ? { providerId: nextProviderId }
         : {}),
       ...(effort !== undefined ? { effort } : {}),
+      ...(input.contextWindowBudget !== undefined
+        ? { contextWindowBudget: input.contextWindowBudget }
+        : {}),
     });
   } catch (err) {
     if (providerId !== undefined) {

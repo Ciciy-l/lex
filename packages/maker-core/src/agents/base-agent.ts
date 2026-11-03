@@ -1899,6 +1899,8 @@ export interface StartSessionOptions {
    */
   remoteHostId?: string;
   model: string;
+  /** Effective task budget, already clamped by the host for this route. */
+  contextWindowBudget?: number;
   /**
    * 本次会话显式选择的供应商来源。maker-core 只用它推导子进程凭证形态;
    * 具体上游路由仍由 host 的 proxy / provider catalog 负责。
@@ -2505,12 +2507,19 @@ export interface AgentSessionHandle {
   reviewAutoPermissionAction?(action: ReviewableAction): Promise<AutoReviewDecision>;
 
   /** 运行时切换模型 —— 不支持时抛 NotSupportedError */
-  setModel?(model: string, opts?: { providerId?: string | null; effort?: Effort }): Promise<void>;
+  setModel?(
+    model: string,
+    opts?: {
+      providerId?: string | null;
+      effort?: Effort;
+      contextWindowBudget?: number | null;
+    },
+  ): Promise<void>;
 
   /** Read-only Pi preflight before the host changes its persisted route or context. */
   previewModelSwitch?(
     model: string,
-    opts?: { providerId?: string | null },
+    opts?: { providerId?: string | null; contextWindowBudget?: number | null },
   ): Promise<PiModelSwitchPreview>;
 
   /**
@@ -2520,7 +2529,7 @@ export interface AgentSessionHandle {
    */
   requiresModelSwitchRebuild?(
     model: string,
-    opts?: { providerId?: string | null },
+    opts?: { providerId?: string | null; contextWindowBudget?: number | null },
   ): boolean | Promise<boolean>;
 
   /** 运行时切换 effort */

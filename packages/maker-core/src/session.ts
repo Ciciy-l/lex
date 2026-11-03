@@ -2063,7 +2063,14 @@ export class Session {
     try { await change(); } finally { this.historyConfigurationChanges--; }
   }
 
-  async setModel(model: string, opts?: { providerId?: string | null; effort?: Effort }): Promise<void> {
+  async setModel(
+    model: string,
+    opts?: {
+      providerId?: string | null;
+      effort?: Effort;
+      contextWindowBudget?: number | null;
+    },
+  ): Promise<void> {
     this.assertHistoryConfigurationReady();
     if (!this.capabilities.switchModel.supported) {
       throw new NotSupportedError('switchModel', this.capabilities.switchModel);
@@ -2076,14 +2083,14 @@ export class Session {
 
   async previewModelSwitch(
     model: string,
-    opts?: { providerId?: string | null },
+    opts?: { providerId?: string | null; contextWindowBudget?: number | null },
   ): Promise<PiModelSwitchPreview | undefined> {
     return this.handle.previewModelSwitch?.(model, opts);
   }
 
   async requiresModelSwitchRebuild(
     model: string,
-    opts?: { providerId?: string | null },
+    opts?: { providerId?: string | null; contextWindowBudget?: number | null },
   ): Promise<boolean> {
     return await this.handle.requiresModelSwitchRebuild?.(model, opts) ?? false;
   }
