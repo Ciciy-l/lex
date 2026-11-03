@@ -546,13 +546,18 @@ export class RegionScreenshotSession {
 
   async saveRecording(sender: WebContents, frame: Electron.WebFrameMain | null, token: unknown, bytes: unknown, format: unknown): Promise<boolean> {
     const member = this.member(sender, frame, token);
-    if (!member || !this.live || this.live.member !== member || this.exporting) return false;
-    const expected = this.live.mode === 'gif' ? 'gif' : this.live.mode === 'video' ? 'webm' : null;
+    const live = this.live;
+    if (!member || !live || live.member !== member || this.exporting) return false;
+    const expected = live.mode === 'gif' ? 'gif' : live.mode === 'video' ? 'webm' : null;
     if (!expected || format !== expected || !validRecordingBytes(bytes, format)) return false;
     this.exporting = true;
     // Let the native save dialog own Escape; cancelling it must retain the finished clip.
     this.releaseEscape();
-    try { return await saveRegionRecording(bytes, expected); }
+    try {
+      return await saveRegionRecording(bytes, expected, () => (
+        !this.closed && this.ownerCurrent() && this.live === live && this.live.member === member
+      ));
+    }
     finally { this.exporting = false; this.holdEscape(); }
   }
 

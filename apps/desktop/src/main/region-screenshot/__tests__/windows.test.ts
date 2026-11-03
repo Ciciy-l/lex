@@ -463,6 +463,22 @@ describe('screenshot window lifecycle', () => {
     mocks.saveRecording.mockResolvedValueOnce(false);
     expect(await session.saveRecording(owner, owner.mainFrame, session.token, clip, 'webm')).toBe(false);
     expect(session.isClosed).toBe(false);
+    let finishSave!: () => void;
+    let saveCurrent!: () => boolean;
+    const pendingSave = new Promise<void>((resolve) => { finishSave = resolve; });
+    mocks.saveRecording.mockImplementationOnce(async (...args: unknown[]) => {
+      saveCurrent = args[2] as () => boolean;
+      await pendingSave;
+      return saveCurrent();
+    });
+    const saving = session.saveRecording(owner, owner.mainFrame, session.token, clip, 'webm');
+    await vi.waitFor(() => expect(saveCurrent).toBeTypeOf('function'));
+    expect(saveCurrent()).toBe(true);
+    mocks.ownerScope = 'owner-b:2';
+    expect(saveCurrent()).toBe(false);
+    finishSave();
+    expect(await saving).toBe(false);
+    mocks.ownerScope = 'owner-a:1';
     expect(await session.saveRecording(owner, owner.mainFrame, session.token, clip, 'webm')).toBe(true);
     openRecording.mockReturnValue(true);
     expect(session.previewRecording(owner, owner.mainFrame, session.token, clip, 'webm')).toBe(true);
