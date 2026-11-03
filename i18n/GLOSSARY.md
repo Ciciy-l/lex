@@ -223,6 +223,10 @@ Lex 内置的终端工作区：在同一个任务中管理多个 CLI Agent pane�
 
 模型一次请求可容纳的 token 上限。自定义 Provider 的窗口编辑字段(#386)与用量/压缩相关文案使用;空间紧的 placeholder 可缩写为「上下文 / Context / コンテキスト / 컨텍스트」+ (tokens)。
 
+### Context window
+
+The token capacity available to one task; distinct from current usage and the automatic-compaction percentage.
+
 ### Crash
 
 应用异常终止。此前只出现在内部日志里, 随日志上报进入用户可见文案, 因此登记。ko 取音译「크래시」而非「충돌」——后者在韩语里更常指冲突/碰撞(如合并冲突), 会与 merge conflict 语境混读。proposed。
@@ -486,6 +490,10 @@ Orca Worker 创建卡上的命名字段。它只是派活用的名字，不改�
 ### Run records
 
 日志上报文案里对「App 自身运行日志」的用户可见说法。刻意不直接叫「日志」: 设置页同屏已有「日志目录」「Debug 日志」两处指本地文件, 而这里要表达的是被上报的那部分内容(基础设施运行记录, 不含对话)。proposed: 与「日志」的分工尚未产品裁决。
+
+### Screenshot
+
+A user-captured image of screen or window content, including the editor and task handoff surfaces.
 
 ### shortcut listener permission
 

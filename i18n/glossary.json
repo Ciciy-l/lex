@@ -2306,6 +2306,30 @@
         "ko": "채널"
       },
       "note": "A named provider connection with protocol-specific URL and credentials; distinct from an engine and from a release channel."
+    },
+    {
+      "id": "context-window",
+      "status": "proposed",
+      "en": "Context window",
+      "translations": {
+        "zh-CN": "上下文窗口",
+        "zh-TW": "上下文視窗",
+        "ja": "コンテキストウィンドウ",
+        "ko": "컨텍스트 창"
+      },
+      "note": "The token capacity available to one task; distinct from current usage and the automatic-compaction percentage."
+    },
+    {
+      "id": "screenshot",
+      "status": "proposed",
+      "en": "Screenshot",
+      "translations": {
+        "zh-CN": "截图",
+        "zh-TW": "截圖",
+        "ja": "スクリーンショット",
+        "ko": "스크린샷"
+      },
+      "note": "A user-captured image of screen or window content, including the editor and task handoff surfaces."
     }
   ]
 }

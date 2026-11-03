@@ -76,6 +76,9 @@ Pi 任务时冻结，并写入该任务 `settings.json` 的 `compaction.reserveT
 （`capacity - budget * pct/100`）；切模只按这份百分比快照重算，不回读最新全局值。
 模型容量用于 Pi 原生请求长度裁剪，不能随小预算缩到 1K；工作预算只调整原生压缩阈值，
 并作为已应用预算进入 Cindy 的用量快照。
+任务级窗口预算优先于模型级工作默认和容量缓存，但压缩百分比仍使用 Lex 既有 Pi 偏好；预算切换
+经同一 `previewModelSwitch` / settings 重载事务收敛，运行中只在回合边界应用，不能直接覆盖 Pi
+原生请求容量或伪造 `set_compaction_reserve_tokens`。
 大窗切小窗先由 Desktop 的统一目标窗口事务按目标窗口 90% 固定压力线评估（独立于 Pi
 日常自动压缩百分比），命中时换干净原生窗口；未命中时，按官方 Pi API 刷新模型目录，调用 set_model 并通过 get_state 核验目标路由；
 不使用私有 refresh_models / set_compaction_reserve_tokens RPC。目录刷新经内部扩展的
