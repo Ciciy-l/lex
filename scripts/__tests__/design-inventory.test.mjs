@@ -58,7 +58,7 @@ test('DS-8: every desktop globals.css surface includes its generated token style
   const { surfaces } = buildGeneratedSurfaces(ROOT);
   const consumers = surfaces.filter(surface => surface.platform === 'desktop'
     && surface.styleSources.includes('apps/desktop/src/renderer/styles/globals.css'));
-  assert.equal(consumers.length, 6);
+  assert.equal(consumers.length, 10);
   for (const surface of consumers) {
     assert.ok(surface.styleSources.includes('apps/desktop/src/renderer/styles/generated/tokens.css'), surface.id);
   }
@@ -1007,11 +1007,15 @@ test('裸圆角统计覆盖 React style 对象的 camelCase borderRadius', () =>
 
 test('renderer 模块图入口双向核对: index.tsx 的参数→入口模块映射必须与 catalog 一致', () => {
   const actualEntries = extractRendererEntries(fs.readFileSync(RENDERER_INDEX_PATH, 'utf8'));
-  // 与源码实况钉死:当前 3 个参数各自加载的入口模块。
+  // 与源码实况钉死:当前辅助窗口各自加载的入口模块。
   assert.deepEqual(Object.fromEntries(actualEntries), {
+    recordingPreview: './recording-preview-entry',
     remoteDesktopViewer: './remote-desktop-viewer-entry',
     resourceUsageWindow: './resource-usage-entry',
     sidebarWindow: './sidebar-window-entry',
+    regionScreenshot: './region-screenshot-entry',
+    regionScreenshotEditor: './region-screenshot-entry',
+    regionScreenshotPin: './region-screenshot-pin-entry',
     ghostPanelWindow: './ghost-panel-window-entry',
   });
   const covered = new Map(

@@ -554,5 +554,67 @@
   "reviewDate": "2026-09-18",
   "maintenanceOwner": "Lex OMP integration",
   "basis": "User-supplied official OMP SVG; the exception is bound to the three official gradient stops in this component."
- }
+ },
+ {
+  "glob": "apps/desktop/src/renderer/features/region-screenshot/screenshotColors.ts",
+  "reason": "Lex screenshot annotation and functional overlay ink burn into user image content; DESIGN.md registers these exact fixed pixel roles.",
+  "owner": "lex-screenshot",
+  "matches": [
+   { "value": "#FF3B30", "before": "red:\\s*'" },
+   { "value": "#FFCC00", "before": "yellow:\\s*'" },
+   { "value": "#34C759", "before": "green:\\s*'" },
+   { "value": "#007AFF", "before": "blue:\\s*'" },
+   { "value": "#000000", "before": "(?:black|backdrop):\\s*'" },
+   { "value": "#FFFFFF", "before": "(?:white|edge):\\s*'" }
+  ],
+  "reviewDate": "2026-11-03",
+  "maintenanceOwner": "Lex design owner",
+  "basis": "DESIGN.md §2 sanctioned screenshot overlay and annotation ink; exact values only, no reusable palette approval."
+ },
+ {
+  "glob": "apps/desktop/src/main/region-screenshot/editor.ts",
+  "reason": "Native editor window backing matches the screenshot auxiliary-window surface before the React theme paints.",
+  "owner": "lex-screenshot",
+  "matches": [
+   { "value": "#1f1f1e", "before": "backgroundColor:\\s*nativeTheme\\.shouldUseDarkColors\\s*\\?\\s*'" },
+   { "value": "#f8f8f6", "before": ":\\s*'" }
+  ],
+  "reviewDate": "2026-11-03",
+  "maintenanceOwner": "Lex design owner",
+  "basis": "Registered screenshot editor window backing; renderer chrome still consumes semantic theme tokens."
+ },
+ {
+  "glob": "apps/desktop/src/main/region-screenshot/recordingPreview.ts",
+  "reason": "Native recording-preview window backing matches the screenshot auxiliary-window surface before the React theme paints.",
+  "owner": "lex-screenshot",
+  "matches": [
+   { "value": "#1f1f1e", "before": "backgroundColor:\\s*nativeTheme\\.shouldUseDarkColors\\s*\\?\\s*'" },
+   { "value": "#f8f8f6", "before": ":\\s*'" }
+  ],
+  "reviewDate": "2026-11-03",
+  "maintenanceOwner": "Lex design owner",
+  "basis": "Registered recording-preview window backing; renderer chrome still consumes semantic theme tokens."
+ },
+ {
+  "glob": "apps/desktop/src/main/region-screenshot/overlays.ts",
+  "reason": "Transparent capture overlay is a native functional surface, not application chrome.",
+  "owner": "lex-screenshot",
+  "matches": [
+   { "value": "#00000000", "before": "backgroundColor:\\s*'" }
+  ],
+  "reviewDate": "2026-11-03",
+  "maintenanceOwner": "Lex design owner",
+  "basis": "Functional transparent overlay registered by the screenshot design exception."
+ },
+ {
+  "glob": "apps/desktop/src/main/region-screenshot/pins.ts",
+  "reason": "Pinned-image backing is part of the user-facing image window rather than themed application chrome.",
+  "owner": "lex-screenshot",
+  "matches": [
+   { "value": "#000000", "before": "backgroundColor:\\s*'" }
+  ],
+  "reviewDate": "2026-11-03",
+  "maintenanceOwner": "Lex design owner",
+  "basis": "Functional pinned-image backing registered by the screenshot design exception."
+  }
 ]

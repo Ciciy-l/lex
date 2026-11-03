@@ -25,6 +25,7 @@ import {
   formatTurnCostUsd,
 } from '@/lib/usageFormat';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { registerStatusBarCard, type StatusBarCardHandle } from '@/lib/statusBarCards';
 import { useApiKey } from '@/hooks/useApiKey';
 import { useClaudeOAuthConnected } from '@/hooks/useClaudeOAuthConnected';
 import { useClaudeSessionRoute } from '@/hooks/useClaudeSessionRoute';
@@ -972,6 +973,7 @@ export function TodaySpendChip({
   const quotaCardSessionUsage = toQuotaHoverCardSessionUsage(sessionUsage, sessionTokens);
   const quotaCardTurnUsage = toQuotaHoverCardTurnUsage(latestTurnUsage, t);
   const [quotaPopoverOpen, setQuotaPopoverOpen] = React.useState(false);
+  const statusCardHandleRef = React.useRef<StatusBarCardHandle | null>(null);
   const quotaPopoverOpenTimerRef = React.useRef<number | null>(null);
   const quotaPopoverCloseTimerRef = React.useRef<number | null>(null);
   const quotaPopoverPointerInsideRef = React.useRef(false);
@@ -1021,6 +1023,25 @@ export function TodaySpendChip({
     // 受控关闭不保证 Radix 在内容卸载前触发 close-autofocus，先归还已接管的焦点。
     restoreQuotaPopoverFocus();
   }, [keepQuotaPopoverOpen, restoreQuotaPopoverFocus]);
+  React.useEffect(() => {
+    const handle = registerStatusBarCard('quota', () => {
+      keepQuotaPopoverOpen();
+      setQuotaPopoverOpen(false);
+      restoreQuotaPopoverFocus();
+    });
+    statusCardHandleRef.current = handle;
+    return () => {
+      statusCardHandleRef.current = null;
+      handle.unregister();
+    };
+  }, [keepQuotaPopoverOpen, restoreQuotaPopoverFocus]);
+  React.useEffect(() => {
+    if (!quotaPopoverOpen) {
+      statusCardHandleRef.current?.release();
+      return;
+    }
+    statusCardHandleRef.current?.request();
+  }, [quotaPopoverOpen]);
   const scheduleQuotaPopoverOpen = React.useCallback(() => {
     clearQuotaPopoverCloseTimer();
     clearQuotaPopoverOpenTimer();

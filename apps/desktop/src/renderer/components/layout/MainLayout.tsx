@@ -102,6 +102,7 @@ import {
 } from '@/features/right-sidebar/lib/sidebarCommands';
 import { requestSessionSwitch } from '@/features/cc-agent/lib/sessionSwitchCommands';
 import { makeFolderPickerNewMakerRouteState } from '@/features/cc-agent/lib/newMakerRouteState';
+import { applyScreenshotComposeRequest } from '@/features/region-screenshot/screenshotTaskHandoff';
 import { resolveSessionRoute } from '@/lib/orcaSessionIdentity';
 import { remoteProjectsStore } from '@/features/device-link/remoteProjectsStore';
 import { useSharedTaskTasks } from '@/features/device-link/useSharedTaskTasks';
@@ -675,6 +676,18 @@ export function MainLayout() {
     });
     return unsubscribe;
   }, [handleDeepLinkPayload]);
+
+  useEffect(() => {
+    const compose = window.electronAPI.regionScreenshotCompose;
+    if (!compose) return;
+    const pull = () => {
+      void compose.take().then((request) => {
+        if (request) applyScreenshotComposeRequest(request, navigate);
+      }).catch(() => undefined);
+    };
+    pull();
+    return compose.onWake(pull);
+  }, [navigate]);
 
   // pull-on-mount:冷启动期间 (mainWindow 未 ready / renderer 未挂 listener)
   // 缓存在 main 端的 deep link / --open-folder payload, MainLayout 第一次 mount

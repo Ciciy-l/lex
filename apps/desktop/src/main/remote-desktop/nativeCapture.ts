@@ -82,6 +82,8 @@ export class NativeDesktopCapture {
   private busy = false;
   private cancel: ((error?: Error) => void) | null = null;
 
+  constructor(_options?: { encodeOnRequest?: boolean }) {}
+
   async frame(display: string, overlay = false, settings?: RemoteDesktopVideoSettings): Promise<string | RemoteDesktopCursorFrame | null> {
     const profile = desktopVideoProfile(settings);
     const fps = desktopVideoFramerate(settings);

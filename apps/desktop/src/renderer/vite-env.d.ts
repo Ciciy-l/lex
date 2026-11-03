@@ -1276,6 +1276,7 @@ interface ElectronAPI {
     getState: () => {
       overrides: import('../shared/appShortcuts').AppShortcutOverrides;
       platform: string;
+      globalFailures: import('../shared/appShortcuts').AppShortcutId[];
     };
     setOverride: (
       id: import('../shared/appShortcuts').AppShortcutId,
@@ -1289,6 +1290,7 @@ interface ElectronAPI {
     onChanged: (
       callback: (payload: {
         overrides: import('../shared/appShortcuts').AppShortcutOverrides;
+        globalFailures: import('../shared/appShortcuts').AppShortcutId[];
       }) => void,
     ) => () => void;
   };
@@ -2966,6 +2968,10 @@ interface ElectronAPI {
     | { type: 'settings'; tab: 'voice-input' | 'providers'; connect?: string }
     | null
   >;
+  regionScreenshotCompose: {
+    onWake: (callback: () => void) => () => void;
+    take: () => Promise<import('../shared/regionScreenshot').RegionScreenshotComposeRequest | null>;
+  };
 
   // ── TextLightbox (text-lightbox F4/F5) ──
   /**
@@ -5421,6 +5427,11 @@ interface ElectronAPI {
       target: import('../shared/modelContextLimit').ModelContextLimitTarget,
       owner: import('../shared/modelContextLimit').ModelContextLimitOwner,
     ) => Promise<import('../shared/modelContextLimit').ModelContextLimitView>;
+    getSessionContextWindowBounds: (
+      sessionId: string,
+      route?: import('../shared/sessionContextWindowBounds').SessionContextWindowBoundsRoute,
+    ) => Promise<import('../shared/sessionContextWindowBounds').SessionContextWindowBounds | null>;
+    setContextWindowBudget: (sessionId: string, budget: number | null) => Promise<void>;
 
     // 「在新窗口打开」会话多开
     openSessionInNewWindow: (sessionId: string, deviceId?: string | null) => Promise<void>;

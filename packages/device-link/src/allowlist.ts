@@ -218,6 +218,11 @@ const CORE_INVOKE_CHANNELS: readonly string[] = [
   // 计划模式一级开关(runtime-only, 持久化经 dispatch persistRemoteSetting 回流)。
   // 老被控端无 handler → CHANNEL_NOT_ALLOWED → 控制端 UI 本就按 capabilities.planMode 缺失隐藏入口。
   'maker:set-plan-mode',
+  // Task-scoped context budget. The controlled host owns the catalog, task
+  // preference and runtime, and remains behind the existing remote-control
+  // authorization/revocation gate. Older peers reject the additive channel.
+  'maker:set-context-window-budget',
+  'maker:get-context-window-bounds',
   'maker:set-extra-dirs',
   'maker:set-writable-dirs',
   // Pi 原生分支树:只读快照 + 当前会话内导航。导航业务 handler 在被控端原子同步

@@ -61,6 +61,14 @@ Claude Code 的 `upstream-idle-watchdog.test.ts` 与 desktop 的 `tool-loop-revi
 
 ## 上下文已满时的引擎边界
 
+任务级上下文窗口预算与自动压缩百分比是两个正交输入。Main 负责按目标 provider/model、目录
+物理上限与同路由模型级上限收敛任务预算，并把结果通过 `StartSessionOptions.contextWindowBudget`
+或运行期重建下发；adapter 不得自行猜目录容量。Claude Code 把已收敛窗口写入其原生自动压缩
+环境，Codex 使用 thread/start/resume 的 thread-local 配置，Pi 将工作窗口与既有压缩 reserve
+一起写入原生 settings。模型/来源切换时必须按目标路由重新收敛，不能保留旧路由数字。OMP 在本轮
+没有原生任务预算 adapter，UI 只读当前运行期窗口并保留其既有 manual compact，host 拒绝写入，
+不得伪造为 Pi 或 Codex。
+
 Claude Code 在同一模型上达到设置页自动压缩阈值且尚未满窗时，由 host 注入 `/compact`；
 Pi 读取独立的设置页百分比，在每次启动或恢复任务时冻结并写成原生 `compaction.reserveTokens`，由 Pi 按
 `contextWindow - reserveTokens` 处理 threshold 压缩，并在 provider 报 context overflow 时按原生

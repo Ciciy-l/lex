@@ -2752,7 +2752,16 @@ export class PiAgent extends BaseAgent {
         });
       }
     }
-    const startupWorkingContextWindow = this.deps.resolveModelContextLimit?.(authProviderId, opts.model) ?? undefined;
+    let sessionContextWindowBudget = typeof opts.contextWindowBudget === 'number'
+      && Number.isSafeInteger(opts.contextWindowBudget) && opts.contextWindowBudget > 0
+      ? opts.contextWindowBudget : null;
+    const effectiveWorkingContextWindow = (
+      providerId: string | null | undefined,
+      modelId: string,
+    ): number | undefined => sessionContextWindowBudget
+      ?? this.deps.resolveModelContextLimit?.(providerId, modelId)
+      ?? undefined;
+    const startupWorkingContextWindow = effectiveWorkingContextWindow(authProviderId, opts.model);
     const nativeModel = nativeProviders.find((provider) => provider.id === initialProvider)?.models
       .find((model) => (model.wireId ?? model.id) === initialWireModel);
     const learnedNativeContextWindow = !remote && sessionRuntimeBinaryPath && nativeModel?.contextWindow === undefined
@@ -6285,16 +6294,18 @@ export class PiAgent extends BaseAgent {
     };
     const reserveForWindow = (window: number, source: string | null | undefined, model: string): number => {
       const settings = JSON.parse(buildPiSettingsJsonContent(window, sessionPiAutoCompactPct, [],
-        this.deps.resolveModelContextLimit?.(source, model) ?? undefined));
+        effectiveWorkingContextWindow(source, model)));
       return settings.compaction?.reserveTokens ?? 16_384;
     };
     const previewPiModelSwitch = async (
       model: string,
-      target?: { providerId?: string | null },
+      target?: { providerId?: string | null; contextWindowBudget?: number | null },
     ): Promise<PiModelSwitchPreview> => {
       const requestedProviderId = target && Object.hasOwn(target, 'providerId')
         ? target.providerId
         : mutableProviderId;
+      const requestedBudget = target && Object.hasOwn(target, 'contextWindowBudget')
+        ? target.contextWindowBudget : sessionContextWindowBudget;
       const sameRoute = model === mutableModel && requestedProviderId === mutableProviderId;
       let latestProviders = nativeProviders;
       let latestEnv = nativeEnv;
@@ -6375,7 +6386,9 @@ export class PiAgent extends BaseAgent {
       const knownDescriptor = this.deps.resolvePiRuntimeModelDescriptor
         ? this.deps.resolvePiRuntimeModelDescriptor(sourceId, model)
         : this.capabilities.availableModels.find((candidate) => candidate.id === model);
-      const workingWindow = this.deps.resolveModelContextLimit?.(sourceId, model) ?? 0;
+      const workingWindow = requestedBudget
+        ?? this.deps.resolveModelContextLimit?.(sourceId, model)
+        ?? 0;
       let configuredWindow = nativeModel ? nativeModel.contextWindow ?? 128_000
         : knownDescriptor?.contextWindow ?? (sameRoute && gateway ? retainedLiveGatewayModel?.contextWindow : undefined);
       if (inheritsNativeWindow) {
@@ -6418,7 +6431,7 @@ export class PiAgent extends BaseAgent {
         { remote, fileOps, preview: true,
           runtimeBinaryPath: sessionRuntimeBinaryPath,
           contextWindow: targetContextWindow ?? ctx.contextWindow ?? startupContextWindow,
-          workingContextWindow: this.deps.resolveModelContextLimit?.(sourceId, model) ?? undefined,
+          workingContextWindow: effectiveWorkingContextWindow(sourceId, model),
           piCompactionPct: sessionPiAutoCompactPct,
           shellPath: localShellPath,
           packages: nativePackagePaths,
@@ -6563,7 +6576,7 @@ export class PiAgent extends BaseAgent {
           nextGateway ? requestedProviderId : authProviderId,
           { remote, fileOps, contextWindow: nextDescriptor?.contextWindow ?? ctx.contextWindow,
             runtimeBinaryPath: sessionRuntimeBinaryPath,
-            workingContextWindow: this.deps.resolveModelContextLimit?.(sourceId, model) ?? undefined,
+            workingContextWindow: effectiveWorkingContextWindow(sourceId, model),
             piCompactionPct: sessionPiAutoCompactPct, packages: nativePackagePaths,
             disabledSkills: disabledSkillLaunch },
         );
@@ -6688,14 +6701,22 @@ export class PiAgent extends BaseAgent {
     };
     const switchModel = async (
       model: string,
-      setOpts?: { providerId?: string | null; effort?: Effort },
+      setOpts?: { providerId?: string | null; effort?: Effort; contextWindowBudget?: number | null },
     ): Promise<void> => {
+      if (setOpts?.contextWindowBudget !== undefined) {
+        sessionContextWindowBudget = setOpts.contextWindowBudget;
+      }
       const requestedProviderId = setOpts && Object.hasOwn(setOpts, 'providerId')
         ? setOpts.providerId
         : undefined;
       assertRemotePiContextProfileAvailable(opts.remoteHostId, model, requestedProviderId);
       const effectiveProviderId = requestedProviderId === undefined ? mutableProviderId : requestedProviderId;
-      const preview = await previewPiModelSwitch(model, { providerId: effectiveProviderId });
+      const preview = await previewPiModelSwitch(model, {
+        providerId: effectiveProviderId,
+        ...(setOpts?.contextWindowBudget !== undefined
+          ? { contextWindowBudget: setOpts.contextWindowBudget }
+          : {}),
+      });
       if (preview.action === 'unavailable') throw new Error(preview.reason ?? 'Pi model route is unavailable');
       if (preview.action === 'rebuild') {
         throw new Error(preview.reason ?? 'Pi model route needs a new process startup input');
@@ -6864,12 +6885,12 @@ export class PiAgent extends BaseAgent {
         }
         await this.writePiRuntimeSettings(configHome, {
           fileOps, contextWindow: verifiedWindow,
-          workingContextWindow: this.deps.resolveModelContextLimit?.(effectiveProviderId, model) ?? undefined,
+          workingContextWindow: effectiveWorkingContextWindow(effectiveProviderId, model),
           piCompactionPct: sessionPiAutoCompactPct, packages: nativePackagePaths,
           disabledSkills: disabledSkillLaunch,
         });
         ctx.contextWindow = verifiedWindow;
-        ctx.workingContextWindow = this.deps.resolveModelContextLimit?.(effectiveProviderId, model) ?? undefined;
+        ctx.workingContextWindow = effectiveWorkingContextWindow(effectiveProviderId, model);
       } catch (error) {
         await terminateUnconfirmedCatalogReload(error);
       }
@@ -7521,11 +7542,16 @@ export class PiAgent extends BaseAgent {
         const contextSource = (id: string | null | undefined) =>
           id == null || id === 'xd' || id === PI_PROVIDER_ID ? PI_PROVIDER_ID : id;
         if (model !== mutableModel || contextSource(provider) !== contextSource(mutableProviderId)) return false;
-        const window = deps.resolveModelContextLimit?.(provider, model);
+        const window = target?.contextWindowBudget !== undefined
+          ? target.contextWindowBudget
+          : effectiveWorkingContextWindow(provider, model);
         return (window ?? undefined) !== ctx.workingContextWindow;
       },
 
-      async setModel(model: string, setOpts?: { providerId?: string | null; effort?: Effort }): Promise<void> {
+      async setModel(
+        model: string,
+        setOpts?: { providerId?: string | null; effort?: Effort; contextWindowBudget?: number | null },
+      ): Promise<void> {
         if (reviewMode) return;
         // 会话级串行闸:整段"写待切换快照 → set_model RPC → 落定/回滚"必须是一个临界区。
         // 并发或连点切换(本地 + 远程控制端同时切)若交错,A 写 pending、B 写 pending、A 落定 B 的

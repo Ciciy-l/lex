@@ -109,8 +109,11 @@ import {
 } from '@/contexts/dataOwnerGeneration';
 import {
   insertPromptIntoEditor,
+  peekComposerSubmitRequest,
+  subscribeComposerSubmitRequest,
   subscribePromptInsert,
   subscribeSessionLinkInsert,
+  takeComposerSubmitRequest,
 } from '@/lib/composerActionsBus';
 import { resolveComposerModelSelection } from './composerModelSelection';
 import type { SessionRuntimeProfileProjection, SessionRuntimePendingProjection } from '@/lib/ccAgent.types';
@@ -3262,6 +3265,9 @@ export function ChatInput({
   >(() => {});
   const voiceInputCanStopAndSendRef = useRef(false);
   const composerCanSubmitRef = useRef(false);
+  const composerSubmitRequestSendRef = useRef<
+    ((deliveryMode?: MessageDeliveryMode) => void | Promise<void>) | null
+  >(null);
   const handleVoiceInputStartRef = useRef(handleVoiceInputStart);
   // The voice lifecycle locks surrounding composer mutations while listening,
   // but that must not disable the shortcut that stops the active recording.
@@ -5964,7 +5970,38 @@ export function ChatInput({
   );
   useEffect(() => {
     voiceInputStopAndSendRef.current = handleClickSend;
+    composerSubmitRequestSendRef.current = handleClickSend;
   }, [handleClickSend]);
+
+  useEffect(() => {
+    if (!editor || !storageKey) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const attempt = () => {
+      timer = null;
+      const request = peekComposerSubmitRequest(storageKey);
+      if (!request || editor.isDestroyed) return;
+      const ready = composerCanSubmitRef.current
+        && !!composerSubmitRequestSendRef.current
+        && !(sessionId && hasPendingAgentSendDispatch(sessionId))
+        && !composerMutationLockedRef.current
+        && !isEditorEmpty(editor)
+        && latestAttachmentsRef.current.some((file) => file.url === request.attachmentUrl);
+      if (ready) {
+        takeComposerSubmitRequest(storageKey);
+        void composerSubmitRequestSendRef.current?.();
+        return;
+      }
+      timer = setTimeout(attempt, 100);
+    };
+    const off = subscribeComposerSubmitRequest(storageKey, () => {
+      if (timer) clearTimeout(timer);
+      attempt();
+    });
+    return () => {
+      off();
+      if (timer) clearTimeout(timer);
+    };
+  }, [editor, storageKey, sessionId]);
 
   // ── Model / effort / permission / folder callbacks (unchanged) ─────
   // ---------------------------------------------------------------------------

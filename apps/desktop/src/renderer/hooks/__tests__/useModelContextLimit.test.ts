@@ -6,23 +6,72 @@ import { useModelContextLimit } from '../useModelContextLimit';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((r) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((r, j) => {
     resolve = r;
+    reject = j;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 const target = { agent: 'codex' as const, providerId: 'openai', modelId: 'gpt-test' };
 const view = (limit: number | null) => ({ limit, isCustomized: limit !== null });
 const get = vi.fn();
 const set = vi.fn();
+let providersChanged: () => void;
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   setDataOwnerGeneration('owner-a', 1);
   Object.assign(window, {
-    electronAPI: { maker: { getModelContextLimit: get, setModelContextLimit: set } },
+    electronAPI: { maker: {
+      getModelContextLimit: get,
+      setModelContextLimit: set,
+      onProvidersChanged: (listener: () => void) => {
+        providersChanged = listener;
+        return () => {};
+      },
+    } },
   });
 });
 describe('context editor request ownership', () => {
+  it('read backs a committed save after a provider refresh arrives in flight', async () => {
+    const pendingSave = deferred<ReturnType<typeof view>>();
+    get.mockResolvedValueOnce(view(128_000)).mockResolvedValue(view(256_000));
+    set.mockReturnValueOnce(pendingSave.promise);
+    const hook = renderHook(() => useModelContextLimit(target));
+    await act(async () => {});
+
+    let saving!: Promise<void>;
+    act(() => { saving = hook.result.current.setLimit(256_000); });
+    await act(async () => { providersChanged(); });
+    expect(hook.result.current.loading).toBe(true);
+
+    await act(async () => {
+      pendingSave.resolve(view(256_000));
+      await saving;
+    });
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(hook.result.current).toMatchObject({ limit: 256_000, loading: false, error: false });
+    hook.unmount();
+  });
+
+  it('recovers the committed value after a failed save despite a refresh', async () => {
+    const pendingSave = deferred<ReturnType<typeof view>>();
+    get.mockResolvedValueOnce(view(128_000)).mockResolvedValue(view(192_000));
+    set.mockReturnValueOnce(pendingSave.promise);
+    const hook = renderHook(() => useModelContextLimit(target));
+    await act(async () => {});
+
+    let saving!: Promise<void>;
+    act(() => { saving = hook.result.current.setLimit(256_000); });
+    await act(async () => { providersChanged(); });
+    await act(async () => {
+      pendingSave.reject(new Error('synthetic save failure'));
+      await saving;
+    });
+    expect(hook.result.current).toMatchObject({ limit: 192_000, loading: false, error: true });
+    hook.unmount();
+  });
+
   it('does not let an old model read overwrite the current model', async () => {
     const old = deferred<ReturnType<typeof view>>();
     get.mockReturnValueOnce(old.promise).mockResolvedValueOnce(view(200_000));

@@ -48,13 +48,18 @@ export interface IngestedChatImage {
  * 白名单外 mime 抛错,renderer 侧有 base64 内存 fallback 兜底。
  */
 export async function ingestChatImageBuffer(
-  params: { buffer: Uint8Array; mimeType: string },
+  params: { buffer: Uint8Array; mimeType: string; assertStillValid?: () => void },
   db?: LedgerDb,
 ): Promise<IngestedChatImage> {
+  if (params.assertStillValid && !db) {
+    throw new Error('chat-attachments: guarded ingest requires an explicit database');
+  }
+  params.assertStillValid?.();
   const written = await blobStore.writeBlob({
     buffer: params.buffer,
     mimeType: params.mimeType,
   });
+  params.assertStillValid?.();
   await ledger.recordBlob(
     {
       hash: written.hash,
@@ -65,6 +70,7 @@ export async function ingestChatImageBuffer(
     },
     db,
   );
+  params.assertStillValid?.();
   return { url: written.url, filename: `${written.hash}${written.ext}` };
 }
 

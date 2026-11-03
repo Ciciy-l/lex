@@ -157,7 +157,10 @@ import {
   resolveModelDefaultContextWindow,
 } from './catalog-to-descriptors.js';
 import { readModelContextLimit } from './model-context-limit-store.js';
-import { resolveDesktopModelContextProviderId } from './model-context-settings.js';
+import {
+  applySessionContextWindowBudgetToCreateOpts,
+  resolveDesktopModelContextProviderId,
+} from './model-context-settings.js';
 import {
   prepareCodexCustomContextCatalog,
   prepareCodexFastModeCatalog,
@@ -2769,6 +2772,7 @@ export function getMaker(): Maker {
           }
           // 所有创建路径共用的派发边界,opts.providerId 此刻已是本次启动的终值。
           freezeSessionProviderAtStart(sessionId, opts.providerId);
+          await applySessionContextWindowBudgetToCreateOpts(sessionId, opts, getActiveCatalog());
           await preparePersistedOrcaSessionStart(sessionId, opts as MakerSessionCreateOpts);
           await prepareCodexHistoryStart(sessionId, opts);
           if (opts.agentKind === 'pi' && opts.thinkingEnabled === undefined) {

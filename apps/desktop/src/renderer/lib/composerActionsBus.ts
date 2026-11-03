@@ -4,6 +4,8 @@
  * other's insert requests.
  */
 
+import { getDataOwnerGeneration, isDataOwnerGenerationCurrent, type DataOwnerGeneration } from '@/contexts/dataOwnerGeneration';
+
 const INSERT_SESSION_LINK_EVENT = 'cindy-composer-insert-session-link';
 
 /** A request to insert one conversation/message deep link into a composer. */
@@ -94,4 +96,62 @@ export function insertPromptIntoEditor(
   chain.focus('end');
   if (!opts.isEmpty) chain.splitBlock();
   chain.insertContent(opts.text).run();
+}
+
+export interface ComposerSubmitRequest {
+  storageKey: string;
+  attachmentUrl: string;
+  expiresAt: number;
+}
+
+const DEFAULT_SUBMIT_TTL_MS = 15_000;
+const pendingSubmitRequests = new Map<
+  string,
+  ComposerSubmitRequest & { owner: DataOwnerGeneration }
+>();
+const submitRequestHandlers = new Map<string, Set<() => void>>();
+
+export function requestComposerSubmit(
+  request: Omit<ComposerSubmitRequest, 'expiresAt'>,
+  ttlMs = DEFAULT_SUBMIT_TTL_MS,
+): void {
+  pendingSubmitRequests.set(request.storageKey, {
+    ...request,
+    expiresAt: Date.now() + ttlMs,
+    owner: getDataOwnerGeneration(),
+  });
+  for (const handler of submitRequestHandlers.get(request.storageKey) ?? []) handler();
+}
+
+export function peekComposerSubmitRequest(storageKey: string): ComposerSubmitRequest | null {
+  const request = pendingSubmitRequests.get(storageKey);
+  if (!request) return null;
+  if (request.expiresAt <= Date.now() || !isDataOwnerGenerationCurrent(request.owner)) {
+    pendingSubmitRequests.delete(storageKey);
+    return null;
+  }
+  return request;
+}
+
+export function takeComposerSubmitRequest(storageKey: string): ComposerSubmitRequest | null {
+  const request = peekComposerSubmitRequest(storageKey);
+  pendingSubmitRequests.delete(storageKey);
+  return request;
+}
+
+export function subscribeComposerSubmitRequest(
+  storageKey: string,
+  handler: () => void,
+): () => void {
+  let handlers = submitRequestHandlers.get(storageKey);
+  if (!handlers) {
+    handlers = new Set();
+    submitRequestHandlers.set(storageKey, handlers);
+  }
+  handlers.add(handler);
+  if (peekComposerSubmitRequest(storageKey)) queueMicrotask(handler);
+  return () => {
+    handlers.delete(handler);
+    if (handlers.size === 0) submitRequestHandlers.delete(storageKey);
+  };
 }

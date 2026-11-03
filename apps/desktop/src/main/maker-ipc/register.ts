@@ -57,7 +57,23 @@ import { isCodexAccountProvider, codexAccountState, codexAccountLoginName, login
 
 import { readCodexContextWindowInfo } from '../maker-host/codex-context-window.js';
 import { prepareCodexCustomContextCatalog } from '../maker-host/codex-custom-context-catalog.js';
-import { resolveConfiguredContextWindow, resolveDesktopModelContextProviderId } from '../maker-host/model-context-settings.js';
+import {
+  contextWindowBudgetChangesEffectiveWindow,
+  readStoredSessionContextWindowBudget,
+  resolveConfiguredContextWindow,
+  resolveDesktopModelContextProviderId,
+  resolveSessionContextWindowBounds,
+} from '../maker-host/model-context-settings.js';
+import {
+  isSessionContextWindowBudgetCustomized,
+  readSessionContextWindowBudget,
+  writeSessionContextWindowBudget,
+} from '../maker-host/session-context-budget-store.js';
+import {
+  MAX_CONTEXT_WINDOW_BUDGET,
+  MIN_CONTEXT_WINDOW_BUDGET,
+} from '../../shared/sessionContextWindowBudget.js';
+import { normalizeSessionContextWindowBoundsRoute } from '../../shared/sessionContextWindowBounds.js';
 import { getCodexHome } from '../maker-host/auth-adapters.js';
 import { getCachedBinaryStatus } from '../agent-binaries/index.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -17273,6 +17289,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           ? dbToMakerAgentKind(getSessionDbAgentKind(sessionId))
           : persistedSessionMeta?.agentKind);
       const targetRouteProviderId = targetProviderId;
+      const storedSessionBudget = readSessionContextWindowBudget(sessionId);
+      const targetSessionBudget = storedSessionBudget === null || runtimeAgentKind === undefined
+        ? undefined
+        : resolveConfiguredContextWindow(
+            getActiveCatalog(), runtimeAgentKind, targetRouteProviderId, model, storedSessionBudget,
+          ) ?? storedSessionBudget;
       let currentRuntimeModel = liveSessionBeforeRouteChange?.model ??
         internalOptions.previousPiRoute?.model ?? persistedSessionMeta?.model;
       let runtimeRouteChanged =
@@ -17283,6 +17305,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       const piPreview = runtimeAgentKind === 'pi' && (runtimeRouteChanged || piConfigurationRefresh) && liveSessionBeforeRouteChange
         ? await liveSessionBeforeRouteChange.previewModelSwitch?.(model, {
             providerId: targetRouteProviderId,
+            ...(targetSessionBudget !== undefined
+              ? { contextWindowBudget: targetSessionBudget }
+              : {}),
           })
         : undefined;
       assertRuntimeOwnerCurrent();
@@ -17795,6 +17820,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               sessionId,
               model,
               providerId: effectiveProviderId,
+              ...(targetSessionBudget !== undefined
+                ? { contextWindowBudget: targetSessionBudget }
+                : {}),
               ...(piConfigurationRefresh ? { refreshPiConfiguration: true } : {}),
               ...(canTransferThread ? {
                 requiresCodexThreadRelink: () => maker.requiresCodexThreadHostTransfer({
@@ -18629,6 +18657,152 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         throwIpcError('INVALID_PARAMS', 'sessionId + enabled required');
       }
       return handleSetPlanMode(sessionId, enabled);
+    },
+  );
+
+  ipcMain.handle(
+    MAKER_INVOKE.SET_CONTEXT_WINDOW_BUDGET,
+    async (event, sessionId: unknown, budget: unknown) => {
+      if (!isDeviceLinkInvoke()) {
+        assertTrustedAppRendererEvent(event as Parameters<typeof assertTrustedAppRendererEvent>[0]);
+      }
+      if (typeof sessionId !== 'string' || sessionId.length === 0) {
+        throwIpcError('INVALID_PARAMS', 'sessionId required');
+      }
+      if (
+        budget !== null
+        && (typeof budget !== 'number'
+          || !Number.isSafeInteger(budget)
+          || budget < MIN_CONTEXT_WINDOW_BUDGET
+          || budget > MAX_CONTEXT_WINDOW_BUDGET)
+      ) {
+        throwIpcError(
+          'INVALID_PARAMS',
+          `context window budget must be null or an integer within [${MIN_CONTEXT_WINDOW_BUDGET}, ${MAX_CONTEXT_WINDOW_BUDGET}]`,
+        );
+      }
+      const snapshot = getCurrentDbClientSnapshot();
+      const ownerScope = activeOwnerScopeKey();
+      const assertOwnerCurrent = () => {
+        if (isAppSessionBoundaryPending()
+          || !snapshot
+          || snapshot !== getCurrentDbClientSnapshot()
+          || ownerScope !== activeOwnerScopeKey()) {
+          throwIpcError('PRECONDITION_FAILED', 'Account changed during context budget update');
+        }
+      };
+      assertOwnerCurrent();
+      return withSessionPermissionChange(sessionId, async () => {
+        assertOwnerCurrent();
+        await assertReviewSettingsUnlocked(sessionId);
+        assertOwnerCurrent();
+        const [row] = await snapshot!.client.drizzle.select({
+          agentKind: sessions.agentKind,
+          model: sessions.model,
+          providerId: sessions.providerId,
+        })
+          .from(sessions)
+          .where(eq(sessions.id, sessionId))
+          .limit(1);
+        assertOwnerCurrent();
+        if (!row) throwIpcError('NOT_FOUND', 'session not found');
+        const agentKind = dbToMakerAgentKind(row.agentKind);
+        if (agentKind === 'omp') {
+          throwIpcError(
+            'UNSUPPORTED_CAPABILITY',
+            'OMP task context budgets are read-only in this version',
+          );
+        }
+        const live = maker.getSession(sessionId);
+        const providerId = getSessionProvider(sessionId) ?? row.providerId ?? null;
+        const previous = readSessionContextWindowBudget(sessionId);
+        assertOwnerCurrent();
+        const changesEffectiveWindow = contextWindowBudgetChangesEffectiveWindow({
+          catalog: getActiveCatalog(),
+          agent: agentKind,
+          providerId,
+          modelId: live?.model ?? row.model,
+          previous,
+          next: budget,
+        });
+        writeSessionContextWindowBudget(sessionId, budget);
+        try {
+          if (live && changesEffectiveWindow) {
+            await applyRuntimeSetModelChange({
+              maker,
+              sessionId,
+              model: live.model,
+              providerId,
+              forceSessionRebuild: true,
+              contextWindowBudget: budget,
+              isSessionInTurn,
+              registerPendingCredentialSwitch: registerPendingCredentialSwitchForSession,
+              clearPendingCredentialSwitch: clearPendingCredentialSwitchForSession,
+              getPendingCredentialSwitch: getPendingCredentialSwitchTarget,
+              wakeSessionInputQueue: wakeSessionInputAfterCredentialSwitch,
+              codexAuthInjection: getCodexProxyAuthInjectionState(),
+              logger: log,
+            });
+          }
+          assertOwnerCurrent();
+        } catch (error) {
+          if (!isAppSessionBoundaryPending()
+            && snapshot === getCurrentDbClientSnapshot()
+            && ownerScope === activeOwnerScopeKey()) {
+            writeSessionContextWindowBudget(sessionId, previous);
+          }
+          throw error;
+        }
+        return true;
+      });
+    },
+  );
+
+  ipcMain.handle(
+    MAKER_INVOKE.GET_CONTEXT_WINDOW_BOUNDS,
+    async (event, sessionId: unknown, route: unknown) => {
+      if (!isDeviceLinkInvoke()) {
+        assertTrustedAppRendererEvent(event as Parameters<typeof assertTrustedAppRendererEvent>[0]);
+      }
+      if (typeof sessionId !== 'string' || sessionId.length === 0) {
+        throwIpcError('INVALID_PARAMS', 'sessionId required');
+      }
+      const snapshot = getCurrentDbClientSnapshot();
+      const ownerScope = activeOwnerScopeKey();
+      const assertOwnerCurrent = () => {
+        if (isAppSessionBoundaryPending()
+          || !snapshot
+          || snapshot !== getCurrentDbClientSnapshot()
+          || ownerScope !== activeOwnerScopeKey()) {
+          throwIpcError('PRECONDITION_FAILED', 'Account changed during context budget lookup');
+        }
+      };
+      assertOwnerCurrent();
+      const requestedRoute = normalizeSessionContextWindowBoundsRoute(route);
+      const [row] = await snapshot!.client.drizzle.select({
+          agentKind: sessions.agentKind,
+          model: sessions.model,
+          providerId: sessions.providerId,
+        })
+        .from(sessions)
+        .where(eq(sessions.id, sessionId))
+        .limit(1);
+      assertOwnerCurrent();
+      if (!row && !requestedRoute) return null;
+      const agent = requestedRoute?.agent ?? dbToMakerAgentKind(row?.agentKind);
+      const providerId = requestedRoute
+        ? requestedRoute.providerId ?? null
+        : getSessionProvider(sessionId) ?? row?.providerId ?? null;
+      const modelId = requestedRoute?.model ?? row?.model ?? null;
+      if (!modelId) return null;
+      return resolveSessionContextWindowBounds({
+        catalog: getActiveCatalog(),
+        agent,
+        providerId,
+        modelId,
+        budget: readSessionContextWindowBudget(sessionId),
+        budgetCustomized: isSessionContextWindowBudgetCustomized(sessionId),
+      });
     },
   );
 

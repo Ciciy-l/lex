@@ -196,6 +196,9 @@
     "attentionCount": "확인이 필요한 세션: {{count}}"
   },
   "remoteDesktop": {
+    "zoomOut": "축소",
+    "zoomIn": "확대",
+    "actualSize": "실제 크기 (1:1)",
     "windowsTitle": "잠금 화면 제어",
     "windowsready": "현재 {{appName}} 실행에 허용되었습니다. {{appName}}를 다시 시작하면 관리자 승인이 다시 필요합니다.",
     "windowsmissing": "잠금 화면과 관리자 확인 창을 제어하려면 관리자 승인이 필요합니다.",
@@ -4740,7 +4743,8 @@
         "conflict": "\"{{name}}\"과(와) 충돌합니다",
         "voiceConflict": "음성 입력 단축키와 충돌합니다",
         "composerVoiceConflict": "음성 입력 단축키와 충돌합니다. 메시지 입력의 보내기 단축키 또는 음성 입력 단축키를 변경하세요.",
-        "menuAccelerator": "이 조합은 메뉴 단축키로 등록할 수 없습니다"
+        "menuAccelerator": "이 조합은 메뉴 단축키로 등록할 수 없습니다",
+        "globalRegistrationFailed": "이 전역 단축키를 등록할 수 없습니다. 다른 앱에서 사용 중일 수 있습니다."
       },
       "items": {
         "toggle-sidebar": {
@@ -4862,6 +4866,10 @@
         "terminal-toggle-pane-zoom": {
           "label": "창 영역 최대화",
           "description": "창 영역 최대화"
+        },
+        "region-screenshot": {
+          "label": "스크린샷",
+          "description": "어떤 앱에서든 스크린샷을 찍고 주석을 달거나, 화면에 고정하거나, {{appName}}에 보낼 수 있습니다"
         }
       },
       "none": "설정 안 됨",
@@ -10543,6 +10551,43 @@
         "reset": "초기화",
         "allProjects": "모든 프로젝트"
       }
+    },
+    "contextRingPanel": {
+      "title": "컨텍스트",
+      "meaning": "이번 턴에 AI가 참고할 수 있는 대화, 지시 및 도구 결과입니다.",
+      "used": "사용됨",
+      "available": "공간 충분",
+      "elevated": "사용량 높음",
+      "nearLimit": "한도에 근접",
+      "unknown": "데이터 없음",
+      "continueHint": "계속 대화하세요. 아직 조정할 필요가 없습니다.",
+      "unknownHint": "모델이 사용량을 보고하면 현재 사용량이 표시됩니다.",
+      "tokens": "{{used}} / {{total}} tokens",
+      "compact": "컨텍스트 압축",
+      "compactHelp": "이전 내용을 요약해 공간을 확보합니다. 일부 세부 내용은 생략될 수 있습니다.",
+      "adjust": "창 조정",
+      "taskScope": "이 작업",
+      "modelSettings": "모델 기본 설정",
+      "modelSettingsHint": "이 모델의 기본 창과 한도를 변경합니다. 다른 작업에도 영향을 줍니다.",
+      "remoteModelSettings": "계속 적용하려면 이 작업을 실행하는 컴퓨터에서 모델 설정을 변경하세요.",
+      "costHint": "큰 창은 더 많은 내용을 담지만 비용이 늘어날 수 있습니다.",
+      "technical": "상세 정보",
+      "auto": "자동 압축",
+      "autoHelp": "Codex는 압축 임계값에 가까워지면 컨텍스트를 자동으로 정리합니다."
+    },
+    "contextWindowBudget": {
+      "menuTitle": "이 작업의 컨텍스트 창",
+      "triggerLabel": "작업 컨텍스트 창, 현재 {{window}}",
+      "menuHint": "이 작업에만 적용됩니다. 다음 메시지부터 적용됩니다.",
+      "optionDefault": "모델 기본값",
+      "optionPercent": "{{percent}}%",
+      "inputPrice": "입력 {{price}}/M",
+      "remoteUnsupported": "피제어 기기 버전에서는 이 작업의 컨텍스트 창을 변경할 수 없습니다",
+      "remoteTightenOnly": "피제어 기기 상한을 읽을 수 없어 축소 방향만 제공합니다.",
+      "readOnlyHint": "읽기 전용 작업입니다. 단계와 요금 구간은 볼 수 있지만 변경할 수는 없습니다.",
+      "shrinkWarning": "현재 {{used}} 사용 중 — 더 작은 창은 먼저 압축하거나 새 창으로 전환합니다.",
+      "saveFailed": "컨텍스트 창 저장에 실패했습니다",
+      "ompReadOnly": "OMP는 컨텍스트 창을 런타임 정보로 제공합니다. 이 버전에서는 OMP가 실제로 적용하지 않는 설정을 저장하지 않도록 단계 조정을 읽기 전용으로 표시합니다."
     }
   },
   "effortLevels": {
@@ -12995,6 +13040,144 @@
       "invalidHeaders": "헤더는 모든 값이 문자열인 JSON 객체여야 합니다.",
       "invalidUrl": "사용자 이름이나 비밀번호가 없는 유효한 HTTP 또는 HTTPS URL을 입력하세요.",
       "noAuthSupplier": "이 제공자의 모든 채널에서 인증 사용 안 함"
+    }
+  },
+  "regionScreenshot": {
+    "editor": {
+      "fitWidth": "너비에 맞추기",
+      "loading": "이미지를 불러오는 중…"
+    },
+    "moveToolbar": "도구 모음을 좌우로 이동",
+    "hint": "클릭하여 창이나 요소 선택, 드래그하여 영역 선택 · 스크롤로 범위 변경 · Space 전체 화면 · C 색상 복사 · Esc 종료",
+    "hintWithLast": "클릭하여 창이나 요소 선택, 드래그하여 영역 선택 · 스크롤로 범위 변경 · Space 전체 화면 · R 이전 영역 · C 색상 복사 · Esc 종료",
+    "copy": "복사",
+    "cancel": "스크린샷 종료",
+    "captureFailed": "화면을 캡처하지 못했습니다",
+    "permission": {
+      "title": "화면 기록 권한이 필요합니다",
+      "detail": "스크린샷을 찍으려면 시스템 설정 > 개인정보 보호 및 보안 > 화면 및 시스템 오디오 기록에서 {{appName}}을(를) 허용한 다음 {{appName}}을(를) 다시 여세요.",
+      "openSettings": "시스템 설정 열기",
+      "later": "나중에"
+    },
+    "undo": "실행 취소",
+    "redo": "다시 실행",
+    "pinToScreen": "화면에 고정",
+    "pin": {
+      "copy": "복사",
+      "save": "저장…",
+      "ask": "{{appName}}에 묻기",
+      "opacity": "불투명도",
+      "originalSize": "원래 크기",
+      "passThrough": "마우스 클릭 통과",
+      "close": "닫기",
+      "closeAll": "고정한 이미지 모두 닫기",
+      "unlock": "마우스 조작 복원"
+    },
+    "save": "저장",
+    "cindy": "{{appName}}에 보내기",
+    "tools": {
+      "rect": "사각형",
+      "ellipse": "타원",
+      "line": "직선",
+      "arrow": "화살표",
+      "pen": "펜",
+      "marker": "형광펜",
+      "text": "텍스트",
+      "mosaic": "모자이크",
+      "blur": "흐리게",
+      "step": "번호"
+    },
+    "ai": {
+      "ask": "{{appName}}에 묻기",
+      "translate": "번역",
+      "explain": "설명",
+      "extract": "텍스트 추출"
+    },
+    "size": {
+      "stroke": {
+        "0": "가늘게",
+        "1": "보통",
+        "2": "굵게"
+      },
+      "text": {
+        "0": "작게",
+        "1": "보통",
+        "2": "크게"
+      },
+      "strength": {
+        "0": "약하게",
+        "1": "보통",
+        "2": "강하게"
+      }
+    },
+    "colors": {
+      "red": "빨간색",
+      "yellow": "노란색",
+      "green": "초록색",
+      "blue": "파란색",
+      "black": "검은색",
+      "white": "흰색"
+    },
+    "magnifier": {
+      "copyHint": "C 색상 복사"
+    },
+    "saveFileName": "스크린샷",
+    "saveFailed": "스크린샷을 저장하지 못했습니다",
+    "translation": {
+      "action": "{{language}}(으)로 번역",
+      "targetLanguage": "번역 대상 언어",
+      "followUi": "화면 언어 따르기",
+      "saveFailed": "언어를 저장하지 못했습니다. 다시 선택해 주세요."
+    },
+    "prompt": {
+      "translate": "스크린샷의 언어를 자동으로 감지하고 텍스트를 {{language}}(으)로 번역해 주세요. 원래 문단, 목록, 표를 유지해 주세요. 이미 대상 언어인 부분은 그대로 두고, 여러 언어가 섞여 있으면 다른 언어 부분만 번역해 주세요. 모든 텍스트가 이미 대상 언어이면 간단히 알려 주고 다른 언어로 바꾸지 마세요. 그 외에는 번역문만 출력해 주세요.",
+      "explain": "이 스크린샷의 내용을 설명해 주세요. 오류라면 원인과 해결 방법을, 차트·코드·화면이라면 무엇을 나타내는지와 핵심 내용을 설명해 주세요.",
+      "extract": "이 스크린샷의 텍스트를 그대로 추출해 주세요. 원래의 줄바꿈, 문단, 목록을 유지하고 표는 Markdown 표로 출력해 주세요. 추출한 텍스트만 출력해 주세요."
+    },
+    "live": {
+      "scroll": "스크롤 스크린샷",
+      "video": "화면 녹화",
+      "gif": "GIF 녹화",
+      "recording": "녹화 중…",
+      "preview": "캡처 미리 보기",
+      "cursor": "포인터 표시",
+      "keys": "키 표시 (입력 내용 포함)",
+      "start": "녹화 시작",
+      "pause": "일시 정지",
+      "resume": "계속",
+      "finish": "완료",
+      "paused": "녹화가 일시 정지되었습니다",
+      "done": "캡처를 저장할 수 있습니다",
+      "saved": "저장됨",
+      "copied": "복사됨",
+      "copyFailed": "복사하지 못했습니다. 다시 시도하거나 파일을 저장하세요.",
+      "scrollHint": "선택 영역에서 위아래로 스크롤하거나 자동 스크롤을 선택하세요",
+      "recordHint": "미리 보기에 그린 주석은 녹화에 포함됩니다. 소리는 녹음하지 않습니다.",
+      "format": "형식",
+      "videoFormat": "동영상 (WebM)",
+      "prepareHint": "시작을 누르면 3초 후 녹화됩니다. 소리는 녹음하지 않습니다.",
+      "countdown": "{{count}}초 후 녹화 시작",
+      "countdownHint": "곧 시작합니다. Esc를 누르면 취소됩니다.",
+      "annotate": "주석",
+      "finishing": "완료 처리 중…",
+      "replay": "다시 재생",
+      "previewUnavailable": "미리보기를 열 수 없습니다. 저장하거나 이전 미리보기를 닫고 다시 시도하세요.",
+      "playbackFailed": "재생할 수 없습니다. 녹화 파일은 저장할 수 있습니다.",
+      "annotationNoRoom": "주석을 펼치려면 선택 영역 옆에 여유 공간이 필요합니다.",
+      "overlap": "이 부분을 연결하지 못했습니다. 조금 위로 스크롤하거나 지금까지 캡처한 내용으로 완료하세요.",
+      "limit": "캡처 한도에 도달했습니다. 완료하고 저장하세요.",
+      "captureFailed": "캡처가 중지되었습니다. 다시 시작하거나 캡처된 내용을 저장할 수 있습니다.",
+      "encodeFailed": "녹화를 인코딩하지 못했습니다. 닫은 뒤 다시 녹화하세요.",
+      "exportFailed": "저장하지 못했습니다. 저장을 다시 선택하세요.",
+      "keysUnavailable": "키를 표시할 수 없습니다. macOS에서는 {{appName}}의 입력 모니터링을 허용하세요.",
+      "noRoom": "시작할 수 없습니다. 32 × 32 픽셀 이상의 영역을 선택하고 옆에 미리보기 공간을 남겨 주세요.",
+      "image": "스크린샷",
+      "startScroll": "스크롤 스크린샷 시작",
+      "autoScroll": "자동 스크롤",
+      "stopScroll": "스크롤 중지",
+      "edit": "편집",
+      "autoUnavailable": "자동 스크롤이 중지되었습니다. 선택 영역에서 직접 스크롤할 수 있습니다.",
+      "autoPermission": "자동 스크롤에는 '손쉬운 사용' 권한이 필요합니다. 시스템 설정에서 {{appName}}를 허용한 후 다시 시도하거나 선택 영역에서 직접 스크롤하세요."
     }
   }
 }

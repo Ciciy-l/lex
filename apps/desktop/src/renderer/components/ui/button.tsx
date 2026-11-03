@@ -20,16 +20,21 @@ import { cn } from '@/lib/utils';
 import { Spinner } from './spinner';
 
 export type ButtonVariant = 'primary' | 'secondary' | 'cta';
-export type ButtonSize = 'md' | 'lg';
+export type ButtonSize = 'xxs' | 'xs' | 'sm' | 'md' | 'lg';
+export type ButtonTone = 'default' | 'quiet';
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;
   size?: ButtonSize;
+  tone?: ButtonTone;
   /** Busy actions retain their label and width, and cannot be activated again. */
   loading?: boolean;
 }
 
 const SIZE_STYLES: Record<ButtonSize, string> = {
+  xxs: 'h-[22px]',
+  xs: 'h-6',
+  sm: 'h-7',
   md: 'h-8',
   lg: 'h-9',
 };
@@ -63,6 +68,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       className,
       variant = 'primary',
       size = 'md',
+      tone = 'default',
       type = 'button',
       disabled,
       loading = false,
@@ -81,6 +87,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]',
         SIZE_STYLES[size],
         VARIANT_STYLES[variant],
+        tone === 'quiet' && 'border-transparent bg-transparent text-[var(--text-secondary)] enabled:hover:bg-[var(--button-secondary-hover)]',
         'disabled:cursor-not-allowed disabled:opacity-60',
         className,
       )}

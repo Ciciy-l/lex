@@ -1355,6 +1355,9 @@ export class ClaudeCodeAgent extends BaseAgent {
     const resolveRemoteClaudeRoute = this.deps.resolveRemoteClaudeRoute?.bind(this.deps);
     const getAuthEnv = this.deps.auth.getAuthEnv.bind(this.deps.auth);
     const sdkModel = sdkModelFor(opts.model);
+    let mutableContextWindowBudget = typeof opts.contextWindowBudget === 'number'
+      && Number.isSafeInteger(opts.contextWindowBudget) && opts.contextWindowBudget > 0
+      ? opts.contextWindowBudget : null;
     const initialSdkEffort = this.sdkEffortForModel(opts.model, opts.effort ?? 'high');
     const binaryPath = this.requireLocalBinaryPath();
     const providerRoutedModels = this.capabilities.availableModels.filter((model) =>
@@ -1390,12 +1393,18 @@ export class ClaudeCodeAgent extends BaseAgent {
           ? [{ id: sdkModelFor(model), contextWindow: limit, mirrorOneMillionSuffix: false as const }]
           : [];
       });
+    const sessionBudgetWindowEntry = mutableContextWindowBudget === null ? null : {
+      id: sdkModel,
+      contextWindow: mutableContextWindowBudget,
+      mirrorOneMillionSuffix: false as const,
+    };
     const modelContextWindows = [...new Map([
       ...providerRoutedModels,
       ...(sessionRouteWindowEntry ? [sessionRouteWindowEntry] : []),
       // The host resolves this route’s user budget or current catalog default.
       // Never reuse another provider’s working-window policy.
       ...configuredWindows,
+      ...(sessionBudgetWindowEntry ? [sessionBudgetWindowEntry] : []),
     ].map((entry) => [entry.id, entry])).values()];
     // #3557:会话模型 id 带命名空间前缀(anthropic/... 等网关目录形态)时,CLI
     // 内部小模型调用(bash 前缀判定/标题/摘要)不能用它内置的裸名默认值 ——
@@ -2471,6 +2480,9 @@ export class ClaudeCodeAgent extends BaseAgent {
       ]),
     ];
     const resolveModelContextWindow = (model: string, providerId = mutableProviderId): number | undefined => {
+      if (model === mutableModel && mutableContextWindowBudget !== null) {
+        return mutableContextWindowBudget;
+      }
       const configured = this.deps.resolveModelContextLimit?.(providerId, model);
       if (configured && Number.isFinite(configured) && configured > 0) return configured;
 
@@ -6877,14 +6889,27 @@ export class ClaudeCodeAgent extends BaseAgent {
 
       requiresModelSwitchRebuild: (model, target) => {
         const provider = target?.providerId !== undefined ? target.providerId : mutableProviderId;
+        const budget = target?.contextWindowBudget !== undefined
+          ? target.contextWindowBudget : mutableContextWindowBudget;
+        const expectedBudget = typeof budget === 'number' && Number.isSafeInteger(budget) && budget > 0
+          ? budget : resolveModelContextWindow(model, provider);
         const window = resolveModelContextWindow(model, provider);
-        const expected = typeof window === 'number' && window > 0 ? String(Math.floor(window)) : undefined;
+        const effectiveWindow = budget === undefined ? window : expectedBudget;
+        const expected = typeof effectiveWindow === 'number' && effectiveWindow > 0
+          ? String(Math.floor(effectiveWindow)) : undefined;
+        if (expectedBudget !== window) return true;
         const liveEnv = opts.remoteHostId ? remoteEnv : env;
         return expected !== liveEnv?.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
       },
 
-      async setModel(newModel: string, setModelOpts?: { providerId?: string | null }) {
+      async setModel(
+        newModel: string,
+        setModelOpts?: { providerId?: string | null; contextWindowBudget?: number | null },
+      ) {
         if (reviewMode) return;
+        if (setModelOpts?.contextWindowBudget !== undefined) {
+          mutableContextWindowBudget = setModelOpts.contextWindowBudget;
+        }
         const targetProviderId = setModelOpts?.providerId !== undefined
           ? setModelOpts.providerId
           : mutableProviderId;

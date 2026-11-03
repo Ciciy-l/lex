@@ -484,6 +484,20 @@ export function saveDraft(
   syncDraftUrlsToMain();
 }
 
+/** Keep deferred restoration pinned to the originating draft owner. */
+export function captureDraftRecoveryScope(sessionId: string) {
+  const token = captureDraftDiscardToken(sessionId);
+  return {
+    get: () => drafts.get(token.ownerScopedKey),
+    save: (draft: ComposerDraft) => {
+      if (!isDraftDiscardTokenCurrent(token)) return;
+      // Restore bytes only into the namespace captured at click time. Never
+      // persist this deferred snapshot through the newly active owner.
+      drafts.set(token.ownerScopedKey, draft);
+    },
+  };
+}
+
 /**
  * Drop the draft for `sessionId` from the Map. Idempotent.
  *

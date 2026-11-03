@@ -63,6 +63,15 @@ token）与 [`engineering-conventions.md`](engineering-conventions.md)（i18n）
   写入一份静态默认值快照。配置组与整体设置页应提供相应粒度的恢复入口。
 - 用户通过 agent 要求恢复默认时同样删除 override。
 
+### 任务级上下文窗口
+
+任务窗口预算只覆盖当前 Session，持久化为 owner-scoped 偏好文件中的显式条目，而不是
+`sessions` 表快照或 Renderer localStorage。缺席表示跟随当前模型路由默认；恢复默认必须删除
+条目。存储保留用户请求整数，运行期每次按目标 provider/model、目录物理上限和同路由模型级
+上限重新收敛，不能把旧模型的已收敛窗口带到新模型。任务预算与自动压缩百分比正交；本轮不改
+Lex 既有 CC/Pi 压缩百分比偏好。OMP 暂无实际任务预算 adapter 时只能显示运行期读数并拒绝写入，
+不得保存一个不会生效的数字。
+
 ## 5. 隐藏配置也是正式契约
 
 - 隐藏配置必须有清晰 schema、字段说明、取值约束和安全边界，不能依赖零散分支或隐式

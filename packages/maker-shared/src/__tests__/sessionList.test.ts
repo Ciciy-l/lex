@@ -1130,3 +1130,47 @@ describe('formatRemoteSessionSidebarTime', () => {
     expect(formatRemoteSessionSidebarTime('2025-12-30T12:00:00.000Z', now, t)).toBe('2 天');
   });
 });
+
+describe('project sections fold Windows path spelling', () => {
+  const now = new Date('2026-01-01T00:10:00.000Z').getTime();
+
+  it('keeps one section and one overview project for equivalent Windows paths', () => {
+    const sessions = [
+      session('win-backslash', { workingDir: 'C:\\Repo\\App' }),
+      session('win-forward', { workingDir: 'c:/repo/app' }),
+    ];
+    const projectSections = buildRemoteSessionSections(sessions, now)
+      .filter((section) => section.key.startsWith('project:'));
+
+    expect(projectSections).toHaveLength(1);
+    expect(projectSections[0].data).toHaveLength(2);
+    expect(projectSections[0].title).toBe('App');
+    expect(summarizeRemoteSessionOverview(sessions, new Map(), new Map()).projectCount).toBe(1);
+  });
+
+  it('trims padded paths without losing the section title', () => {
+    const sessions = [
+      session('padded', { workingDir: ' /repo/app/ ' }),
+      session('plain', { workingDir: '/repo/app' }),
+    ];
+    const projectSections = buildRemoteSessionSections(sessions, now)
+      .filter((section) => section.key.startsWith('project:'));
+
+    expect(projectSections).toHaveLength(1);
+    expect(projectSections[0].title).toBe('app');
+    expect(summarizeRemoteSessionOverview(sessions, new Map(), new Map()).projectCount).toBe(1);
+  });
+
+  it('preserves POSIX case and backslashes as distinct project paths', () => {
+    const sessions = [
+      session('lower', { workingDir: '/repo/app' }),
+      session('upper', { workingDir: '/repo/App' }),
+      session('backslash-name', { workingDir: '/repo/app\\name' }),
+    ];
+    const projectSections = buildRemoteSessionSections(sessions, now)
+      .filter((section) => section.key.startsWith('project:'));
+
+    expect(projectSections).toHaveLength(3);
+    expect(summarizeRemoteSessionOverview(sessions, new Map(), new Map()).projectCount).toBe(3);
+  });
+});

@@ -41,6 +41,7 @@ import {
 import { isSystemReservedShortcut } from '../../../shared/keyboardReserved';
 import {
   getAppShortcutCombos,
+  getAppShortcutGlobalFailures,
   getAppShortcutOverrides,
   getAppShortcutPlatform,
   subscribeAppShortcuts,
@@ -120,6 +121,10 @@ export function KeyboardShortcutsSection() {
   const overrides = JSON.parse(overridesJson) as Partial<
     Record<AppShortcutId, AppShortcutCombo | null>
   >;
+  const globalFailuresJson = useSyncExternalStore(subscribeAppShortcuts, () =>
+    JSON.stringify(getAppShortcutGlobalFailures()),
+  );
+  const globalFailures = new Set(JSON.parse(globalFailuresJson) as AppShortcutId[]);
   const [recordingId, setRecordingId] = useState<AppShortcutId | null>(null);
   const [hardwarePane, setHardwarePane] = useState<HardwarePane>('list');
   const [hardwareReturnTo, setHardwareReturnTo] = useState<'list' | 'accessories'>('list');
@@ -467,7 +472,11 @@ export function KeyboardShortcutsSection() {
           const isRecording = recordingId === def.id;
           const customized = def.id in overrides;
           const combos = getAppShortcutCombos(def.id);
-          const rowError = error?.id === def.id ? error.message : null;
+          const rowError = error?.id === def.id
+            ? error.message
+            : globalFailures.has(def.id)
+              ? t('settings.shortcuts.errors.globalRegistrationFailed')
+              : null;
           return (
             <div key={def.id} className="flex items-center gap-2 py-2">
               {/* 条目标题 + 说明双行: 标题主文字色 + 说明次级色,

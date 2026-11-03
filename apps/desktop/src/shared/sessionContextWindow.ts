@@ -42,6 +42,39 @@ export function resolveVerifiedContextWindow(
   return Math.min(budget, maximum);
 }
 
+/** Route-level default/max used by task budget choices, without claiming native runtime facts. */
+export function resolveRouteContextWindowBounds(
+  catalog: Pick<Catalog, 'providers'>,
+  agent: AgentKind,
+  providerId: string | null | undefined,
+  modelId: string,
+): { providerId: string; defaultWindow: number; maxWindow: number | null } | null {
+  const candidates: Array<{ providerId: string; model: CatalogModel }> = [];
+  for (const provider of catalog.providers) {
+    if (provider.routing[agent]?.disabled === true) continue;
+    if (providerId && provider.id !== providerId) continue;
+    for (const model of provider.models[agent] ?? []) {
+      if (model.id === modelId) candidates.push({ providerId: provider.id, model });
+    }
+  }
+  if (candidates.length !== 1) return null;
+  const { providerId: sourceProviderId, model } = candidates[0];
+  const contextWindow = Number.isFinite(model.contextWindow) && model.contextWindow > 0
+    ? Math.round(model.contextWindow) : null;
+  const declaredMax = typeof model.contextWindowMax === 'number'
+    && Number.isFinite(model.contextWindowMax) && model.contextWindowMax > 0
+    ? Math.round(model.contextWindowMax) : null;
+  const maxWindow = declaredMax
+    ?? (model.contextWindowVerified === true ? contextWindow : null);
+  const anchor = maxWindow ?? contextWindow;
+  if (anchor === null) return null;
+  return {
+    providerId: sourceProviderId,
+    defaultWindow: contextWindow === null ? anchor : Math.min(contextWindow, anchor),
+    maxWindow,
+  };
+}
+
 /** Native engines report their effective runtime windows; catalogs cannot replace them. */
 export function resolveSessionContextWindow(
   catalog: Pick<Catalog, 'providers'>,

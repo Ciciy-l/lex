@@ -4,6 +4,10 @@ import { TASK_MIGRATION_LOCAL_CHANNEL } from '@cindy/device-link';
 import { FAVORITE_HOST_READY, FAVORITE_HOST_REQUEST, FAVORITE_HOST_REPLY, FAVORITE_HOST_CHANGED, type ModelFavoritesHostApi } from '../shared/modelFavoritesSync';
 import { invokeOpenPath } from './openPath';
 import { REMOTE_VIEWER } from '../shared/remoteDesktopViewer';
+import {
+  REGION_SCREENSHOT_COMPOSE_CHANNEL,
+  type RegionScreenshotComposeRequest,
+} from '../shared/regionScreenshot';
 
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
@@ -1191,7 +1195,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // renderer 只拿 overrides + platform, 生效值合并在 renderer 侧用同一份
   // shared 代码完成 —— 与 main 消费端判定不漂移。
   appShortcuts: {
-    getState: (): { overrides: Record<string, unknown>; platform: string } =>
+    getState: (): { overrides: Record<string, unknown>; platform: string; globalFailures: string[] } =>
       ipcRenderer.sendSync('app-shortcuts:get'),
     setOverride: (id: string, combo: unknown): Promise<{ overrides: Record<string, unknown> }> =>
       ipcRenderer.invoke('app-shortcuts:set-override', id, combo),
@@ -3820,6 +3824,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     | null
   > => ipcRenderer.invoke('deep-link:take-pending'),
 
+  regionScreenshotCompose: {
+    onWake: (callback: () => void): (() => void) => {
+      const listener = () => callback();
+      ipcRenderer.on(REGION_SCREENSHOT_COMPOSE_CHANNEL.WAKE, listener);
+      return () => ipcRenderer.removeListener(REGION_SCREENSHOT_COMPOSE_CHANNEL.WAKE, listener);
+    },
+    take: (): Promise<RegionScreenshotComposeRequest | null> =>
+      ipcRenderer.invoke(REGION_SCREENSHOT_COMPOSE_CHANNEL.TAKE),
+  },
+
   // ── TextLightbox (text-lightbox F4/F5) ──
   // Read a text file (≤ MAX_PREVIEW_MB) for the in-app preview overlay. Returns
   // `reason: 'oversize'` when over the cap so the renderer can render the
@@ -6046,6 +6060,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
       owner: import('../shared/modelContextLimit').ModelContextLimitOwner,
     ): Promise<import('../shared/modelContextLimit').ModelContextLimitView> =>
       ipcRenderer.invoke('maker:model-context-limit:reset', target, owner),
+
+    getSessionContextWindowBounds: (
+      sessionId: string,
+      route?: import('../shared/sessionContextWindowBounds').SessionContextWindowBoundsRoute,
+    ): Promise<import('../shared/sessionContextWindowBounds').SessionContextWindowBounds | null> =>
+      ipcRenderer.invoke('maker:get-context-window-bounds', sessionId, route),
+    setContextWindowBudget: (sessionId: string, budget: number | null): Promise<void> =>
+      ipcRenderer.invoke('maker:set-context-window-budget', sessionId, budget),
 
     // 「在新窗口打开」会话多开 —— 新建一个完整窗口定位到该 session。
     openSessionInNewWindow: (sessionId: string, deviceId?: string | null): Promise<void> =>

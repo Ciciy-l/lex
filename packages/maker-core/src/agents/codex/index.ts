@@ -5150,8 +5150,12 @@ assertRouteCurrent();
     let credentialMode = requestedCredentialMode
       ?? (localAuthPolicy === 'isolated' ? 'provider-oauth' : undefined);
     const resolveCodexThreadContextWindow = this.deps.resolveCodexThreadContextWindow;
+    let mutableContextWindowBudget = typeof opts.contextWindowBudget === 'number'
+      && Number.isSafeInteger(opts.contextWindowBudget) && opts.contextWindowBudget > 0
+      ? opts.contextWindowBudget : null;
     let initialCustomContextWindow = !reviewMode
-      ? await resolveCodexThreadContextWindow?.(opts.providerId, opts.model) ?? null
+      ? mutableContextWindowBudget
+        ?? await resolveCodexThreadContextWindow?.(opts.providerId, opts.model) ?? null
       : null;
     const customContextCatalogIdentity = (
       model: string,
@@ -5169,19 +5173,22 @@ assertRouteCurrent();
     let usesCustomContextHost = !opts.remoteHostId && initialCustomContextCatalogIdentity !== null;
     const resolveModelSwitchCatalogIdentity = async (
       newModel: string,
-      setOpts?: { providerId?: string | null },
+      setOpts?: { providerId?: string | null; contextWindowBudget?: number | null },
     ): Promise<string | null> => {
       const providerId = setOpts && Object.hasOwn(setOpts, 'providerId')
         ? setOpts.providerId
         : mutableProviderId;
       const contextWindow = reviewMode
         ? null
-        : await resolveCodexThreadContextWindow?.(providerId, newModel) ?? null;
+        : (setOpts?.contextWindowBudget !== undefined
+            ? setOpts.contextWindowBudget
+            : mutableContextWindowBudget)
+          ?? await resolveCodexThreadContextWindow?.(providerId, newModel) ?? null;
       return customContextCatalogIdentity(newModel, contextWindow);
     };
     const modelSwitchRequiresRebuild = async (
       newModel: string,
-      setOpts?: { providerId?: string | null },
+      setOpts?: { providerId?: string | null; contextWindowBudget?: number | null },
     ): Promise<boolean> => {
       const nextProvider = setOpts && Object.hasOwn(setOpts, 'providerId') ? setOpts.providerId : mutableProviderId;
       if (opts.remoteHostId && nextProvider !== mutableProviderId) return true;
@@ -14684,8 +14691,14 @@ assertRouteCurrent();
       requiresModelSwitchRebuild: modelSwitchRequiresRebuild,
 
       // ── Phase 3: 运行时切换 (下一 turn 才生效, 内部已是 mutable 闭包) ──
-      async setModel(newModel: string, setOpts?: { providerId?: string | null }) {
+      async setModel(
+        newModel: string,
+        setOpts?: { providerId?: string | null; contextWindowBudget?: number | null },
+      ) {
         if (reviewMode) return;
+        if (setOpts?.contextWindowBudget !== undefined) {
+          mutableContextWindowBudget = setOpts.contextWindowBudget;
+        }
         if (await modelSwitchRequiresRebuild(newModel, setOpts)) {
           const error = new Error(
             'Codex model switch requires rebuilding the current session handle',

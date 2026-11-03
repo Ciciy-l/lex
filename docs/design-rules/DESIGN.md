@@ -90,6 +90,7 @@ The grayscale rule is near-absolute. The following are the **only** sanctioned n
 > **Additional narrowly-scoped exceptions** (documented in their respective component specs, do NOT generalize as system semantic colors):
 >
 > - **Windows taskbar attention badge** — the native OS overlay uses a fixed red background (`#D91F37`) and white digits/border (`#FFFFFF`) in both Light and Dark taskbars. This is the app-wide count of active tasks needing attention, not an error-only status. The image-specific semantic pair lives in `apps/desktop/src/main/windowsBadgeIcon.ts`; it is not an in-app theme token. Render at 16 logical pixels with 100/125/150/200/300% representations; use a circle for one digit, a rounded square for multiple digits, and `99+` above 99. The accessibility description keeps the exact total. Only the OS image may use its fitted 8–12px system-font digits; web typography and status-dot color rules are unchanged.
+> - **Lex screenshot overlay and annotation ink (registered 2026-11-03)** — the global screenshot overlay and pinned images sit above arbitrary screen content. `features/region-screenshot/screenshotColors.ts` owns the fixed annotation ink red `#FF3B30`, yellow `#FFCC00`, green `#34C759`, blue `#007AFF`, black and white; these pixels become user content and stay identical in Light/Dark. Functional overlay pixels are the 45% dim layer, white selection edge plus 60% black outer ring, white handles, white dashed annotation box, magnifier crosshair and black frozen-frame backdrop. The toolbar, style bar, AI menu, magnifier card, labels, hints and pin chrome use semantic theme tokens and the shared pill/focus/Tip treatment. Do not reuse these fixed values elsewhere.
 > - **Toast Info / Success / Warning / Error** — `#417CDD` / `#2AAE5B` / `#F3A115` / `#D91F37`(finalized 2026-07-17; Toast exemption lifted) — used ONLY on the 16×16 lucide icon inside Toast pill notifications. The pill body (background, text, border, close icon) remains strictly grayscale. Info blue #417CDD equals the focus-ring / Auto Approval value (originally #3B82F6, added 2026-07-14, now finalized); success/warning/error equal the global status colors (done green / status error / warning foreground).
 > - **Usage History category color (owner-approved 2026-09-08, extended 2026-09-09).** The registered usage heatmap uses a blue intensity scale. Daily token bars and their corresponding model-table swatches/share marks use `--usage-model-1` … `--usage-model-5` as the seed palette; additional models receive theme-derived hues without a top-five cutoff. All model identities in the full history are included, even when absent from the last 30 days. Agent/harness swatches, share marks and the stacked share strip reuse the existing engine identity tokens: `--engine-badge-cc` (terracotta orange), `--engine-badge-codex` (blue), and `--usage-model-1` (owner-chosen teal for pi, to distinguish it from Codex blue). Claude/Codex retain their cross-mode fixed-value contract; pi follows the existing Light/Dark teal values. `--usage-heatmap-high` supplies the high end of the heatmap. The heatmap retains its process-blue alias; category colors do not inherit process/status semantics. Task marks, text and control frames stay neutral. See [the component specification](./usage-history-charts.md); colors.ts remains the seed-value source, with runtime derivation under governance §3.4.
 > - **Resource Usage Process Categories** — the Resource Usage table may color only its 14px process-type glyphs so dense rows can be scanned by category (user-requested 2026-08-06). The six category pairs are task Agent blue `#2563EB / #60A5FA`, Agent service purple `#7C3AED / #A78BFA`, main-process pink `#DB2777 / #F472B6`, renderer cyan `#0891B2 / #22D3EE`, GPU amber `#D97706 / #F59E0B`, and utility green `#059669 / #34D399` (Light / Dark). These colors encode process category, **not health or status**; row backgrounds, labels, metrics, selection and actions remain on the neutral system. Direct use is confined to `resource-usage` process glyphs; the explicitly registered Usage History heatmap alias above may also reference the task-blue value. No other table or process UI inherits this permission. Tokens: `--process-agent-task-icon`, `--process-agent-service-icon`, `--process-main-icon`, `--process-renderer-icon`, `--process-gpu-icon`, `--process-utility-icon`.
@@ -209,7 +210,7 @@ button/primary  (Gray Pill)
   border    1px solid --surface-chip   (same as fill)
   radius    9999px (pill)
   padding   10px 24px
-  height    32px (md) / 36px (lg) — no 40px size (DS-4 G1, 2026-09-03)
+  height    22px (xxs) / 24px (xs) / 28px (sm) / 32px (md) / 36px (lg) — no 40px size (compact sizes registered 2026-11-03 for screenshot and recording toolbars)
   type      text-13 / font-medium 500 (DS-4 G4, 2026-09-03)
   hover     --button-primary-hover     rest fill mixed 8% toward --text-primary   (swap-color, never opacity; DS-4 G2)
   pressed   --button-primary-pressed   hover mixed a further 10% toward --text-primary   (DS-4 G3)
@@ -228,7 +229,7 @@ button/secondary  (White Pill)
   hover     --button-secondary-hover    rest fill mixed 8% toward --text-primary
   pressed   --button-secondary-pressed  hover mixed a further 10% toward --text-primary
   disabled  opacity 60%; ordinary pointer
-  note      visually lighter than primary; binds Tier-1, not --settings-btn-secondary-* (DS-4 G5)
+  note      visually lighter than primary; binds Tier-1, not --settings-btn-secondary-* (DS-4 G5); tone="quiet" is a transparent, frameless secondary action for dense toolbars, never the only hit affordance
   impl      components/ui/button.tsx variant="secondary"
 
 button/cta  (Black Pill — maximum emphasis)
@@ -236,7 +237,7 @@ button/cta  (Black Pill — maximum emphasis)
   text      --accent-pure-cta-fg  #ffffff / #000000
   radius    9999px (pill)
   padding   10px 24px
-  height    32px (md) / 36px (lg) — no 40px size (DS-4 G1)
+  height    22px (xxs) / 24px (xs) / 28px (sm) / 32px (md) / 36px (lg) — no 40px size
   type      text-13 / font-medium 500 (DS-4 G4)
   hover     --button-cta-hover    = --accent-hover  #262626 / #e5e5e5   (swap-color; was opacity-90 on the private prototype, DS-4 G2, intentional)
   pressed   --button-cta-pressed  cta hover mixed a further 10% toward --accent-pure-cta-fg

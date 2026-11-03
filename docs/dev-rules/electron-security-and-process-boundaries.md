@@ -117,6 +117,13 @@ Renderer 可以负责组件渲染、交互状态、表单状态、展示数据�
 注释和测试中写明冲突点；例外只豁免冲突项，其余预热、就绪握手、安全配置、状态清理与故障
 隔离要求仍然适用。
 
+全局截图是透明、置顶系统级浮层的窄例外。`main/region-screenshot/` 只能创建专用
+`BrowserWindow`，统一使用 `sandbox: true`、`contextIsolation: true`、`nodeIntegration: false`、
+`webviewTag: false` 和各自白名单 preload，不得复用主窗口完整 bridge。浮层、编辑器、贴图与
+录制预览的 IPC 必须同时校验真实 sender、顶层 frame、当前 token、显示器和有界矩形/像素；普通
+Renderer 不获得任意屏幕 source、任意路径或长期采集能力。macOS Screen Recording / Accessibility
+和 Windows SRGB helper 都是用户可见权限，缺失时只能降级或说明，不得静默提权。
+
 `webviewTag` 默认关闭；受控例外目前有三处——主界面与右侧栏子窗口（内置浏览器需要），
 以及插件面板独立窗口（`main/ghost-panel-window/window.ts`，仅承载 ghost 分区面板
 webview）——所有例外都必须继续由 `webview-security.ts` 在 `will-attach-webview` 阶段

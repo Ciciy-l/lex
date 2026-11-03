@@ -30,7 +30,7 @@ export interface AppShortcutCombo {
  * 文件预览可同屏挂载右侧浏览器和 chat rail, 且在 window capture 阶段消费快捷键。
  * 仅用于改绑冲突判定, 不做展示分组。
  */
-export type AppShortcutScope = 'app' | 'workdir-doc' | 'browser' | 'composer' | 'terminal';
+export type AppShortcutScope = 'app' | 'workdir-doc' | 'browser' | 'composer' | 'terminal' | 'global';
 
 export const APP_SHORTCUT_IDS = [
   'terminal-focus-previous-pane',
@@ -54,6 +54,7 @@ export const APP_SHORTCUT_IDS = [
   'browser-forward',
   'browser-reload',
   'cycle-permission-mode',
+  'region-screenshot',
   'switch-session-1',
   'switch-session-2',
   'switch-session-3',
@@ -143,6 +144,17 @@ function modCombo(code: string, platform: string, extra: ComboModifiers = {}): A
 // 数组顺序即设置页展示顺序: 高频动作在前 (新对话 → 侧边栏 → 权限模式 →
 // 命令行 → 查找 → 缩放 → 浏览器)。hiddenInSettings 项不展示但仍正常生效。
 export const APP_SHORTCUT_DEFINITIONS: ReadonlyArray<AppShortcutDefinition> = [
+  {
+    id: 'region-screenshot',
+    scope: 'global',
+    labelKey: 'settings.shortcuts.items.region-screenshot.label',
+    descriptionKey: 'settings.shortcuts.items.region-screenshot.description',
+    rebindable: true,
+    platforms: ['darwin', 'win32'],
+    getDefaultCombos: (platform) => platform === 'darwin'
+      ? [combo('KeyA', { ctrl: true, shift: true })]
+      : [combo('KeyA', { alt: true, shift: true })],
+  },
   {
     id: 'terminal-focus-previous-pane', scope: 'terminal', rebindable: true,
     labelKey: 'settings.shortcuts.items.terminal-focus-previous-pane.label',
@@ -756,6 +768,20 @@ export function isAppShortcutComboBindable(comboValue: AppShortcutCombo): boolea
   return /^F([1-9]|1[0-9]|2[0-4])$/.test(comboValue.code);
 }
 
+const GLOBAL_EDITING_CODES = new Set(['KeyA', 'KeyC', 'KeyV', 'KeyX', 'KeyY', 'KeyZ']);
+
+export function isGlobalAppShortcutComboUsable(
+  comboValue: AppShortcutCombo,
+  platform: string,
+): boolean {
+  if (comboToElectronAccelerator(comboValue, platform) === null) return false;
+  const editingModifier = platform === 'darwin' ? comboValue.meta : comboValue.ctrl;
+  const otherModifiers = platform === 'darwin'
+    ? comboValue.ctrl || comboValue.alt || comboValue.shift
+    : comboValue.meta || comboValue.alt || comboValue.shift;
+  return !(editingModifier && !otherModifiers && GLOBAL_EDITING_CODES.has(comboValue.code));
+}
+
 export function appShortcutCombosEqual(a: AppShortcutCombo, b: AppShortcutCombo): boolean {
   return (
     a.code === b.code &&
@@ -770,7 +796,7 @@ const OVERLAPPING_SCOPE_PAIRS = new Set(['browser:workdir-doc', 'composer:workdi
 
 /** 冲突检测域判定: app 与一切重叠; workdir-doc 与 browser / composer 同屏重叠。 */
 export function appShortcutScopesOverlap(a: AppShortcutScope, b: AppShortcutScope): boolean {
-  if (a === 'app' || b === 'app' || a === b) return true;
+  if (a === 'app' || b === 'app' || a === 'global' || b === 'global' || a === b) return true;
   const pair = [a, b].sort().join(':');
   return OVERLAPPING_SCOPE_PAIRS.has(pair);
 }

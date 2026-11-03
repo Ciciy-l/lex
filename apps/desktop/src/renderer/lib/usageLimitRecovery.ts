@@ -287,7 +287,7 @@ export function extractUsageLimitRecoveryHint(
     sdkError === 'billing_error' ||
     codexErrorInfo === 'serverOverloaded' ||
     status === 529 ||
-    /\b(?:insufficient_quota|billing_error|credit(?:s| balance)?\s+(?:depleted|exhausted|too low)|at capacity|overloaded_error)\b/i.test(
+    /\b(?:insufficient_quota|billing_error|credit(?:s| balance)?\s+(?:depleted|exhausted|too low)|at capacity|overloaded_error|currently overloaded)\b/i.test(
       text,
     )
   ) {
