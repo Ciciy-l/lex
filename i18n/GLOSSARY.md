@@ -221,11 +221,7 @@ Lex 内置的终端工作区：在同一个任务中管理多个 CLI Agent pane�
 
 ### Context window
 
-模型一次请求可容纳的 token 上限。自定义 Provider 的窗口编辑字段(#386)与用量/压缩相关文案使用;空间紧的 placeholder 可缩写为「上下文 / Context / コンテキスト / 컨텍스트」+ (tokens)。
-
-### Context window
-
-The token capacity available to one task; distinct from current usage and the automatic-compaction percentage.
+模型一次请求可容纳的 token 上限；任务窗口设置与该容量不同，也不等同实时用量或自动压缩比例。自定义 Provider 的窗口编辑字段(#386)与用量/压缩相关文案使用;空间紧的 placeholder 可缩写为「上下文 / Context / コンテキスト / 컨텍스트」+ (tokens)。
 
 ### Crash
 
