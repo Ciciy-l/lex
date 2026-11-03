@@ -100,6 +100,17 @@ describe('AppShortcutStore', () => {
     ).toBe('conflict');
   });
 
+  it('restricts global shortcuts to safe system-wide accelerators', () => {
+    const store = makeStore('darwin');
+    expect(store.getEffectiveCombos('region-screenshot')).toEqual([
+      expect.objectContaining({ code: 'KeyA', ctrl: true, shift: true }),
+    ]);
+    expect(store.setOverride('region-screenshot', combo('KeyC', { meta: true })))
+      .toMatch(/^(system-reserved|global-unusable)$/);
+    expect(store.setOverride('region-screenshot', combo('KeyJ', { meta: true, shift: true })))
+      .toBeNull();
+  });
+
   it('rejects menu-backed combos that cannot map to an accelerator on darwin', () => {
     const store = makeStore('darwin');
     // NumpadAdd 无 accelerator 映射; new-maker 在 mac 只有菜单触发路径 → 拒绝

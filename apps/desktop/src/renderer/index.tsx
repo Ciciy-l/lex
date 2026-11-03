@@ -12,20 +12,32 @@ import {
 } from './lib/entryLoadRecovery';
 
 const urlParams = new URLSearchParams(window.location.search);
+const isRecordingPreview = urlParams.get('recordingPreview') === '1';
 const isRemoteDesktopViewer = urlParams.get('remoteDesktopViewer') === '1';
 const isResourceUsageWindow = urlParams.get('resourceUsageWindow') === '1';
 const isSidebarWindow = urlParams.get('sidebarWindow') === '1';
+const isRegionScreenshot = urlParams.get('regionScreenshot') === '1';
+const isRegionScreenshotEditor = urlParams.get('regionScreenshotEditor') === '1';
+const isRegionScreenshotPin = urlParams.get('regionScreenshotPin') === '1';
 const ghostPanelWindowId = urlParams.get('ghostPanelWindow');
 
-const entryLoad = isRemoteDesktopViewer
+const entryLoad = isRecordingPreview
+  ? import('./recording-preview-entry')
+  : isRemoteDesktopViewer
   ? import('./remote-desktop-viewer-entry')
   : isResourceUsageWindow
   ? import('./resource-usage-entry')
   : isSidebarWindow
     ? import('./sidebar-window-entry')
-    : ghostPanelWindowId
-      ? import('./ghost-panel-window-entry')
-      : import('./main-entry').then(({ mainEntryReady }) => mainEntryReady);
+    : isRegionScreenshot
+      ? import('./region-screenshot-entry')
+      : isRegionScreenshotEditor
+        ? import('./region-screenshot-entry')
+        : isRegionScreenshotPin
+          ? import('./region-screenshot-pin-entry')
+          : ghostPanelWindowId
+            ? import('./ghost-panel-window-entry')
+            : import('./main-entry').then(({ mainEntryReady }) => mainEntryReady);
 
 void entryLoad
   .then(() => {

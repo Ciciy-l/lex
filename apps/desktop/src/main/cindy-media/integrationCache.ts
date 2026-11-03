@@ -101,6 +101,8 @@ export async function integrationCachePut(
      * 的 CDN 地址是限时签名,被 LRU 逐出后无法重下,等于弄丢用户的图。
      */
     isCache?: boolean;
+    /** Owner fence checked before and after every asynchronous storage step. */
+    assertStillValid?: () => void;
   },
   db?: LedgerDb,
 ): Promise<IntegrationCacheWrite> {
@@ -110,10 +112,13 @@ export async function integrationCachePut(
       mimeType: normalizeIntegrationMime(params.mimeType),
       isCache: params.isCache ?? true,
       refs: [],
+      ...(params.assertStillValid ? { assertStillValid: params.assertStillValid } : {}),
     },
     db,
   );
+  params.assertStillValid?.();
   const existing = await ledger.getIntegrationCacheHash(params.cacheKey, db);
+  params.assertStillValid?.();
   let addedRefId: string | null = null;
   if (existing !== written.hash) {
     // 新登记 / token 复用换内容:追加索引行,cacheGet 取最新。
@@ -127,6 +132,7 @@ export async function integrationCachePut(
       },
       db,
     );
+    params.assertStillValid?.();
   }
   const resolved = blobStore.resolveHashRef(written.hash, written.ext);
   return {

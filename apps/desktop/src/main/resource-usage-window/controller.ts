@@ -39,8 +39,12 @@ export interface ResourceUsageWindowControllerDeps {
   activityPayload?: (active: boolean) => unknown;
   localeChannel?: string;
   prewarmWork?: boolean;
+  /** Native hide/minimize pauses work unless an always-live auxiliary surface opts out. */
+  pauseWhenHidden?: boolean;
   onActivityChanged?: (window: BrowserWindow, active: boolean) => void;
+  onBeforeShow?: (window: BrowserWindow) => void;
   onCloseRequested?: (window: BrowserWindow) => void;
+  onUnavailable?: () => void;
   isOpenSender: (sender: WebContents) => boolean;
   /** 打开监视器的那扇应用窗；用于跟随显隐并在关闭监视器后恢复焦点。 */
   getOwnerWindow?: (sender: WebContents) => ResourceUsageOwnerWindow | null;
@@ -83,6 +87,15 @@ export class ResourceUsageWindowController {
   prewarm(): void {
     if (this.disposed) return;
     this.ensureWindow();
+  }
+
+  resetPresentation(): void {
+    this.presentationReady = false;
+  }
+
+  rendererFailed(sender: WebContents): void {
+    const win = this.windowForSender(sender);
+    if (win) this.invalidateWindow(win, 'renderer reported a rendering failure');
   }
 
   /** 幂等打开：热窗口立即显示；冷窗口等待首份可展示快照，异常时才显示已挂载的 Loading 壳。 */
@@ -137,7 +150,9 @@ export class ResourceUsageWindowController {
       this.showAndFocus(win);
       return true;
     }
-    if (!this.visible && !this.pendingOpen) this.setSamplingActive(win, false);
+    if (!this.visible && !this.pendingOpen && this.deps.pauseWhenHidden !== false) {
+      this.setSamplingActive(win, false);
+    }
     return true;
   }
 
@@ -192,6 +207,7 @@ export class ResourceUsageWindowController {
     const win = this.winRef;
     if (!win || win.isDestroyed()) {
       this.resetWindowState();
+      this.deps.onUnavailable?.();
       return;
     }
     this.destroyCachedWindow(win);
@@ -313,6 +329,7 @@ export class ResourceUsageWindowController {
     if (!win.isVisible()) this.enteringNativeFullscreen = false;
     this.visibilityGeneration += 1;
     this.setSamplingActive(win, true);
+    this.deps.onBeforeShow?.(win);
     if (win.isMinimized()) win.restore();
     // 打开时只负责显示和聚焦，不再按 owner 状态驱动 setFullScreen。
     // macOS 沿用本窗口的原生 Space / 全屏呈现；仅关闭时显式退出全屏再隐藏。
@@ -447,7 +464,7 @@ export class ResourceUsageWindowController {
   private onNativeVisibilityChanged(win: BrowserWindow, visible: boolean): void {
     if (win !== this.winRef || win.isDestroyed()) return;
     this.visible = visible;
-    this.setSamplingActive(win, visible);
+    if (this.deps.pauseWhenHidden !== false) this.setSamplingActive(win, visible);
     if (!visible && this.pendingOpen) {
       this.pendingOpen = false;
       this.clearOpenTimeout();
@@ -544,6 +561,7 @@ export class ResourceUsageWindowController {
     if (!reopen || this.disposed) return;
     if (this.automaticRecoveryAttempts >= MAX_AUTOMATIC_RECOVERY_ATTEMPTS) {
       log.error('resource-usage automatic recovery exhausted', { reason });
+      this.deps.onUnavailable?.();
       return;
     }
     this.automaticRecoveryAttempts += 1;

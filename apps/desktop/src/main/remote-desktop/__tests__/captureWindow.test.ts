@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { DesktopCaptureWindow } from '../captureWindow';
-import { denyAppDesktopCapture } from '../capturePermissions';
+import { denyAppDesktopCapture, markPlaybackFullscreenWindow } from '../capturePermissions';
 import { buildContentSecurityPolicy } from '../../security/csp';
 
 const fake = vi.hoisted(() => ({
@@ -208,6 +208,25 @@ it('denies app display/legacy capture while preserving physical microphone and c
   expect(reply).toHaveBeenLastCalledWith(false);
   ses.setDisplayMediaRequestHandler.mock.calls[0][0]({}, reply);
   expect(reply).toHaveBeenLastCalledWith({});
+});
+
+it('allows HTML fullscreen only for playback windows without widening media capture', () => {
+  const ses = {
+    setDisplayMediaRequestHandler: vi.fn(),
+    setPermissionCheckHandler: vi.fn(),
+    setPermissionRequestHandler: vi.fn(),
+  };
+  const preview = { mainFrame: { url: 'file:///app/index.html' }, isDestroyed: () => false };
+  const details = { isMainFrame: true, requestingUrl: preview.mainFrame.url };
+  markPlaybackFullscreenWindow(preview as any);
+  denyAppDesktopCapture(ses as any);
+  const check = ses.setPermissionCheckHandler.mock.calls[0][0];
+  const request = ses.setPermissionRequestHandler.mock.calls[0][0];
+  expect(check(preview, 'fullscreen', '', details)).toBe(true);
+  expect(check(preview, 'media', '', { ...details, mediaType: 'audio' })).toBe(false);
+  const reply = vi.fn();
+  request(preview, 'fullscreen', reply, details);
+  expect(reply).toHaveBeenLastCalledWith(true);
 });
 
 it('capture CSP forbids arbitrary network, application frames and inline/eval scripts', () => {

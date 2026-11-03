@@ -953,6 +953,7 @@ const MACOS_VOICE_HELPER_DEPLOYMENT_TARGET = 'macos10.15';
 const MACOS_AGENT_ISLAND_HELPER_DEPLOYMENT_TARGET = 'macos14.0';
 const MACOS_COMPUTER_PERMISSION_GUIDE_HELPER_DEPLOYMENT_TARGET = 'macos13.0';
 const MACOS_SESSION_DRAG_RELEASE_HELPER_DEPLOYMENT_TARGET = 'macos10.15';
+const MACOS_REGION_SCREENSHOT_HELPER_DEPLOYMENT_TARGET = 'macos10.15';
 const MACOS_XBOX_GAMEPAD_HELPER_DEPLOYMENT_TARGET = 'macos11.0';
 const MACOS_REMOTE_DESKTOP_INPUT_DEPLOYMENT_TARGET = 'macos10.15';
 
@@ -1372,6 +1373,42 @@ function buildMacSessionDragReleaseHelper(platform: ForgePlatform, arch: ForgeAr
   );
 }
 
+function buildRegionScreenshotHelper(platform: ForgePlatform, arch: ForgeArch): void {
+  const dest = path.join(__dirname, 'resources', 'tools', 'region-screenshot');
+  if (process.platform === 'darwin' && isMacForgePlatform(platform)) {
+    const src = path.join(__dirname, 'native', 'region-screenshot', 'macos-snapshot.swift');
+    fs.mkdirSync(dest, { recursive: true });
+    const output = path.join(dest, 'cindy-macos-screenshot-snapshot');
+    buildSwiftHelperForForgeArch(
+      src,
+      output,
+      arch,
+      MACOS_REGION_SCREENSHOT_HELPER_DEPLOYMENT_TARGET,
+      ['-O'],
+      'region screenshot snapshot helper',
+    );
+    fs.chmodSync(output, 0o755);
+    return;
+  }
+  if (process.platform !== 'win32' || platform !== 'win32') return;
+  const target = arch === 'arm64' ? 'aarch64-pc-windows-msvc'
+    : arch === 'x64' ? 'x86_64-pc-windows-msvc' : null;
+  if (!target) throw new Error(`[forge] Unsupported region screenshot helper architecture: ${arch}`);
+  const source = path.join(__dirname, 'native', 'region-screenshot', 'windows-snapshot');
+  const userCargo = process.env.USERPROFILE
+    ? path.join(process.env.USERPROFILE, '.cargo', 'bin', 'cargo.exe') : 'cargo';
+  const result = spawnSync(fs.existsSync(userCargo) ? userCargo : 'cargo', [
+    'build', '--locked', '--release', '--target', target,
+    '--manifest-path', path.join(source, 'Cargo.toml'),
+  ], { stdio: 'inherit', windowsHide: true });
+  if (result.error || result.status !== 0) {
+    throw new Error(`[forge] Region screenshot helper build failed: ${result.error?.message ?? result.status}`);
+  }
+  const name = 'cindy-windows-screenshot-snapshot.exe';
+  fs.mkdirSync(dest, { recursive: true });
+  fs.copyFileSync(path.join(source, 'target', target, 'release', name), path.join(dest, name));
+}
+
 // MakerNSIS is Windows-only (native dependency), conditionally require to
 // avoid import errors on macOS / Linux.
 const makers: ForgeConfig['makers'] = [
@@ -1671,6 +1708,7 @@ const config: ForgeConfig = {
       buildMacAgentIslandHelper(platform, arch);
       buildMacComputerPermissionGuideHelper(platform, arch);
       buildMacSessionDragReleaseHelper(platform, arch);
+      buildRegionScreenshotHelper(platform, arch);
       buildRemoteDesktopInput(platform, arch);
     },
     // packaged dir 产出后、makers 跑之前签内部 .exe。这样 NSIS 包出来的
@@ -1844,6 +1882,10 @@ const config: ForgeConfig = {
           config: 'vite.preload.config.ts',
           target: 'preload',
         },
+        { entry: 'src/preload/regionScreenshotPreload.ts', config: 'vite.preload.config.ts', target: 'preload' },
+        { entry: 'src/preload/regionScreenshotEditorPreload.ts', config: 'vite.preload.config.ts', target: 'preload' },
+        { entry: 'src/preload/regionScreenshotPinPreload.ts', config: 'vite.preload.config.ts', target: 'preload' },
+        { entry: 'src/preload/recordingPreviewPreload.ts', config: 'vite.preload.config.ts', target: 'preload' },
         { entry: 'src/preload/remoteDesktopViewerPreload.ts', config: 'vite.preload.config.ts', target: 'preload' },
         {
           // 右侧栏独立子窗口专用 preload:最小权限 bridge,不加载主 preload 完整桥。

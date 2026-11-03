@@ -37,6 +37,7 @@ vi.mock('@/lib/appShortcutStore', () => ({
   getAppShortcutCombos: mocks.getCombos,
   getAppShortcutOverrides: mocks.getOverrides,
   getAppShortcutPlatform: () => 'darwin',
+  getAppShortcutGlobalFailures: () => [],
   subscribeAppShortcuts: () => () => {},
 }));
 
