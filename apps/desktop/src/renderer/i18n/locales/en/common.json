@@ -196,6 +196,9 @@
     "attentionCount": "Tasks needing attention: {{count}}"
   },
   "remoteDesktop": {
+    "zoomOut": "Zoom out",
+    "zoomIn": "Zoom in",
+    "actualSize": "Actual size (1:1)",
     "windowsTitle": "Lock screen control",
     "windowsready": "Enabled for this {{appName}} process. Restarting {{appName}} requires administrator authorization again.",
     "windowsmissing": "Allow control of the lock screen and administrator prompts. Administrator authorization is required.",

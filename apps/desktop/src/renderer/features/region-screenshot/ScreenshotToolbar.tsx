@@ -287,7 +287,13 @@ export function ScreenshotAiMenu(props: ScreenshotAiMenuProps) {
         {languageSaveFailed && <p role="alert" className="px-2.5 py-1 text-12 text-[var(--error-fg)]">{t('regionScreenshot.translation.saveFailed')}</p>}
       </> : (['ask', 'translate', 'explain', 'extract'] as const).map((action) => {
         const Icon = AI_ICONS[action];
-        const label = action === 'translate' ? t('regionScreenshot.translation.action', { language: screenshotTranslationLanguageName(targetLanguage, locale) }) : t('regionScreenshot.ai.' + action);
+        const label = action === 'translate'
+          ? t('regionScreenshot.translation.action', { language: screenshotTranslationLanguageName(targetLanguage, locale) })
+          : action === 'explain'
+            ? t('regionScreenshot.ai.explain')
+            : action === 'extract'
+              ? t('regionScreenshot.ai.extract')
+              : t('regionScreenshot.ai.ask');
         return <div key={action} role="none" className="flex">
           <button type="button" role="menuitem" className={cn(rowClass, 'min-w-0 flex-1')} onClick={() => props.onAction(action)}>
             <Icon size={15} className="shrink-0 text-[var(--text-secondary)]" /><span className="flex-1">{label}</span>

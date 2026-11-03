@@ -196,6 +196,9 @@
     "attentionCount": "需要關注的任務：{{count}}"
   },
   "remoteDesktop": {
+    "zoomOut": "縮小",
+    "zoomIn": "放大",
+    "actualSize": "實際大小（1:1）",
     "windowsTitle": "鎖定畫面控制",
     "windowsready": "已為本次執行的 {{appName}} 啟用。重新啟動 {{appName}} 後需要再次由管理員授權。",
     "windowsmissing": "允許操作鎖定畫面和管理員提示，需要管理員授權。",

@@ -196,6 +196,9 @@
     "attentionCount": "対応が必要なセッション：{{count}}"
   },
   "remoteDesktop": {
+    "zoomOut": "縮小",
+    "zoomIn": "拡大",
+    "actualSize": "実際のサイズ（1:1）",
     "windowsTitle": "ロック画面の操作",
     "windowsready": "現在の {{appName}} で有効です。{{appName}} を再起動すると管理者の再承認が必要です。",
     "windowsmissing": "ロック画面と管理者の確認画面を操作するには管理者の承認が必要です。",

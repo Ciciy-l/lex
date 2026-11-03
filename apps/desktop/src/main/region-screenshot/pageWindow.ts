@@ -4,6 +4,7 @@ import path from 'node:path';
 import { markAppearanceSettingsReaderWindow } from '../appearance-settings-reader';
 import { createLogger } from '../logger';
 import { installExternalLinkGuards } from '../secondary-windows';
+import { installWindowHiddenBroadcast } from '../windowHiddenBroadcast';
 
 const log = createLogger('region-screenshot:window');
 
@@ -48,6 +49,7 @@ export function createScreenshotPageWindow(
   });
   window.setMenuBarVisibility(false);
   installExternalLinkGuards(window);
+  installWindowHiddenBroadcast(window);
   // 只读外观快照 (字体 / 字号), 让浮层与贴图的界面和主窗口一致; 不授予任何写入能力。
   markAppearanceSettingsReaderWindow(window);
   const load = MAIN_WINDOW_VITE_DEV_SERVER_URL

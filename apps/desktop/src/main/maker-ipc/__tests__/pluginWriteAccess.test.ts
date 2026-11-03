@@ -7,6 +7,7 @@ import { isPluginTaskPermissionAllowed, PluginTaskError } from '../pluginTaskSer
 import { PluginWriteAccessGate } from '../pluginWriteAccessGate.js';
 import { withSessionPermissionChange } from '../sessionPermissionChange.js';
 import { changeSessionPermissionMode } from '../../im/shared/permissionModeControl.js';
+import { normalizeSessionContextWindowBoundsRoute } from '../../../shared/sessionContextWindowBounds.js';
 import type { PermissionMode } from '@cindy/maker-core';
 const ownership = vi.hoisted(() => ({ current: null as unknown }));
 vi.mock('../../localDb/client/current.js', () => ({ getCurrentDbClientSnapshot: () => ownership.current }));
@@ -17,7 +18,7 @@ const source = readFileSync(new URL('../register.ts', import.meta.url), 'utf8').
 const branch = source.slice(source.indexOf("      case 'requestWriteAccess': {"), source.indexOf("      case 'startTeam': {"));
 const js = ts.transpileModule(`return async function(pluginId, request, explicitWriteAccess = false, assertCallerCurrent = () => {}) { switch(request.kind) { ${branch} } }`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 const settingSource = source.slice(source.indexOf('  ipcMain.handle(\n    MAKER_INVOKE.SET_PERMISSION_MODE,'), source.indexOf('  const handleSetPlanMode ='));
-const planSource = source.slice(source.indexOf('  const handleSetPlanMode ='), source.indexOf('  ipcMain.handle(MAKER_INVOKE.EXPORT_SESSION_HTML,'));
+const planSource = source.slice(source.indexOf('  const handleSetPlanMode ='), source.indexOf('  ipcMain.handle(\n    MAKER_INVOKE.SET_CONTEXT_WINDOW_BUDGET,'));
 const planJs = ts.transpileModule(planSource, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 const settingJs = ts.transpileModule(settingSource, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 function fixture() {
@@ -38,7 +39,7 @@ function fixture() {
  const slots = new Set<string>();
  const dialog = { showMessageBox: vi.fn(async () => ({ response: 0 })) };
  const write = vi.fn((_id: string, value: Record<string, unknown>) => { cfg = value; });
- const deps = { isPluginTaskPermissionAllowed, withSessionPermissionChange, withSessionRestartLock, drainPersistQueue:drain,messages,sessions,eq:()=>true,and:()=>true,service, getCurrentDbClientSnapshot: () => ownership.current, readPluginTaskConfig: () => cfg, pluginPermissionRequests: slots, PluginTaskError, maker: { getSession: () => cold ? null : live }, inputCoordinator: queue, dialog, t: (x: string) => x, getInstalledGhostName: () => 'fixture', clampPluginTaskPermissionMode: (x: string) => x, writePluginTaskConfig: write, broadcastSessionPatched: vi.fn() };
+ const deps = { isPluginTaskPermissionAllowed, withSessionPermissionChange, withSessionRestartLock, drainPersistQueue:drain,messages,sessions,eq:()=>true,and:()=>true,service, getDbClient: () => epoch, getCurrentDbClientSnapshot: () => ownership.current, readPluginTaskConfig: () => cfg, pluginPermissionRequests: slots, PluginTaskError, maker: { getSession: () => cold ? null : live }, inputCoordinator: queue, dialog, t: (x: string) => x, getInstalledGhostName: () => 'fixture', clampPluginTaskPermissionMode: (x: string) => x, writePluginTaskConfig: write, broadcastSessionPatched: vi.fn(), normalizeSessionContextWindowBoundsRoute };
  const allDeps = {...deps, pluginWriteAccessGate:gate, pluginWriteAccessIdentity:()=>identity};
  const run = new Function(...Object.keys(allDeps), js)(...Object.values(allDeps));
  let setMode!: (event: unknown, sessionId: string, mode: string) => Promise<unknown>;
