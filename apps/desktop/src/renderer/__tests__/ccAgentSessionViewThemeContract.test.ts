@@ -20,6 +20,10 @@ const viewSource = readFileSync(
   resolve(__dirname, '..', 'features', 'cc-agent', 'CCAgentSessionView.tsx'),
   'utf8',
 ).replace(/\r\n?/g, '\n');
+const contextRingSource = readFileSync(
+  resolve(__dirname, '..', 'components', 'status', 'ContextCapacityRing.tsx'),
+  'utf8',
+).replace(/\r\n?/g, '\n');
 
 /** 动态拼 hex 字面量，避免测试源自身被 hardcoded-color-audit 命中。 */
 const hex = (digits: string) => '#' + digits;
@@ -31,9 +35,9 @@ describe('CCAgentSessionView 主题契约（语义 token，双模式）', () => 
   });
 
   it('context 环阈值色不再裸写红/橙，改走 error-flat / warning-fg', () => {
-    expect(viewSource).not.toContain(hex('EF4444'));
-    expect(viewSource).not.toContain(hex('F59E0B'));
-    expect(viewSource).toMatch(
+    expect(contextRingSource).not.toContain(hex('EF4444'));
+    expect(contextRingSource).not.toContain(hex('F59E0B'));
+    expect(contextRingSource).toMatch(
       /pct\s*>\s*90\s*\?\s*'var\(--error-flat\)'\s*:\s*pct\s*>\s*70\s*\?\s*'var\(--warning-fg\)'\s*:\s*'var\(--msg-tool-card-chevron\)'/,
     );
   });
