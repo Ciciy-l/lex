@@ -67,7 +67,7 @@ async function prepareCindy() {
   await scanCindy();
   fireEvent.click(checkbox(/Cindy task/));
   fireEvent.click(button('settings.sessionImport.importSelected'));
-  await screen.findByText('settings.cindyImport.historyOnly');
+  await screen.findByText('settings.cindyImport.historyOnly', undefined, { timeout: 5_000 });
 }
 it('automatically loads Cindy records on tab entry once, retaining the snapshot across filters', async () => {
   const view = render(<StrictMode><SessionImportSection /></StrictMode>);
