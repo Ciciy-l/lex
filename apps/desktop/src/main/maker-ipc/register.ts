@@ -17289,6 +17289,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           ? dbToMakerAgentKind(getSessionDbAgentKind(sessionId))
           : persistedSessionMeta?.agentKind);
       const targetRouteProviderId = targetProviderId;
+      const storedSessionBudget = readSessionContextWindowBudget(sessionId);
+      const targetSessionBudget = storedSessionBudget === null || runtimeAgentKind === undefined
+        ? undefined
+        : resolveConfiguredContextWindow(
+            getActiveCatalog(), runtimeAgentKind, targetRouteProviderId, model, storedSessionBudget,
+          ) ?? storedSessionBudget;
       let currentRuntimeModel = liveSessionBeforeRouteChange?.model ??
         internalOptions.previousPiRoute?.model ?? persistedSessionMeta?.model;
       let runtimeRouteChanged =
@@ -17299,6 +17305,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       const piPreview = runtimeAgentKind === 'pi' && (runtimeRouteChanged || piConfigurationRefresh) && liveSessionBeforeRouteChange
         ? await liveSessionBeforeRouteChange.previewModelSwitch?.(model, {
             providerId: targetRouteProviderId,
+            ...(targetSessionBudget !== undefined
+              ? { contextWindowBudget: targetSessionBudget }
+              : {}),
           })
         : undefined;
       assertRuntimeOwnerCurrent();
@@ -17811,6 +17820,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               sessionId,
               model,
               providerId: effectiveProviderId,
+              ...(targetSessionBudget !== undefined
+                ? { contextWindowBudget: targetSessionBudget }
+                : {}),
               ...(piConfigurationRefresh ? { refreshPiConfiguration: true } : {}),
               ...(canTransferThread ? {
                 requiresCodexThreadRelink: () => maker.requiresCodexThreadHostTransfer({
@@ -18688,9 +18700,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         );
       }
       const live = maker.getSession(sessionId);
-      if (live?.agentKind === 'pi' && isSessionInTurn(sessionId)) {
-        throwIpcError('PRECONDITION_FAILED', 'Wait for the current Pi turn to finish before changing its context budget');
-      }
       const providerId = getSessionProvider(sessionId) ?? row.providerId ?? null;
       const previous = readSessionContextWindowBudget(sessionId);
       const changesEffectiveWindow = contextWindowBudgetChangesEffectiveWindow({

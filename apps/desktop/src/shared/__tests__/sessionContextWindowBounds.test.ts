@@ -74,6 +74,8 @@ describe('normalizeSessionContextWindowBoundsRoute', () => {
       .toEqual({ agent: 'claude-code', providerId: null, model: 'grok-4.6' });
     expect(normalizeSessionContextWindowBoundsRoute({ agent: ' pi ', providerId: ' xd ', model: ' m ' }))
       .toEqual({ agent: 'pi', providerId: 'xd', model: 'm' });
+    expect(normalizeSessionContextWindowBoundsRoute({ agent: 'omp', model: 'omp-model' }))
+      .toEqual({ agent: 'omp', providerId: null, model: 'omp-model' });
   });
 
   it('rejects anything that is not a complete route instead of answering half of it', () => {
@@ -92,10 +94,11 @@ describe('normalizeSessionContextWindowBoundsRoute', () => {
     expect(normalizeSessionContextWindowBoundsRoute({ agent: 'pi', model: 'x'.repeat(300) })).toBeNull();
   });
 
-  it('recognizes exactly the three maker-core engine kinds', () => {
+  it('recognizes exactly the four maker-core engine kinds', () => {
     expect(isSessionContextWindowAgentKind('claude-code')).toBe(true);
     expect(isSessionContextWindowAgentKind('pi')).toBe(true);
     expect(isSessionContextWindowAgentKind('codex')).toBe(true);
+    expect(isSessionContextWindowAgentKind('omp')).toBe(true);
     expect(isSessionContextWindowAgentKind('cc')).toBe(false);
     expect(isSessionContextWindowAgentKind(null)).toBe(false);
   });

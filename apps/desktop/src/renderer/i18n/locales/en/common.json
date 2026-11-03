@@ -4741,7 +4741,8 @@
         "conflict": "Conflicts with \"{{name}}\"",
         "voiceConflict": "Conflicts with the voice input shortcut",
         "composerVoiceConflict": "Conflicts with the voice input shortcut. Change either the composer send shortcut or the voice input shortcut.",
-        "menuAccelerator": "This combination cannot be registered as a menu shortcut"
+        "menuAccelerator": "This combination cannot be registered as a menu shortcut",
+        "globalRegistrationFailed": "This global shortcut could not be registered. Another app may already use it."
       },
       "items": {
         "toggle-sidebar": {
@@ -4863,6 +4864,10 @@
         "terminal-toggle-pane-zoom": {
           "label": "Maximize pane",
           "description": "Maximize pane"
+        },
+        "region-screenshot": {
+          "label": "Screenshot",
+          "description": "Take a screenshot in any app, then annotate it, pin it to the screen, or send it to {{appName}}"
         }
       },
       "none": "Not set",
@@ -10558,6 +10563,43 @@
         "reset": "Reset",
         "allProjects": "All projects"
       }
+    },
+    "contextRingPanel": {
+      "title": "Context",
+      "meaning": "What AI can refer to this turn: conversation, instructions and tool results.",
+      "used": "Used",
+      "available": "Plenty of room",
+      "elevated": "Filling up",
+      "nearLimit": "Near the limit",
+      "unknown": "No data yet",
+      "continueHint": "Keep going. No adjustment needed yet.",
+      "unknownHint": "Current usage appears when the model reports it.",
+      "tokens": "{{used}} / {{total}} tokens",
+      "compact": "Compact context",
+      "compactHelp": "Summarize earlier content to free space. Some details may be omitted.",
+      "adjust": "Adjust window",
+      "taskScope": "This Session",
+      "modelSettings": "Model Defaults",
+      "modelSettingsHint": "Change this model’s default window and limit. This also affects other sessions.",
+      "remoteModelSettings": "For lasting changes, edit model settings on the computer running this session.",
+      "costHint": "A larger window holds more content and may cost more.",
+      "technical": "Technical details",
+      "auto": "Automatic compaction",
+      "autoHelp": "Codex automatically compacts context near its compaction threshold."
+    },
+    "contextWindowBudget": {
+      "menuTitle": "Task context window",
+      "triggerLabel": "Task context window, currently {{window}}",
+      "menuHint": "Affects this task only. Applies from the next message.",
+      "optionDefault": "Model default",
+      "optionPercent": "{{percent}}%",
+      "inputPrice": "input {{price}}/M",
+      "remoteUnsupported": "The controlled device does not support changing this task's context window",
+      "remoteTightenOnly": "The controlled device ceiling is unavailable, so only smaller tiers are offered here.",
+      "readOnlyHint": "Read-only task: you can review the tiers and price bands, but not change them.",
+      "shrinkWarning": "{{used}} already in use — a smaller window compacts or rolls over first.",
+      "saveFailed": "Failed to save the context window tier",
+      "ompReadOnly": "OMP exposes its context window as runtime data. This version keeps the tier control read-only so it never saves a setting OMP would not apply."
     }
   },
   "effortLevels": {
@@ -13012,6 +13054,144 @@
       "invalidHeaders": "Headers must be a JSON object with text values.",
       "invalidUrl": "Enter a valid HTTP or HTTPS URL without a username or password.",
       "noAuthSupplier": "No authentication for any channel of this provider"
+    }
+  },
+  "regionScreenshot": {
+    "editor": {
+      "fitWidth": "Fit width",
+      "loading": "Loading image…"
+    },
+    "moveToolbar": "Move toolbar left or right",
+    "hint": "Click to select a window or element, or drag to select an area · Scroll to change scope · Space: full screen · C: copy color · Esc: exit",
+    "hintWithLast": "Click to select a window or element, or drag to select an area · Scroll to change scope · Space: full screen · R: last area · C: copy color · Esc: exit",
+    "copy": "Copy",
+    "cancel": "Exit Screenshot",
+    "captureFailed": "Could not capture the screen",
+    "permission": {
+      "title": "Screen Recording Permission Required",
+      "detail": "To take screenshots, allow {{appName}} in System Settings > Privacy & Security > Screen & System Audio Recording, then reopen {{appName}}.",
+      "openSettings": "Open System Settings",
+      "later": "Not Now"
+    },
+    "undo": "Undo",
+    "redo": "Redo",
+    "pinToScreen": "Pin to Screen",
+    "pin": {
+      "copy": "Copy",
+      "save": "Save…",
+      "ask": "Ask {{appName}}",
+      "opacity": "Opacity",
+      "originalSize": "Original Size",
+      "passThrough": "Click Through",
+      "close": "Close",
+      "closeAll": "Close All Pins",
+      "unlock": "Restore Mouse Input"
+    },
+    "save": "Save",
+    "cindy": "Send to {{appName}}",
+    "tools": {
+      "rect": "Rectangle",
+      "ellipse": "Ellipse",
+      "line": "Line",
+      "arrow": "Arrow",
+      "pen": "Pen",
+      "marker": "Highlighter",
+      "text": "Text",
+      "mosaic": "Mosaic",
+      "blur": "Blur",
+      "step": "Number"
+    },
+    "ai": {
+      "ask": "Ask {{appName}}",
+      "translate": "Translate",
+      "explain": "Explain",
+      "extract": "Extract Text"
+    },
+    "size": {
+      "stroke": {
+        "0": "Thin",
+        "1": "Medium",
+        "2": "Thick"
+      },
+      "text": {
+        "0": "Small",
+        "1": "Medium",
+        "2": "Large"
+      },
+      "strength": {
+        "0": "Light",
+        "1": "Medium",
+        "2": "Strong"
+      }
+    },
+    "colors": {
+      "red": "Red",
+      "yellow": "Yellow",
+      "green": "Green",
+      "blue": "Blue",
+      "black": "Black",
+      "white": "White"
+    },
+    "magnifier": {
+      "copyHint": "C: copy color"
+    },
+    "saveFileName": "Screenshot",
+    "saveFailed": "Couldn't save the screenshot",
+    "translation": {
+      "action": "Translate to {{language}}",
+      "targetLanguage": "Translation language",
+      "followUi": "Follow interface language",
+      "saveFailed": "Could not save the language. Select it again to retry."
+    },
+    "prompt": {
+      "translate": "Detect the languages in this screenshot and translate the text into {{language}}. Preserve the original paragraphs, lists and tables. Leave text already in the target language unchanged; for mixed-language content, translate only the other languages. If all text is already in the target language, briefly say so without switching to another language. Otherwise output only the translation.",
+      "explain": "Explain what this screenshot shows. If it's an error, explain the cause and how to fix it. If it's a chart, code, or an interface, explain what it shows and the key points.",
+      "extract": "Extract the text from this screenshot exactly as written, keeping the original line breaks, paragraphs, and lists. Output tables as Markdown tables. Output only the extracted text."
+    },
+    "live": {
+      "scroll": "Scrolling Screenshot",
+      "video": "Record Screen",
+      "gif": "Record GIF",
+      "recording": "Recording…",
+      "preview": "Capture preview",
+      "cursor": "Show pointer",
+      "keys": "Show keys (includes typing)",
+      "start": "Start Recording",
+      "pause": "Pause",
+      "resume": "Resume",
+      "finish": "Finish",
+      "paused": "Recording paused",
+      "done": "Capture ready to save",
+      "saved": "Saved",
+      "copied": "Copied",
+      "copyFailed": "Could not copy. Try again or save the file.",
+      "scrollHint": "Scroll up or down in the selection, or choose Auto Scroll.",
+      "recordHint": "Draw on the preview to annotate the recording. No audio.",
+      "format": "Format",
+      "videoFormat": "Video (WebM)",
+      "prepareHint": "Starts after a 3-second countdown. No audio.",
+      "countdown": "Recording starts in {{count}}",
+      "countdownHint": "Starting shortly. Press Esc to cancel.",
+      "annotate": "Annotate",
+      "finishing": "Finishing…",
+      "replay": "Replay",
+      "previewUnavailable": "Preview unavailable. Save the clip or close the previous preview and try again.",
+      "playbackFailed": "Playback failed. You can still save the recording.",
+      "annotationNoRoom": "Leave more space beside the selection to open annotations.",
+      "overlap": "This part could not be joined. Scroll back a little, or finish with the captured content.",
+      "limit": "Capture limit reached. Finish and save this capture.",
+      "captureFailed": "Capture stopped. Resume to try again or save the captured portion.",
+      "encodeFailed": "Could not encode this recording. Close and start a new capture.",
+      "exportFailed": "Could not save this capture. Choose Save to try again.",
+      "keysUnavailable": "Key display is unavailable. On macOS, allow Input Monitoring for {{appName}}.",
+      "noRoom": "Cannot start. Select an area at least 32 × 32 pixels and leave room beside it for the preview.",
+      "image": "Screenshot",
+      "startScroll": "Start Scrolling Screenshot",
+      "autoScroll": "Auto Scroll",
+      "stopScroll": "Stop Scrolling",
+      "edit": "Edit",
+      "autoUnavailable": "Auto scrolling stopped. You can scroll manually in the selection.",
+      "autoPermission": "Auto scrolling needs Accessibility permission. Allow {{appName}} in System Settings and try again, or scroll manually in the selection."
     }
   }
 }

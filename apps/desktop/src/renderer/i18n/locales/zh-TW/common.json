@@ -4740,7 +4740,8 @@
         "conflict": "與「{{name}}」衝突",
         "voiceConflict": "與語音輸入快捷鍵衝突",
         "composerVoiceConflict": "與語音輸入快捷鍵衝突，請修改傳送或語音輸入快捷鍵。",
-        "menuAccelerator": "該組合鍵無法註冊為選單快捷鍵"
+        "menuAccelerator": "該組合鍵無法註冊為選單快捷鍵",
+        "globalRegistrationFailed": "無法註冊這個全域快捷鍵，可能已被其他應用程式占用。"
       },
       "items": {
         "toggle-sidebar": {
@@ -4862,6 +4863,10 @@
         "terminal-toggle-pane-zoom": {
           "label": "放大目前窗格",
           "description": "放大目前窗格"
+        },
+        "region-screenshot": {
+          "label": "截圖",
+          "description": "在任何應用程式中截圖，可以加上標註、釘選到螢幕，或交給 {{appName}} 處理"
         }
       },
       "none": "未設定",
@@ -10543,6 +10548,43 @@
         "reset": "重置",
         "allProjects": "所有專案"
       }
+    },
+    "contextRingPanel": {
+      "title": "上下文",
+      "meaning": "AI 本輪可參考的內容，包括對話、指令與工具結果。",
+      "used": "已使用",
+      "available": "空間充足",
+      "elevated": "占用較高",
+      "nearLimit": "接近上限",
+      "unknown": "尚無資料",
+      "continueHint": "可以繼續對話，暫時無需調整。",
+      "unknownHint": "收到模型的用量資料後，這裡會顯示目前占用。",
+      "tokens": "{{used}} / {{total}} tokens",
+      "compact": "壓縮上下文",
+      "compactHelp": "概括較早內容，騰出空間。部分細節可能省略。",
+      "adjust": "調整視窗",
+      "taskScope": "本任務",
+      "modelSettings": "模型預設設定",
+      "modelSettingsHint": "修改此模型的預設視窗及上限，也會影響其他任務。",
+      "remoteModelSettings": "長期調整需前往執行此任務的電腦，修改模型設定。",
+      "costHint": "較大的視窗可容納更多內容，也可能增加費用。",
+      "technical": "技術詳情",
+      "auto": "自動壓縮",
+      "autoHelp": "Codex 會在接近壓縮門檻時自動整理上下文。"
+    },
+    "contextWindowBudget": {
+      "menuTitle": "任務上下文視窗",
+      "triggerLabel": "任務上下文視窗，目前 {{window}}",
+      "menuHint": "只影響本任務，下一則訊息生效。",
+      "optionDefault": "模型預設",
+      "optionPercent": "{{percent}}%",
+      "inputPrice": "輸入 {{price}}/M",
+      "remoteUnsupported": "被控裝置版本不支援調整任務上下文視窗",
+      "remoteTightenOnly": "被控裝置的上限無法讀取，這裡只提供調小檔。",
+      "readOnlyHint": "唯讀任務：可以查看檔位與價差，但不能修改。",
+      "shrinkWarning": "目前已用 {{used}}，換到更小檔位會先觸發壓縮或換窗。",
+      "saveFailed": "儲存上下文視窗檔位失敗",
+      "ompReadOnly": "OMP 目前只提供執行期視窗資訊；此版本保持檔位唯讀，避免儲存 OMP 實際不會套用的設定。"
     }
   },
   "effortLevels": {
@@ -12995,6 +13037,144 @@
       "invalidHeaders": "請求標頭須為 JSON 物件，且每項的值皆為文字。",
       "invalidUrl": "請填寫有效的 HTTP 或 HTTPS 位址，勿在位址中包含使用者名稱或密碼。",
       "noAuthSupplier": "此供應商的所有渠道均無需驗證"
+    }
+  },
+  "regionScreenshot": {
+    "editor": {
+      "fitWidth": "適合寬度",
+      "loading": "正在載入圖片…"
+    },
+    "moveToolbar": "左右拖動工具列",
+    "hint": "按一下選取視窗或元素，拖曳框選 · 滾輪切換範圍 · 空白鍵全螢幕 · C 複製顏色 · Esc 結束",
+    "hintWithLast": "按一下選取視窗或元素，拖曳框選 · 滾輪切換範圍 · 空白鍵全螢幕 · R 上次區域 · C 複製顏色 · Esc 結束",
+    "copy": "複製",
+    "cancel": "結束截圖",
+    "captureFailed": "無法擷取螢幕",
+    "permission": {
+      "title": "需要螢幕錄製權限",
+      "detail": "截圖需要在「系統設定 > 隱私權與安全性 > 螢幕與系統錄音」中允許 {{appName}}，開啟後請重新開啟 {{appName}}。",
+      "openSettings": "打開系統設定",
+      "later": "暫不開啟"
+    },
+    "undo": "復原",
+    "redo": "重做",
+    "pinToScreen": "釘選到螢幕",
+    "pin": {
+      "copy": "複製",
+      "save": "儲存…",
+      "ask": "問 {{appName}}",
+      "opacity": "不透明度",
+      "originalSize": "原始大小",
+      "passThrough": "滑鼠穿透",
+      "close": "關閉",
+      "closeAll": "關閉所有釘選圖片",
+      "unlock": "恢復滑鼠操作"
+    },
+    "save": "儲存",
+    "cindy": "交給 {{appName}}",
+    "tools": {
+      "rect": "矩形",
+      "ellipse": "橢圓",
+      "line": "直線",
+      "arrow": "箭頭",
+      "pen": "畫筆",
+      "marker": "螢光筆",
+      "text": "文字",
+      "mosaic": "馬賽克",
+      "blur": "模糊",
+      "step": "編號"
+    },
+    "ai": {
+      "ask": "問 {{appName}}",
+      "translate": "翻譯",
+      "explain": "解釋",
+      "extract": "擷取文字"
+    },
+    "size": {
+      "stroke": {
+        "0": "細",
+        "1": "中",
+        "2": "粗"
+      },
+      "text": {
+        "0": "小",
+        "1": "中",
+        "2": "大"
+      },
+      "strength": {
+        "0": "弱",
+        "1": "中",
+        "2": "強"
+      }
+    },
+    "colors": {
+      "red": "紅色",
+      "yellow": "黃色",
+      "green": "綠色",
+      "blue": "藍色",
+      "black": "黑色",
+      "white": "白色"
+    },
+    "magnifier": {
+      "copyHint": "C 複製顏色"
+    },
+    "saveFileName": "截圖",
+    "saveFailed": "無法儲存截圖",
+    "translation": {
+      "action": "翻譯成{{language}}",
+      "targetLanguage": "翻譯目標語言",
+      "followUi": "跟隨介面語言",
+      "saveFailed": "無法儲存語言選擇，請重新選擇。"
+    },
+    "prompt": {
+      "translate": "自動識別截圖中的語言，將文字翻譯成{{language}}，保留原有的段落、清單和表格。已經是目標語言的內容保持原樣；混合語言內容只翻譯其他語言。如果全部文字已是目標語言，簡短說明即可，不要改譯成其他語言。其餘情況只輸出譯文。",
+      "explain": "請解釋這張截圖的內容。如果是錯誤訊息，說明原因與解決方法；如果是圖表、程式碼或介面，說明它在表達什麼、有哪些重點。",
+      "extract": "請將這張截圖中的文字原樣擷取出來，保留原有的換行、段落和清單；表格以 Markdown 表格輸出。只輸出擷取的文字。"
+    },
+    "live": {
+      "scroll": "捲動截圖",
+      "video": "錄影",
+      "gif": "錄製 GIF",
+      "recording": "正在錄製…",
+      "preview": "擷取預覽",
+      "cursor": "顯示滑鼠指標",
+      "keys": "顯示按鍵（包含輸入內容）",
+      "start": "開始錄製",
+      "pause": "暫停",
+      "resume": "繼續",
+      "finish": "完成",
+      "paused": "錄影已暫停",
+      "done": "擷取完成，可以儲存",
+      "saved": "已儲存",
+      "copied": "已複製",
+      "copyFailed": "複製失敗，可以重試或儲存檔案。",
+      "scrollHint": "在選取範圍內向上或向下捲動，也可點擊自動捲動",
+      "recordHint": "在預覽上繪製標註，標註會出現在錄影中。不錄製聲音",
+      "format": "格式",
+      "videoFormat": "影片 (WebM)",
+      "prepareHint": "點擊開始後倒數 3 秒，不錄製聲音。",
+      "countdown": "{{count}} 秒後開始錄製",
+      "countdownHint": "即將開始，按 Esc 取消。",
+      "annotate": "標註",
+      "finishing": "正在完成…",
+      "replay": "重新播放",
+      "previewUnavailable": "無法開啟預覽。可直接儲存，或關閉上一個預覽後重試。",
+      "playbackFailed": "無法播放，仍可儲存錄製檔案。",
+      "annotationNoRoom": "選取區域旁空間不足，無法展開標註。",
+      "overlap": "這一段未能接上。可稍往回捲動，或完成已擷取的部分。",
+      "limit": "已達擷取上限，請完成並儲存這段內容",
+      "captureFailed": "擷取已停止，可以繼續重試或儲存已擷取內容",
+      "encodeFailed": "錄製內容編碼失敗，請關閉後重新錄製",
+      "exportFailed": "儲存失敗，請再次選擇儲存",
+      "keysUnavailable": "按鍵顯示無法使用。macOS 請為 {{appName}} 開啟輸入監控權限",
+      "noRoom": "無法開始。請選取至少 32 × 32 像素的範圍，並在旁邊留出預覽空間。",
+      "image": "截圖",
+      "startScroll": "開始捲動截圖",
+      "autoScroll": "自動捲動",
+      "stopScroll": "停止捲動",
+      "edit": "編輯",
+      "autoUnavailable": "自動捲動已停止，可在選取範圍內手動捲動",
+      "autoPermission": "自動捲動需要「輔助使用」權限。請在系統設定中允許 {{appName}} 後再試，也可以在選取範圍內手動捲動"
     }
   }
 }

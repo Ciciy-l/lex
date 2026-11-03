@@ -81,6 +81,17 @@ const store = createOverrideSettingsFile<PersistedAppSessionSettings>({
 let active: ActiveAppSession | null = null;
 let boundaryDepth = 0;
 let appSessionCommitBoundaryHook: (() => void) | null = null;
+const sessionInvalidationListeners = new Set<() => void>();
+
+/** Cancel owner-bound work before teardown or a new owner becomes visible. */
+export function onAppSessionInvalidated(listener: () => void): () => void {
+  sessionInvalidationListeners.add(listener);
+  return () => { sessionInvalidationListeners.delete(listener); };
+}
+
+function invalidateSessionRequests(): void {
+  for (const listener of sessionInvalidationListeners) listener();
+}
 
 /**
  * Register synchronous owner-scoped runtime invalidation at the exact commit edge.
@@ -143,6 +154,7 @@ export function activeOwnerScopeKey(): string {
  */
 export function beginAppSessionBoundary(): () => void {
   boundaryDepth += 1;
+  invalidateSessionRequests();
   let released = false;
   return () => {
     if (released) return;
@@ -185,6 +197,7 @@ export function commitActiveAppSession(
   }
 
   store.writePatch({ activeMode: mode });
+  invalidateSessionRequests();
   if (ownerChanged) appSessionCommitBoundaryHook?.();
   active = {
     mode,
@@ -218,6 +231,7 @@ export function commitVolatileAppSession(
   if (!ownerChanged && !forceBumpGeneration) {
     return { ...previous };
   }
+  invalidateSessionRequests();
   if (ownerChanged) appSessionCommitBoundaryHook?.();
   active = {
     mode,
