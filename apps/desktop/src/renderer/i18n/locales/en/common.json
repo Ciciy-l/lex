@@ -13026,7 +13026,7 @@
       "chooseChannel": "Choose a Channel",
       "channelName": "Channel Name",
       "keepKey": "Leave unchanged to keep the saved key",
-      "modelIds": "Model IDs, One per Line",
+      "modelIds": "Model IDs",
       "advanced": "Advanced",
       "requestPath": "Request Path",
       "modelsUrl": "Model List URL",
@@ -13056,7 +13056,22 @@
       "keepEditing": "Keep editing",
       "invalidHeaders": "Headers must be a JSON object with text values.",
       "invalidUrl": "Enter a valid HTTP or HTTPS URL without a username or password.",
-      "noAuthSupplier": "No authentication for any channel of this provider"
+      "noAuthSupplier": "No authentication for any channel of this provider",
+      "protocolTabLabel": "{{protocol}}, {{count}} channels",
+      "channelOptionLabel": "{{name}}, {{protocol}}, {{models}} model IDs",
+      "channelSummary": "{{protocols}} protocols · {{models}} model IDs",
+      "addModelId": "Add Model ID",
+      "modelIdPlaceholder": "e.g. gpt-5.3",
+      "modelIdRowLabel": "Model ID {{index}}",
+      "noModels": "No model IDs yet. Add one below.",
+      "protocolNames": {
+        "anthropicMessages": "Anthropic Messages",
+        "openaiResponses": "OpenAI Responses",
+        "openaiChat": "OpenAI Chat Completions",
+        "googleGemini": "Google Gemini"
+      },
+      "removeModelIdRowLabel": "Remove Model ID {{index}}",
+      "pendingModelId": "Add or clear the pending Model ID first."
     }
   },
   "regionScreenshot": {

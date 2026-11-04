@@ -634,11 +634,17 @@ describe('ProviderConnectionDialog accessibility', () => {
     fireEvent.keyDown(protocol, { key: 'ArrowRight' });
     const harness = await screen.findByRole('tab', { name: 'models.channels.byHarness' });
     await waitFor(() => expect(document.activeElement).toBe(harness));
-    expect(screen.getByRole('tabpanel').getAttribute('aria-labelledby')).toBe(harness.id);
+    expect(
+      screen
+        .getByRole('tabpanel', { name: 'models.channels.byHarness' })
+        .getAttribute('aria-labelledby'),
+    ).toBe(harness.id);
     fireEvent.keyDown(harness, { key: 'ArrowLeft' });
     const returned = screen.getByRole('tab', { name: 'models.channels.byProtocol' });
     await waitFor(() => expect(document.activeElement).toBe(returned));
-    expect(returned.getAttribute('aria-controls')).toBe(screen.getByRole('tabpanel').id);
+    expect(returned.getAttribute('aria-controls')).toBe(
+      screen.getByRole('tabpanel', { name: 'models.channels.byProtocol' }).id,
+    );
   });
 
   it('uses a stable fallback when the immediate opener unmounts during a wizard transition', async () => {

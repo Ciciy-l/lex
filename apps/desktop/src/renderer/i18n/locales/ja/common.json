@@ -13009,7 +13009,7 @@
       "chooseChannel": "チャネルを選択",
       "channelName": "チャネル名",
       "keepKey": "変更しなければ保存済みのキーを保持",
-      "modelIds": "モデル ID（1 行に 1 つ）",
+      "modelIds": "モデル ID",
       "advanced": "詳細設定",
       "requestPath": "リクエストパス",
       "modelsUrl": "モデル一覧 URL",
@@ -13039,7 +13039,22 @@
       "keepEditing": "編集を続ける",
       "invalidHeaders": "ヘッダーは各値が文字列の JSON オブジェクトで入力してください。",
       "invalidUrl": "ユーザー名やパスワードを含まない有効な HTTP または HTTPS URL を入力してください。",
-      "noAuthSupplier": "このプロバイダーのすべてのチャンネルで認証を使用しない"
+      "noAuthSupplier": "このプロバイダーのすべてのチャンネルで認証を使用しない",
+      "protocolTabLabel": "{{protocol}}、{{count}} チャネル",
+      "channelOptionLabel": "{{name}}、{{protocol}}、モデル ID {{models}} 件",
+      "channelSummary": "{{protocols}} プロトコル · モデル ID {{models}} 件",
+      "addModelId": "モデル ID を追加",
+      "modelIdPlaceholder": "例: gpt-5.3",
+      "modelIdRowLabel": "モデル ID {{index}}",
+      "noModels": "モデル ID はまだありません。下から追加してください。",
+      "protocolNames": {
+        "anthropicMessages": "Anthropic Messages",
+        "openaiResponses": "OpenAI Responses",
+        "openaiChat": "OpenAI Chat Completions",
+        "googleGemini": "Google Gemini"
+      },
+      "removeModelIdRowLabel": "モデル ID {{index}} を削除",
+      "pendingModelId": "先に、入力中のモデル ID を追加するかクリアしてください。"
     }
   },
   "regionScreenshot": {

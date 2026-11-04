@@ -13009,7 +13009,7 @@
       "chooseChannel": "채널 선택",
       "channelName": "채널 이름",
       "keepKey": "변경하지 않으면 저장된 키 유지",
-      "modelIds": "모델 ID (한 줄에 하나)",
+      "modelIds": "모델 ID",
       "advanced": "고급 설정",
       "requestPath": "요청 경로",
       "modelsUrl": "모델 목록 URL",
@@ -13039,7 +13039,22 @@
       "keepEditing": "계속 편집",
       "invalidHeaders": "헤더는 모든 값이 문자열인 JSON 객체여야 합니다.",
       "invalidUrl": "사용자 이름이나 비밀번호가 없는 유효한 HTTP 또는 HTTPS URL을 입력하세요.",
-      "noAuthSupplier": "이 제공자의 모든 채널에서 인증 사용 안 함"
+      "noAuthSupplier": "이 제공자의 모든 채널에서 인증 사용 안 함",
+      "protocolTabLabel": "{{protocol}}, 채널 {{count}}개",
+      "channelOptionLabel": "{{name}}, {{protocol}}, 모델 ID {{models}}개",
+      "channelSummary": "프로토콜 {{protocols}}개 · 모델 ID {{models}}개",
+      "addModelId": "모델 ID 추가",
+      "modelIdPlaceholder": "예: gpt-5.3",
+      "modelIdRowLabel": "모델 ID {{index}}",
+      "noModels": "아직 모델 ID가 없습니다. 아래에서 추가하세요.",
+      "protocolNames": {
+        "anthropicMessages": "Anthropic Messages",
+        "openaiResponses": "OpenAI Responses",
+        "openaiChat": "OpenAI Chat Completions",
+        "googleGemini": "Google Gemini"
+      },
+      "removeModelIdRowLabel": "모델 ID {{index}} 제거",
+      "pendingModelId": "먼저 입력 중인 모델 ID를 추가하거나 비우세요."
     }
   },
   "regionScreenshot": {
