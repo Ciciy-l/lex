@@ -350,6 +350,9 @@
     "WIRE_INCOMPATIBLE": "エンドポイントがこのプロトコルと完全には互換していません（認識できないリクエストフィールドがあります）",
     "UPSTREAM_ERROR": "上流サーバーエラー（5xx）です。しばらくしてから再試行してください",
     "UPSTREAM_UNREACHABLE": "エンドポイントに接続できません。ネットワークとベース URL を確認してください",
+    "REDIRECT_BLOCKED": "エンドポイントが別のアドレスにリダイレクトされました。接続テストには最終的なエンドポイント URL を入力してください",
+    "PROBE_UNSUPPORTED": "このネイティブ SDK 転送はリダイレクトを追跡せずに安全に接続テストできません。接続を保存し、タスクで試してください",
+    "RESPONSE_BLOCKED": "モデルが利用可能な応答を返しませんでした（安全性またはコンテンツポリシー）。プロンプトまたはモデル設定を確認してください",
     "TIMEOUT": "接続がタイムアウトしました。ネットワークとベース URL を確認してください",
     "UNKNOWN": "不明なエラーです。詳細はログを確認してください",
     "upstreamToast": "プロバイダー「{{provider}}」のリクエストに失敗しました：{{message}}"
@@ -13009,7 +13012,7 @@
       "chooseChannel": "チャネルを選択",
       "channelName": "チャネル名",
       "keepKey": "変更しなければ保存済みのキーを保持",
-      "modelIds": "モデル ID（1 行に 1 つ）",
+      "modelIds": "モデル ID",
       "advanced": "詳細設定",
       "requestPath": "リクエストパス",
       "modelsUrl": "モデル一覧 URL",
@@ -13039,7 +13042,25 @@
       "keepEditing": "編集を続ける",
       "invalidHeaders": "ヘッダーは各値が文字列の JSON オブジェクトで入力してください。",
       "invalidUrl": "ユーザー名やパスワードを含まない有効な HTTP または HTTPS URL を入力してください。",
-      "noAuthSupplier": "このプロバイダーのすべてのチャンネルで認証を使用しない"
+      "noAuthSupplier": "このプロバイダーのすべてのチャンネルで認証を使用しない",
+      "protocolTabLabel": "{{protocol}}、{{count}} チャネル",
+      "channelOptionLabel": "{{name}}、{{protocol}}、モデル ID {{models}} 件",
+      "channelSummary": "{{protocols}} プロトコル · モデル ID {{models}} 件",
+      "addModelId": "モデル ID を追加",
+      "modelIdPlaceholder": "例: gpt-5.3",
+      "modelIdRowLabel": "モデル ID {{index}}",
+      "noModels": "モデル ID はまだありません。下から追加してください。",
+      "protocolNames": {
+        "anthropicMessages": "Anthropic Messages",
+        "openaiResponses": "OpenAI Responses",
+        "openaiChat": "OpenAI Chat Completions",
+        "googleGemini": "Google Gemini"
+      },
+      "removeModelIdRowLabel": "モデル ID {{index}} を削除",
+      "pendingModelId": "先に、入力中のモデル ID を追加するかクリアしてください。",
+      "testNeedsCredentials": "先に接続を保存するか、新しい API キーを入力してからテストしてください。",
+      "channelOptionLabelWithInstance": "{{name}}、{{protocol}}、モデル ID {{models}} 件、接続 {{position}}/{{total}}",
+      "channelInstanceSuffix": "{{position}}/{{total}}"
     }
   },
   "regionScreenshot": {

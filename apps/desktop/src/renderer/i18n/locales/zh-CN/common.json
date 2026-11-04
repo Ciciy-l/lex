@@ -350,6 +350,9 @@
     "WIRE_INCOMPATIBLE": "端点与该协议不完全兼容（存在无法识别的请求字段）",
     "UPSTREAM_ERROR": "上游服务错误（5xx），请稍后重试",
     "UPSTREAM_UNREACHABLE": "无法连接到端点，请检查网络与基础 URL",
+    "REDIRECT_BLOCKED": "端点重定向到了其他地址。请在测试连接时填写最终端点地址",
+    "PROBE_UNSUPPORTED": "该原生 SDK 传输无法在不跟随重定向的情况下安全测试连接。请保存连接后在任务中试用",
+    "RESPONSE_BLOCKED": "模型未返回可用响应（安全或内容策略限制），请检查提示词或模型设置",
     "TIMEOUT": "连接超时，请检查网络与基础 URL",
     "UNKNOWN": "未知错误，请查看日志了解详情",
     "upstreamToast": "供应商「{{provider}}」请求失败：{{message}}"
@@ -13009,7 +13012,7 @@
       "chooseChannel": "选择渠道",
       "channelName": "渠道名称",
       "keepKey": "未修改则保留已保存的密钥",
-      "modelIds": "模型 ID，每行一个",
+      "modelIds": "模型 ID",
       "advanced": "高级设置",
       "requestPath": "请求路径",
       "modelsUrl": "模型列表 URL",
@@ -13039,7 +13042,25 @@
       "keepEditing": "继续编辑",
       "invalidHeaders": "请求头须为 JSON 对象，且每项的值均为文字。",
       "invalidUrl": "请填写有效的 HTTP 或 HTTPS 地址，不要在地址中包含用户名或密码。",
-      "noAuthSupplier": "此供应商的所有渠道均无需鉴权"
+      "noAuthSupplier": "此供应商的所有渠道均无需鉴权",
+      "protocolTabLabel": "{{protocol}}，{{count}} 个渠道",
+      "channelOptionLabel": "{{name}}，{{protocol}}，{{models}} 个模型 ID",
+      "channelSummary": "{{protocols}} 个协议 · {{models}} 个模型 ID",
+      "addModelId": "添加模型 ID",
+      "modelIdPlaceholder": "例如 gpt-5.3",
+      "modelIdRowLabel": "模型 ID {{index}}",
+      "noModels": "暂无模型 ID，可在下方添加。",
+      "protocolNames": {
+        "anthropicMessages": "Anthropic Messages",
+        "openaiResponses": "OpenAI Responses",
+        "openaiChat": "OpenAI Chat Completions",
+        "googleGemini": "Google Gemini"
+      },
+      "removeModelIdRowLabel": "移除模型 ID {{index}}",
+      "pendingModelId": "请先添加或清空待提交的模型 ID。",
+      "testNeedsCredentials": "请先保存连接，或填写新的 API 密钥后再测试。",
+      "channelOptionLabelWithInstance": "{{name}}，{{protocol}}，{{models}} 个模型 ID，第 {{position}} 个连接，共 {{total}} 个",
+      "channelInstanceSuffix": "{{position}}/{{total}}"
     }
   },
   "regionScreenshot": {

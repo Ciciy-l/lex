@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CustomProviderConfig } from '@cindy/model-providers';
 
@@ -53,18 +53,24 @@ describe('protocol-channel form requests', () => {
     render(<ProviderChannelsDialog initial={initial} onSaved={vi.fn()} onClose={vi.fn()} />);
     fireEvent.click(screen.getByText('models.channels.advanced'));
     fireEvent.change(screen.getByLabelText('models.channels.headers'), { target: { value: '{invalid' } });
-    fireEvent.change(screen.getByLabelText('models.channels.modelIds'), { target: { value: 'm\nsecond' } });
-    fireEvent.click(screen.getByRole('combobox', { name: 'models.channels.chooseChannel' }));
-    fireEvent.click(screen.getByRole('option', { name: 'Backup' }));
+    fireEvent.change(screen.getByLabelText('models.channels.addModelId'), { target: { value: 'second' } });
+    fireEvent.keyDown(screen.getByLabelText('models.channels.addModelId'), { key: 'Enter' });
+    fireEvent.click(screen.getByText('Backup').closest('button')!);
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'models.channels.test' })); });
-    expect(test).toHaveBeenCalledExactlyOnceWith({ kind: 'saved', providerId: 'backup--openai-responses', agent: 'pi' });
+    expect(test).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      kind: 'saved', providerId: 'backup--openai-responses', agent: 'pi', modelId: 'm',
+    }));
     expect(screen.getByRole('status').textContent).toBe('models.channels.connected');
     fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'fake-test-key' } });
     expect(screen.queryByRole('status')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'settings.providers.custom.save' }));
     expect(calls.update).not.toHaveBeenCalled();
     expect(screen.getByRole('alert').textContent).toBe('models.channels.invalidHeaders');
-    expect((screen.getByLabelText('models.channels.modelIds') as HTMLTextAreaElement).value).toBe('m\nsecond');
+    expect(
+      screen
+        .getAllByLabelText('models.channels.modelIdRowLabel')
+        .map((input) => (input as HTMLInputElement).value),
+    ).toEqual(['m', 'second']);
     expect((screen.getByLabelText('models.channels.headers') as HTMLTextAreaElement).value).toBe('{invalid');
   });
   it('guards unsaved close, preserves the draft on cancellation and keeps footer outside scrolling content', async () => {
@@ -86,6 +92,7 @@ describe('protocol-channel form requests', () => {
     expect(screen.queryByText('models.channels.endpointChanged')).toBeNull();
     fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://new.example/v1' } });
     expect(screen.getByText('models.channels.endpointChanged')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'fresh-key' } });
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'models.channels.test' })); });
     expect(screen.getByRole('alert').textContent).toBe('providerError.AUTH_INVALID');
     expect(screen.queryByText('private upstream secret')).toBeNull();

@@ -16,15 +16,19 @@ import {
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { Plus, Sparkles } from 'lucide-react';
+import { Check, Plus, Sparkles } from 'lucide-react';
 import { ProviderSetupTabs } from './ProviderSetupTabs';
 import { Textarea } from '@/components/ui/input';
+import { SegmentedControl } from '@/components/ui/segmented-control';
 import { SettingsTextInput } from './SettingsTextInput';
+import { cn } from '@/lib/utils';
+import { ProviderModelIdsField } from './ProviderModelIdsField';
 import {
   appendDiscoveredCustomProviderModels,
   createCustomProvider,
   updateCustomProvider,
 } from '@/lib/customProviders';
+import { firstProviderChatModel } from '@/lib/providerModelFetch';
 import type { ProviderChannelKeys } from '@/../shared/customProviderUpdate';
 import { extractIpcError } from '@/utils/ipcError';
 import {
@@ -33,11 +37,11 @@ import {
 } from '@/contexts/dataOwnerGeneration';
 import { useAuth } from '@/contexts/AuthContext';
 
-const protocolNames: Record<ProviderWireProtocol, string> = {
-  'anthropic-messages': 'Anthropic Messages',
-  'openai-responses': 'OpenAI Responses',
-  'openai-chat': 'OpenAI Chat Completions',
-  'google-generative-ai': 'Google Gemini',
+const protocolLabelKeys: Record<ProviderWireProtocol, string> = {
+  'anthropic-messages': 'models.channels.protocolNames.anthropicMessages',
+  'openai-responses': 'models.channels.protocolNames.openaiResponses',
+  'openai-chat': 'models.channels.protocolNames.openaiChat',
+  'google-generative-ai': 'models.channels.protocolNames.googleGemini',
 };
 const newId = () => 'channel-' + crypto.randomUUID();
 
@@ -114,7 +118,9 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
   );
   const [selectedId, setSelectedId] = useState(config.channels!.channels[0]?.id ?? '');
   const [keys, setKeys] = useState<ProviderChannelKeys>({});
-  const [modelDrafts, setModelDrafts] = useState<Record<string, string>>({});
+  /** Rows, not a joined string: an empty array is zero rows, [""] is one blank row. */
+  const [modelDrafts, setModelDrafts] = useState<Record<string, string[]>>({});
+  const [modelEntryDrafts, setModelEntryDrafts] = useState<Record<string, string>>({});
   const [headerDrafts, setHeaderDrafts] = useState<Record<string, string>>({});
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -123,12 +129,16 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
   const [pendingAction, setPendingAction] = useState<
     { kind: 'close' } | { kind: 'preset'; id: string } | null
   >(null);
+  const channelButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const initialSnapshot = useRef(JSON.stringify(config));
   const dirty =
     JSON.stringify(config) !== initialSnapshot.current ||
     Object.keys(keys).length > 0 ||
     Object.keys(modelDrafts).length > 0 ||
+    Object.values(modelEntryDrafts).some((value) => value.trim().length > 0) ||
     Object.keys(headerDrafts).length > 0;
+  const hasPendingModelEntry = Object.values(modelEntryDrafts)
+    .some((value) => value.trim().length > 0);
   const invalidate = () => {
     setError(null);
     setMessage(null);
@@ -198,33 +208,68 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
     setAppliedPreset(id);
     setKeys({});
     setModelDrafts({});
+    setModelEntryDrafts({});
     setHeaderDrafts({});
     setConfirmation(false);
     setSelectedId(plan.configuration.channels[0].id);
     setProtocol(Object.keys(plan.configuration.channels[0].protocols)[0] as ProviderWireProtocol);
   };
   const channels = config.channels!.channels;
+  /** Same visible names are still distinct channels; expose a stable instance ordinal. */
+  const nameInstance = (entry: ProviderChannel) => {
+    const sameName = channels.filter((item) => item.name === entry.name);
+    return { position: sameName.indexOf(entry) + 1, total: sameName.length };
+  };
   const available = channels.filter((channel) => channel.protocols[protocol]);
   const channel = available.find((entry) => entry.id === selectedId) ?? available[0];
   const connection = channel?.protocols[protocol];
   const draftId = channel ? channelProtocolProviderId(channel.id, protocol) : '';
+  const availableForProtocol = (wire: ProviderWireProtocol) =>
+    channels.filter((entry) => entry.protocols[wire]);
+  const selectProtocol = (wire: ProviderWireProtocol) => {
+    const retainedChannel = channel?.protocols[wire] ? channel.id : undefined;
+    selectRoute(wire, retainedChannel ?? availableForProtocol(wire)[0]?.id);
+  };
+  const protocolName = (wire: ProviderWireProtocol) => t(protocolLabelKeys[wire]);
+  /** Saves trim, drop blanks and de-duplicate exactly; rows keep the user's edit state. */
+  const normalizeModelIds = (rows: readonly string[]): string[] => {
+    const seen = new Set<string>();
+    const ids: string[] = [];
+    for (const row of rows) {
+      const id = row.trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      ids.push(id);
+    }
+    return ids;
+  };
+  const modelIdRows = (id: string, models: readonly { id: string }[]): string[] =>
+    modelDrafts[id] ?? models.map((model) => model.id);
+  const draftModelsFor = (entry: ProviderChannel, wire: ProviderWireProtocol): string[] => {
+    const route = entry.protocols[wire];
+    if (!route) return [];
+    return normalizeModelIds(
+      modelIdRows(channelProtocolProviderId(entry.id, wire), route.models),
+    );
+  };
+  const currentModelIds = connection ? modelIdRows(draftId, connection.models) : [];
+  const updateCurrentModelIds = (ids: readonly string[]) => {
+    if (!draftId) return;
+    invalidate();
+    setModelDrafts((previous) => ({ ...previous, [draftId]: [...ids] }));
+  };
   const prepareConfig = (onlyRoute?: string): CustomProviderConfig => {
     const next = structuredClone(config);
     for (const item of next.channels!.channels) {
       for (const [wire, route] of Object.entries(item.protocols)) {
         const id = channelProtocolProviderId(item.id, wire as ProviderWireProtocol);
         if (onlyRoute && onlyRoute !== id) continue;
-        const raw = modelDrafts[id];
-        if (raw !== undefined) {
+        const rows = modelDrafts[id];
+        if (rows !== undefined) {
           const existing = new Map(route.models.map((model) => [model.id, model]));
-          route.models = [
-            ...new Set(
-              raw
-                .split('\n')
-                .map((value) => value.trim())
-                .filter(Boolean),
-            ),
-          ].map((id) => existing.get(id) ?? { id, name: id, defaultEnabled: true });
+          route.models = normalizeModelIds(rows).map(
+            (id) => existing.get(id) ?? { id, name: id, defaultEnabled: true },
+          );
         }
         const headers = headerDrafts[id];
         if (headers !== undefined) {
@@ -276,7 +321,9 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
       ('requestPath' in patch && patch.requestPath !== connection.requestPath);
     const models = routeChanged
       ? connection.models.map((model) => {
-          const { route: _oldRoute, discoveredCost: _oldCost, ...metadata } = model;
+          const metadata = { ...model };
+          delete metadata.route;
+          delete metadata.discoveredCost;
           return metadata;
         })
       : connection.models;
@@ -323,6 +370,11 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
       delete next[draftId];
       return next;
     });
+    setModelEntryDrafts((previous) => {
+      const next = { ...previous };
+      delete next[draftId];
+      return next;
+    });
     setHeaderDrafts((previous) => {
       const next = { ...previous };
       delete next[draftId];
@@ -358,6 +410,10 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
   };
   const save = async (interrupt = false) => {
     if (requestPending.current || !isCurrent()) return;
+    if (hasPendingModelEntry) {
+      setError(t('models.channels.pendingModelId'));
+      return;
+    }
     requestPending.current = true;
     setBusy(true);
     setError(null);
@@ -398,6 +454,10 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
   };
   const request = async (discover: boolean) => {
     if (requestPending.current || !channel || !connection || !isCurrent()) return;
+    if (modelEntryDrafts[draftId]?.trim()) {
+      setError(t('models.channels.pendingModelId'));
+      return;
+    }
     requestPending.current = true;
     setBusy(true);
     setError(null);
@@ -409,15 +469,28 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
       const saved = p.initial?.channels?.channels.find((item) => item.id === channel.id)?.protocols[
         protocol
       ];
+      const authMethod = config.auth?.method === 'none' ? ('none' as const) : ('apiKey' as const);
+      // Probes send chat-shaped requests; a media model at index 0 must not
+      // become the probe target just because the user reordered the list.
+      const probeModel = firstProviderChatModel(route.models);
+      const credentialsUntouched =
+        keys[channel.id]?.[protocol] === undefined &&
+        headerDrafts[draftId] === undefined &&
+        p.initial?.auth?.method === config.auth?.method;
       const useSaved =
         !!saved &&
         saved.baseUrl === route.baseUrl &&
         saved.modelsUrl === route.modelsUrl &&
         saved.requestPath === route.requestPath &&
-        keys[channel.id]?.[protocol] === undefined &&
-        headerDrafts[draftId] === undefined &&
-        p.initial?.auth?.method === config.auth?.method;
-      const authMethod = config.auth?.method === 'none' ? ('none' as const) : ('apiKey' as const);
+        credentialsUntouched;
+      const draftCredentials =
+        keys[channel.id]?.[protocol] !== undefined || headerDrafts[draftId] !== undefined;
+      if (!discover && !useSaved && authMethod !== 'none' && !draftCredentials) {
+        // Never send an unauthenticated probe for an edited model or endpoint:
+        // stored credentials stay Main-only and must not follow a new endpoint.
+        setError(t('models.channels.testNeedsCredentials'));
+        return;
+      }
       const common = {
         agent: 'pi' as const,
         baseUrl: route.baseUrl,
@@ -452,18 +525,47 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
         });
         setModelDrafts((previous) => ({
           ...previous,
-          [draftId]: merged.models.map((model) => model.id).join('\n'),
+          [draftId]: merged.models.map((model) => model.id),
         }));
+        setModelEntryDrafts((previous) => {
+          const next = { ...previous };
+          delete next[draftId];
+          return next;
+        });
       } else {
+        // A model may override the channel route; the probe must target the
+        // exact route the real session would use for this model.
+        const probeRoute = probeModel?.route;
+        const probeBaseUrl = probeRoute?.baseUrl ?? route.baseUrl;
+        const probeWireProtocol = probeRoute?.wireProtocol ?? protocol;
+        const probeRequestPath = probeRoute?.requestPath ?? route.requestPath;
+        const probeApi = probeModel?.api ?? probeModel?.piApi;
         const result = await window.electronAPI.maker.testProviderConnection(
           useSaved
-            ? { kind: 'saved', providerId: draftId, agent: 'pi' }
+            ? {
+                kind: 'saved',
+                providerId: draftId,
+                agent: 'pi',
+                ...(probeModel?.id ? { modelId: probeModel.id } : {}),
+                // Main verifies this against the saved route before reading the
+                // stored key; it never probes the endpoint claimed here.
+                endpoint: {
+                  baseUrl: probeBaseUrl,
+                  wireProtocol: probeWireProtocol,
+                  modelsUrl: route.modelsUrl ?? null,
+                  ...(probeRequestPath ? { requestPath: probeRequestPath } : {}),
+                },
+              }
             : {
                 kind: 'adhoc',
                 spec: {
                   ...common,
-                  modelId: route.models[0]?.id ?? '',
-                  ...(route.requestPath ? { requestPath: route.requestPath } : {}),
+                  baseUrl: probeBaseUrl,
+                  wireProtocol: probeWireProtocol,
+                  modelId: probeModel?.id ?? '',
+                  ...(probeRequestPath ? { requestPath: probeRequestPath } : {}),
+                  ...(probeApi ? { api: probeApi } : {}),
+                  ...(route.catalogPresetId ? { catalogPresetId: route.catalogPresetId } : {}),
                 },
               },
         );
@@ -546,6 +648,45 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
                 }}
               />
             )}
+            <div className="flex w-full flex-col gap-2">
+              <span className="text-13 text-[var(--text-primary)]">
+                {t('models.channels.protocol')}
+              </span>
+              <SegmentedControl
+                role="tablist"
+                aria-label={t('models.channels.protocol')}
+                value={protocol}
+                disabled={busy}
+                fullWidth
+                height={38}
+                optionHeight={30}
+                optionClassName="text-12 px-2"
+                options={PROVIDER_WIRE_PROTOCOLS.map((wire) => {
+                  const count = availableForProtocol(wire).length;
+                  return {
+                    value: wire,
+                    id: `${panelId}-protocol-tab-${wire}`,
+                    label: (
+                      <>
+                        <span>{protocolName(wire)}</span>
+                        <span
+                          aria-hidden="true"
+                          className="rounded-full bg-[var(--surface-chip)] px-1.5 py-0.5 text-11 tabular-nums text-[var(--text-secondary)]"
+                        >
+                          {count}
+                        </span>
+                      </>
+                    ),
+                    'aria-label': t('models.channels.protocolTabLabel', {
+                      protocol: protocolName(wire),
+                      count,
+                    }),
+                    'aria-controls': panelId + '-protocol-panel',
+                  };
+                })}
+                onValueChange={(wire) => selectProtocol(wire)}
+              />
+            </div>
           </header>
           <div className="min-h-0 overflow-y-auto">
             <fieldset
@@ -591,53 +732,158 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
                   }}
                 />
               </label>
-              <label className="flex flex-col gap-1 text-13">
-                {t('models.channels.protocol')}
-                <Select
-                  label={t('models.channels.protocol')}
-                  value={protocol}
-                  disabled={busy}
-                  options={PROVIDER_WIRE_PROTOCOLS.map((wire) => ({
-                    value: wire,
-                    label: protocolNames[wire],
-                  }))}
-                  onValueChange={(value) => {
-                    const wire = value as ProviderWireProtocol;
-                    selectRoute(wire, channels.find((entry) => entry.protocols[wire])?.id);
-                  }}
-                />
-              </label>
-              <div className="flex min-w-0 items-end gap-2">
-                <label className="flex min-w-0 flex-1 flex-col gap-1 text-13">
-                  {t('models.channels.chooseChannel')}
-                  <Select
-                    label={t('models.channels.chooseChannel')}
-                    value={channel?.id ?? ''}
-                    disabled={busy}
-                    options={channels
-                      .filter((entry) => entry.protocols[protocol])
-                      .map((entry) => ({ value: entry.id, label: entry.name }))}
-                    onValueChange={(id) => selectRoute(protocol, id)}
-                  />
-                </label>
-                <Button variant="secondary" onClick={() => add()}>
-                  <Plus size={14} />
+              <div
+                id={panelId + '-protocol-panel'}
+                role="tabpanel"
+                aria-labelledby={`${panelId}-protocol-tab-${protocol}`}
+                tabIndex={-1}
+                className="flex min-w-0 flex-col gap-4 outline-none"
+              >
+              <div
+                id={panelId + '-route'}
+                className="grid grid-cols-1 gap-2 sm:grid-cols-2"
+              >
+                <div
+                  role="radiogroup"
+                  aria-label={t('models.channels.chooseChannel')}
+                  className="contents"
+                >
+                {available.map((entry, index) => {
+                  const selected = entry.id === channel?.id;
+                  const associatedProtocols = PROVIDER_WIRE_PROTOCOLS
+                    .filter((wire) => entry.protocols[wire]);
+                  const instance = nameInstance(entry);
+                  const duplicatedName = instance.total > 1;
+                  return (
+                    <button
+                      key={entry.id}
+                      ref={(node) => {
+                        if (node) channelButtonRefs.current.set(entry.id, node);
+                        else channelButtonRefs.current.delete(entry.id);
+                      }}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      aria-label={t(
+                        duplicatedName
+                          ? 'models.channels.channelOptionLabelWithInstance'
+                          : 'models.channels.channelOptionLabel',
+                        {
+                          name: entry.name,
+                          protocol: protocolName(protocol),
+                          models: draftModelsFor(entry, protocol).length,
+                          position: instance.position,
+                          total: instance.total,
+                        },
+                      )}
+                      tabIndex={selected ? 0 : -1}
+                      data-channel-id={entry.id}
+                      className={cn(
+                        'flex min-h-16 min-w-0 flex-col gap-1 rounded-xl border px-3 py-2 text-left outline-none transition-colors',
+                        'focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]',
+                        selected
+                          ? 'border-[var(--settings-input-border-focus)] bg-[var(--surface-elevated)]'
+                          : 'border-[var(--border-default)] bg-transparent hover:bg-[var(--surface-hover)]',
+                      )}
+                      onClick={() => selectRoute(protocol, entry.id)}
+                      onKeyDown={(event) => {
+                        const rtl =
+                          getComputedStyle(event.currentTarget).direction === 'rtl';
+                        let nextIndex: number;
+                        switch (event.key) {
+                          case 'ArrowRight': nextIndex = index + (rtl ? -1 : 1); break;
+                          case 'ArrowDown': nextIndex = index + 1; break;
+                          case 'ArrowLeft': nextIndex = index + (rtl ? 1 : -1); break;
+                          case 'ArrowUp': nextIndex = index - 1; break;
+                          case 'Home': nextIndex = 0; break;
+                          case 'End': nextIndex = available.length - 1; break;
+                          default: return;
+                        }
+                        event.preventDefault();
+                        const wrapped = (nextIndex + available.length) % available.length;
+                        const next = available[wrapped];
+                        selectRoute(protocol, next.id);
+                        requestAnimationFrame(() => channelButtonRefs.current.get(next.id)?.focus());
+                      }}
+                    >
+                      <span className="flex w-full items-center gap-2">
+                        <span className="min-w-0 flex-1 truncate text-13 font-medium text-[var(--text-primary)]">
+                          {entry.name}
+                        </span>
+                        {duplicatedName && (
+                          <span
+                            aria-hidden="true"
+                            className="shrink-0 rounded-full bg-[var(--surface-chip)] px-1.5 py-0.5 text-11 tabular-nums text-[var(--text-secondary)]"
+                          >
+                            {t('models.channels.channelInstanceSuffix', {
+                              position: instance.position,
+                              total: instance.total,
+                            })}
+                          </span>
+                        )}
+                        {selected && <Check size={15} aria-hidden="true" />}
+                      </span>
+                      <span className="text-12 text-[var(--text-secondary)]">
+                        {t('models.channels.channelSummary', {
+                          protocols: associatedProtocols.length,
+                          models: draftModelsFor(entry, protocol).length,
+                        })}
+                      </span>
+                      <span className="text-11 leading-snug text-[var(--text-tertiary)] [overflow-wrap:anywhere]">
+                        {associatedProtocols.map((wire) => protocolName(wire)).join(' · ')}
+                      </span>
+                    </button>
+                  );
+                })}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => add()}
+                  className="flex min-h-16 items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--border-default)] px-3 text-13 font-medium text-[var(--text-secondary)] outline-none transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+                >
+                  <Plus size={15} aria-hidden="true" />
                   {t('models.channels.add')}
-                </Button>
+                </button>
               </div>
               {channels.some((entry) => !entry.protocols[protocol]) && (
-                <label className="flex flex-col gap-1 text-13">
-                  {t('models.channels.attach')}
-                  <Select
-                    label={t('models.channels.chooseChannel')}
-                    value=""
-                    disabled={busy}
-                    options={channels
+                <div className="flex flex-col gap-2">
+                  <span className="text-13 text-[var(--text-primary)]">{t('models.channels.attach')}</span>
+                  <div className="flex flex-wrap gap-2">
+                    {channels
                       .filter((entry) => !entry.protocols[protocol])
-                      .map((entry) => ({ value: entry.id, label: entry.name }))}
-                    onValueChange={(id) => add(id)}
-                  />
-                </label>
+                      .map((entry) => {
+                        const instance = nameInstance(entry);
+                        return (
+                          <Button
+                            key={entry.id}
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            aria-label={
+                              instance.total > 1
+                                ? `${entry.name} ${t('models.channels.channelInstanceSuffix', {
+                                    position: instance.position,
+                                    total: instance.total,
+                                  })}`
+                                : undefined
+                            }
+                            onClick={() => add(entry.id)}
+                          >
+                            <Plus size={13} aria-hidden="true" />
+                            {entry.name}
+                            {instance.total > 1 && (
+                              <span className="tabular-nums text-[var(--text-tertiary)]">
+                                {t('models.channels.channelInstanceSuffix', {
+                                  position: instance.position,
+                                  total: instance.total,
+                                })}
+                              </span>
+                            )}
+                          </Button>
+                        );
+                      })}
+                  </div>
+                </div>
               )}
               {channel && connection && (
                 <>
@@ -681,36 +927,34 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
                       />
                     </label>
                   )}
+                  {/* Main drops stored credentials for exactly these changes. */}
                   {p.initial?.channels?.channels.some(
                     (entry) =>
                       entry.id === channel.id &&
                       entry.protocols[protocol] &&
                       (entry.protocols[protocol]!.baseUrl !== connection.baseUrl ||
-                        entry.protocols[protocol]!.requestPath !== connection.requestPath),
+                        entry.protocols[protocol]!.modelsUrl !== connection.modelsUrl),
                   ) && (
                     <p className="text-12 text-[var(--text-secondary)]">
                       {t('models.channels.endpointChanged')}
                     </p>
                   )}
-                  <label className="flex flex-col gap-1 text-13">
-                    {t('models.channels.modelIds')}
-                    <Textarea
-                      aria-label={t('models.channels.modelIds')}
-                      surface="ivory"
-                      rows={5}
-                      value={
-                        modelDrafts[draftId] ??
-                        connection.models.map((model) => model.id).join('\n')
-                      }
-                      onChange={(value) => {
-                        setConfirmation(false);
-                        setModelDrafts((previous) => ({
-                          ...previous,
-                          [draftId]: value,
-                        }));
-                      }}
-                    />
-                  </label>
+                  <ProviderModelIdsField
+                    ids={currentModelIds}
+                    draft={modelEntryDrafts[draftId] ?? ''}
+                    onDraftChange={(value) => {
+                      invalidate();
+                      setModelEntryDrafts((previous) => ({ ...previous, [draftId]: value }));
+                    }}
+                    onChange={updateCurrentModelIds}
+                    disabled={busy}
+                    label={t('models.channels.modelIds')}
+                    addLabel={t('models.channels.addModelId')}
+                    placeholder={t('models.channels.modelIdPlaceholder')}
+                    removeLabel={(index) => t('models.channels.removeModelIdRowLabel', { index })}
+                    rowLabel={(index) => t('models.channels.modelIdRowLabel', { index })}
+                    emptyLabel={t('models.channels.noModels')}
+                  />
                   <div className="flex gap-2">
                     <Button variant="secondary" onClick={() => void request(true)}>
                       {t('models.channels.discover')}
@@ -791,6 +1035,7 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
                   </details>
                 </>
               )}
+              </div>
             </fieldset>
           </div>
           <footer className="shrink-0 space-y-2 border-t border-[var(--border-default)] p-4">
@@ -802,6 +1047,11 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
             {message && (
               <p role="status" className="text-13 text-[var(--text-secondary)]">
                 {message}
+              </p>
+            )}
+            {hasPendingModelEntry && (
+              <p role="status" className="text-13 text-[var(--text-secondary)]">
+                {t('models.channels.pendingModelId')}
               </p>
             )}
             {confirmation && (
@@ -820,7 +1070,7 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
                 {t('settings.providers.custom.cancel')}
               </Button>
               <Button
-                disabled={busy || !config.name.trim() || !channels.length}
+                disabled={busy || hasPendingModelEntry || !config.name.trim() || !channels.length}
                 onClick={() => void save(confirmation)}
               >
                 {t(

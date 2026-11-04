@@ -350,6 +350,9 @@
     "WIRE_INCOMPATIBLE": "엔드포인트가 이 프로토콜과 완전히 호환되지 않습니다(인식할 수 없는 요청 필드가 있음)",
     "UPSTREAM_ERROR": "업스트림 서버 오류(5xx)입니다. 잠시 후 다시 시도하세요",
     "UPSTREAM_UNREACHABLE": "엔드포인트에 연결할 수 없습니다. 네트워크와 기본 URL을 확인하세요",
+    "REDIRECT_BLOCKED": "엔드포인트가 다른 주소로 리디렉션되었습니다. 연결 테스트에는 최종 엔드포인트 URL을 입력하세요",
+    "PROBE_UNSUPPORTED": "이 네이티브 SDK 전송은 리디렉션을 따르지 않고 안전하게 연결 테스트할 수 없습니다. 연결을 저장한 후 작업에서 사용해 보세요",
+    "RESPONSE_BLOCKED": "모델이 사용 가능한 응답을 반환하지 않았습니다(안전 또는 콘텐츠 정책). 프롬프트나 모델 설정을 확인하세요",
     "TIMEOUT": "연결 시간이 초과되었습니다. 네트워크와 기본 URL을 확인하세요",
     "UNKNOWN": "알 수 없는 오류입니다. 자세한 내용은 로그를 확인하세요",
     "upstreamToast": "제공자 \"{{provider}}\" 요청 실패: {{message}}"
@@ -13009,7 +13012,7 @@
       "chooseChannel": "채널 선택",
       "channelName": "채널 이름",
       "keepKey": "변경하지 않으면 저장된 키 유지",
-      "modelIds": "모델 ID (한 줄에 하나)",
+      "modelIds": "모델 ID",
       "advanced": "고급 설정",
       "requestPath": "요청 경로",
       "modelsUrl": "모델 목록 URL",
@@ -13039,7 +13042,25 @@
       "keepEditing": "계속 편집",
       "invalidHeaders": "헤더는 모든 값이 문자열인 JSON 객체여야 합니다.",
       "invalidUrl": "사용자 이름이나 비밀번호가 없는 유효한 HTTP 또는 HTTPS URL을 입력하세요.",
-      "noAuthSupplier": "이 제공자의 모든 채널에서 인증 사용 안 함"
+      "noAuthSupplier": "이 제공자의 모든 채널에서 인증 사용 안 함",
+      "protocolTabLabel": "{{protocol}}, 채널 {{count}}개",
+      "channelOptionLabel": "{{name}}, {{protocol}}, 모델 ID {{models}}개",
+      "channelSummary": "프로토콜 {{protocols}}개 · 모델 ID {{models}}개",
+      "addModelId": "모델 ID 추가",
+      "modelIdPlaceholder": "예: gpt-5.3",
+      "modelIdRowLabel": "모델 ID {{index}}",
+      "noModels": "아직 모델 ID가 없습니다. 아래에서 추가하세요.",
+      "protocolNames": {
+        "anthropicMessages": "Anthropic Messages",
+        "openaiResponses": "OpenAI Responses",
+        "openaiChat": "OpenAI Chat Completions",
+        "googleGemini": "Google Gemini"
+      },
+      "removeModelIdRowLabel": "모델 ID {{index}} 제거",
+      "pendingModelId": "먼저 입력 중인 모델 ID를 추가하거나 비우세요.",
+      "testNeedsCredentials": "먼저 연결을 저장하거나 새 API 키를 입력한 후 테스트하세요.",
+      "channelOptionLabelWithInstance": "{{name}}, {{protocol}}, 모델 ID {{models}}개, 연결 {{position}}/{{total}}",
+      "channelInstanceSuffix": "{{position}}/{{total}}"
     }
   },
   "regionScreenshot": {

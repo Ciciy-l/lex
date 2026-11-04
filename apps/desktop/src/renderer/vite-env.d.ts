@@ -5207,7 +5207,18 @@ interface ElectronAPI {
     /** 供应商「测试连接」—— 与真实会话同路由口径的最小探测请求（结构化结果，code 走 providerError.* i18n）。 */
     testProviderConnection: (
       input:
-        | { kind: 'saved'; providerId: string; agent: 'claude-code' | 'codex' | 'pi' | 'omp' }
+        | {
+            kind: 'saved';
+            providerId: string;
+            agent: 'claude-code' | 'codex' | 'pi' | 'omp';
+            modelId?: string;
+            endpoint?: {
+              baseUrl: string;
+              wireProtocol: import('@cindy/model-providers').ProviderWireProtocol;
+              modelsUrl?: string | null;
+              requestPath?: string;
+            };
+          }
         | {
             kind: 'adhoc';
             spec: {
