@@ -350,6 +350,9 @@
     "WIRE_INCOMPATIBLE": "Endpoint is not fully compatible with this protocol (unrecognized request fields)",
     "UPSTREAM_ERROR": "Upstream server error (5xx). Try again later",
     "UPSTREAM_UNREACHABLE": "Cannot reach the endpoint. Check your network and the base URL",
+    "REDIRECT_BLOCKED": "The endpoint redirected to another address. Use the final endpoint URL for connection tests",
+    "PROBE_UNSUPPORTED": "This native SDK transport cannot be safely connection-tested without following redirects. Save the connection and try it in a task",
+    "RESPONSE_BLOCKED": "The model stopped without a usable response (safety or content policy). Check the prompt or model settings",
     "TIMEOUT": "Connection timed out. Check your network and the base URL",
     "UNKNOWN": "Unknown error. Check the logs for details",
     "upstreamToast": "Provider \"{{provider}}\" request failed: {{message}}"
@@ -13071,7 +13074,10 @@
         "googleGemini": "Google Gemini"
       },
       "removeModelIdRowLabel": "Remove Model ID {{index}}",
-      "pendingModelId": "Add or clear the pending Model ID first."
+      "pendingModelId": "Add or clear the pending Model ID first.",
+      "testNeedsCredentials": "Save the connection first, or enter a new API key, before testing.",
+      "channelOptionLabelWithInstance": "{{name}}, {{protocol}}, {{models}} model IDs, connection {{position}} of {{total}}",
+      "channelInstanceSuffix": "{{position}}/{{total}}"
     }
   },
   "regionScreenshot": {

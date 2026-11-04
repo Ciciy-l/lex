@@ -38,6 +38,12 @@ export type ProviderErrorCode =
   | 'UPSTREAM_ERROR'
   /** 网络层不可达（DNS / 连接被拒 / 连接超时），可重试。 */
   | 'UPSTREAM_UNREACHABLE'
+  /** 探测不跟随重定向：避免把 Main-only 凭证重放到第二来源。 */
+  | 'REDIRECT_BLOCKED'
+  /** 原生 SDK 传输无法在不跟随重定向的前提下安全探测。 */
+  | 'PROBE_UNSUPPORTED'
+  /** 模型因安全/内容策略或其它非成功 finishReason 未返回可用响应。 */
+  | 'RESPONSE_BLOCKED'
   /** 请求超时（探测 10s / 观察侧不产生此码）。 */
   | 'TIMEOUT'
   /** 无法归类。 */

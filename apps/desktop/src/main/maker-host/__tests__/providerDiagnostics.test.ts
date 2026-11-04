@@ -9,9 +9,13 @@
  *   - resolveSavedProbeSpec 从 active-catalog + 注入 key reader 解析（仅 user 供应商）。
  */
 
+import { randomUUID } from 'node:crypto';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+
 import { describe, it, expect, afterEach, vi } from 'vitest';
 
-import { BUNDLED_CATALOG, buildUserProvider, PROVIDER_MODEL_CATALOG, providerPresetOAuth } from '@cindy/model-providers';
+import { BUNDLED_CATALOG, buildUserProvider, buildUserProviderChannels, PROVIDER_MODEL_CATALOG, providerPresetOAuth, type CustomProviderConfig, type ProviderWireProtocol } from '@cindy/model-providers';
 
 import { classifyProviderError } from '../../../shared/providerErrors.js';
 import {
@@ -23,10 +27,14 @@ import {
   testProviderConnection,
 } from '../provider-diagnostics.js';
 import { setCustomProviders } from '../active-catalog.js';
+import { beginAppSessionBoundary } from '../../appSessionState.js';
+import { beginProviderRouteMutation, setCustomProviderHeaderReader } from '../provider-route.js';
+import { outboundFetch } from '../outbound-fetch.js';
 
 afterEach(() => {
   setCustomProviders([]);
   setDiagnosticsKeyReader(() => null);
+  setCustomProviderHeaderReader(() => null);
 });
 
 describe('classifyProviderError', () => {
@@ -852,44 +860,1214 @@ it('probes Google using generateContent instead of falling through to Responses'
 });
 
 
-describe('native SDK connection probes', () => {
-  it.each(['saved', 'adhoc', 'header-only'] as const)('uses the Vertex SDK for a %s connection, not the public Gemini path', async kind => {
-    const row = PROVIDER_MODEL_CATALOG.providers['google-vertex'][0];
-    const baseUrl = 'https://us-central1-aiplatform.googleapis.com';
-    const fetchSpy = vi.fn(async (url: unknown, init?: RequestInit) => {
-      expect(String(url)).toContain('/v1/publishers/google/models/');
-      expect(String(url)).toContain(':streamGenerateContent');
-      expect(JSON.parse(String(init?.body)).generationConfig.maxOutputTokens).toBeGreaterThan(0);
-      expect(JSON.parse(String(init?.body)).generationConfig.maxOutputTokens).toBeLessThanOrEqual(16);
-      return new Response(`data: ${JSON.stringify({ candidates: [{ content: { role: 'model', parts: [{ text: 'ok' }] }, finishReason: 'STOP' }] })}\n\n`,
-        { headers: { 'content-type': 'text/event-stream' } });
-    });
-    vi.stubGlobal('fetch', fetchSpy);
-    const wrongTransport = vi.fn(async () => { throw new Error('must use the native Vertex SDK'); });
-    setCustomProviders([buildUserProvider({ id: 'vertex-test', name: 'Vertex', auth: { method: 'apiKey' },
-      runtimes: { pi: { baseUrl, wireProtocol: 'google-generative-ai', catalogPresetId: 'google-vertex',
-        models: [{ id: row.id, name: row.name, piApi: 'google-vertex' }] } },
-    })]);
-    setDiagnosticsKeyReader(() => 'fixture-vertex-key');
-    try {
-      const result = await testProviderConnection(kind === 'saved'
-        ? { kind, providerId: 'vertex-test', agent: 'pi' }
-        : { kind: 'adhoc', spec: { agent: 'pi', baseUrl, modelId: row.id, api: 'google-vertex',
-          wireProtocol: 'google-generative-ai', ...(kind === 'header-only'
-            ? { headers: { 'X-Goog-Api-Key': 'fixture-vertex-key' } } : { apiKey: 'fixture-vertex-key' }) } }, wrongTransport);
-      expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
-      expect(fetchSpy).toHaveBeenCalledOnce();
-      expect(wrongTransport).not.toHaveBeenCalled();
-    } finally { vi.unstubAllGlobals(); }
+describe('saved probes with a draft model and endpoint', () => {
+  const channelConfig: CustomProviderConfig = {
+    id: 'supplier',
+    name: 'Supplier',
+    runtimes: {},
+    channels: {
+      version: 1,
+      channels: [
+        {
+          id: 'primary',
+          name: 'Primary',
+          protocols: {
+            'anthropic-messages': {
+              baseUrl: 'https://channel.example/v1',
+              wireProtocol: 'anthropic-messages',
+              models: [
+                { id: 'chat-a', name: 'chat-a' },
+                {
+                  id: 'chat-b',
+                  name: 'chat-b',
+                  route: {
+                    baseUrl: 'https://alternate.example/v1',
+                    wireProtocol: 'anthropic-messages',
+                  },
+                },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  };
+  const providerId = 'primary--anthropic-messages';
+  const endpoint = (baseUrl = 'https://channel.example/v1') => ({
+    baseUrl,
+    wireProtocol: 'anthropic-messages' as const,
+    modelsUrl: null,
   });
 
-  it('does not turn an SDK authentication error into a successful probe', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":{"code":401,"message":"invalid api key"}}', { status: 401 })));
+  it('routes an unsaved draft model through the saved channel endpoint and key', () => {
+    setCustomProviders(buildUserProviderChannels(channelConfig));
+    const read = vi.fn(() => 'saved-key');
+    setDiagnosticsKeyReader(read);
+    const spec = resolveSavedProbeSpec(providerId, 'pi', {
+      modelId: 'chat-new',
+      endpoint: endpoint(),
+    });
+    expect(spec).toMatchObject({
+      modelId: 'chat-new',
+      baseUrl: 'https://channel.example/v1',
+      wireProtocol: 'anthropic-messages',
+      apiKey: 'saved-key',
+    });
+    expect(read).toHaveBeenCalledWith('primary', 'pi', 'anthropic-messages');
+  });
+
+  it('uses the saved model-level route for a saved draft model', () => {
+    setCustomProviders(buildUserProviderChannels(channelConfig));
+    setDiagnosticsKeyReader(() => 'saved-key');
+    const spec = resolveSavedProbeSpec(providerId, 'pi', {
+      modelId: 'chat-b',
+      endpoint: endpoint('https://alternate.example/v1'),
+    });
+    expect(spec).toMatchObject({
+      modelId: 'chat-b',
+      baseUrl: 'https://alternate.example/v1',
+      apiKey: 'saved-key',
+    });
+  });
+
+  it('sends the saved key to the saved endpoint for an unsaved draft model', async () => {
+    setCustomProviders(buildUserProviderChannels(channelConfig));
+    setDiagnosticsKeyReader(() => 'saved-key');
+    let seenUrl = '';
+    let seenAuth = '';
+    let seenModel = '';
+    await testProviderConnection(
+      { kind: 'saved', providerId, agent: 'pi', modelId: 'chat-new', endpoint: endpoint() },
+      async (url, init) => {
+        seenUrl = String(url);
+        seenAuth = new Headers(init?.headers).get('authorization') ?? '';
+        seenModel = (JSON.parse(String(init?.body)) as { model: string }).model;
+        return new Response('data: [DONE]\n\n', {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        });
+      },
+    );
+    expect(seenUrl).toContain('https://channel.example/v1');
+    expect(seenAuth).toBe('Bearer saved-key');
+    expect(seenModel).toBe('chat-new');
+  });
+
+  it('rejects mismatched draft endpoints before reading the stored key', () => {
+    setCustomProviders(buildUserProviderChannels(channelConfig));
+    const read = vi.fn(() => 'saved-key');
+    setDiagnosticsKeyReader(read);
+
+    expect(() =>
+      resolveSavedProbeSpec(providerId, 'pi', {
+        modelId: 'chat-new',
+        endpoint: endpoint('https://evil.example/v1'),
+      }),
+    ).toThrow(/endpoint differs/);
+    expect(() =>
+      resolveSavedProbeSpec(providerId, 'pi', {
+        modelId: 'chat-new',
+        endpoint: { ...endpoint(), modelsUrl: 'https://channel.example/models' },
+      }),
+    ).toThrow(/model-list endpoint differs/);
+    expect(() =>
+      resolveSavedProbeSpec(providerId, 'pi', {
+        modelId: 'chat-a',
+        endpoint: { ...endpoint(), wireProtocol: 'openai-chat' },
+      }),
+    ).toThrow(/protocol differs/);
+    expect(() =>
+      resolveSavedProbeSpec(providerId, 'claude-code', {
+        modelId: 'chat-a',
+        endpoint: { ...endpoint(), requestPath: '/other' },
+      }),
+    ).toThrow(/request path differs/);
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it('refuses to read a saved key while a provider route mutation is open', async () => {
+    setCustomProviders(buildUserProviderChannels(channelConfig));
+    const read = vi.fn(() => 'saved-key');
+    setDiagnosticsKeyReader(read);
+    const readHeaders = vi.fn(() => null);
+    setCustomProviderHeaderReader(readHeaders);
+    const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 }));
+    const release = beginProviderRouteMutation(providerId);
     try {
-      const result = await runProviderProbe({ agent: 'pi', baseUrl: 'https://us-central1-aiplatform.googleapis.com',
-        modelId: 'gemini-fixture', api: 'google-vertex', wireProtocol: 'google-generative-ai', apiKey: 'fixture-key' });
+      await expect(
+        testProviderConnection(
+          { kind: 'saved', providerId, agent: 'pi', modelId: 'chat-a', endpoint: endpoint() },
+          fetchImpl,
+        ),
+      ).rejects.toThrow(/configuration is being updated/);
+    } finally {
+      release();
+    }
+    expect(read).not.toHaveBeenCalled();
+    expect(readHeaders).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('refuses to read a saved key while an account boundary is pending', () => {
+    setCustomProviders(buildUserProviderChannels(channelConfig));
+    const read = vi.fn(() => 'saved-key');
+    setDiagnosticsKeyReader(read);
+    const readHeaders = vi.fn(() => null);
+    setCustomProviderHeaderReader(readHeaders);
+    const release = beginAppSessionBoundary();
+    try {
+      expect(() =>
+        resolveSavedProbeSpec(providerId, 'pi', { modelId: 'chat-a', endpoint: endpoint() }),
+      ).toThrow(/account changes/);
+    } finally {
+      release();
+    }
+    expect(read).not.toHaveBeenCalled();
+    expect(readHeaders).not.toHaveBeenCalled();
+  });
+
+  it('discards a probe invalidated by an account boundary while it runs', async () => {
+    setCustomProviders(buildUserProviderChannels(channelConfig));
+    setDiagnosticsKeyReader(() => 'saved-key');
+    const boundary: { release?: () => void } = {};
+    const fetchImpl = vi.fn(async () => {
+      boundary.release = beginAppSessionBoundary();
+      return new Response('data: [DONE]\n\n', {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    });
+    try {
+      await expect(
+        testProviderConnection(
+          { kind: 'saved', providerId, agent: 'pi', modelId: 'chat-a', endpoint: endpoint() },
+          fetchImpl,
+        ),
+      ).rejects.toThrow(/account change/);
+    } finally {
+      boundary.release?.();
+    }
+  });
+
+  it('discards a probe invalidated by a route mutation while it runs', async () => {
+    setCustomProviders(buildUserProviderChannels(channelConfig));
+    setDiagnosticsKeyReader(() => 'saved-key');
+    const mutation: { release?: () => void } = {};
+    const fetchImpl = vi.fn(async () => {
+      mutation.release = beginProviderRouteMutation(providerId);
+      return new Response('data: [DONE]\n\n', {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    });
+    try {
+      await expect(
+        testProviderConnection(
+          { kind: 'saved', providerId, agent: 'pi', modelId: 'chat-a', endpoint: endpoint() },
+          fetchImpl,
+        ),
+      ).rejects.toThrow(/configuration changed during the probe/);
+    } finally {
+      mutation.release?.();
+    }
+  });
+
+  it('hydrates Main-only headers for a header-only saved channel route', () => {
+    setCustomProviders(buildUserProviderChannels(channelConfig));
+    setDiagnosticsKeyReader(() => null);
+    setCustomProviderHeaderReader((channelId, agent, protocol) =>
+      channelId === 'primary' && agent === 'pi' && protocol === 'anthropic-messages'
+        ? { authorization: 'Bearer fake-header-key' }
+        : null,
+    );
+    const spec = resolveSavedProbeSpec(providerId, 'pi', {
+      modelId: 'chat-new',
+      endpoint: endpoint(),
+    });
+    expect(spec.apiKey).toBeNull();
+    expect(spec.headers).toMatchObject({ authorization: 'Bearer fake-header-key' });
+    const headers = buildProbeRequest(spec).init.headers as Record<string, string>;
+    expect(headers.authorization).toBe('Bearer fake-header-key');
+  });
+
+  it('prefers the saved key over stored credential headers and keeps non-credential headers', () => {
+    setCustomProviders(buildUserProviderChannels(channelConfig));
+    setDiagnosticsKeyReader(() => 'saved-key');
+    setCustomProviderHeaderReader(() => ({
+      authorization: 'Bearer stale',
+      'x-tenant': 't1',
+    }));
+    const spec = resolveSavedProbeSpec(providerId, 'pi', {
+      modelId: 'chat-a',
+      endpoint: endpoint(),
+    });
+    expect(spec.headers).toEqual({ 'x-tenant': 't1' });
+    const headers = buildProbeRequest(spec).init.headers as Record<string, string>;
+    expect(headers.authorization).toBe('Bearer saved-key');
+    expect(headers['x-tenant']).toBe('t1');
+  });
+});
+
+describe('saved probes on an auto channel with two protocols', () => {
+  const autoChannelConfig: CustomProviderConfig = {
+    id: 'supplier',
+    name: 'Supplier',
+    runtimes: {},
+    channels: {
+      version: 1,
+      channels: [
+        {
+          id: 'auto-channel',
+          name: 'Auto',
+          protocols: {
+            'anthropic-messages': {
+              baseUrl: 'https://messages.example/v1',
+              wireProtocol: 'anthropic-messages',
+              models: [{ id: 'messages-model', name: 'Messages Model' }],
+            },
+            'openai-responses': {
+              baseUrl: 'https://responses.example/v1',
+              wireProtocol: 'openai-responses',
+              models: [{ id: 'responses-model', name: 'Responses Model' }],
+            },
+          },
+        },
+      ],
+    },
+  };
+  const autoId = 'auto-channel';
+  const responsesEndpoint = {
+    baseUrl: 'https://responses.example/v1',
+    wireProtocol: 'openai-responses' as const,
+    modelsUrl: null,
+  };
+
+  it('binds an unsaved draft model to the exact verified protocol key', () => {
+    setCustomProviders(buildUserProviderChannels(autoChannelConfig));
+    const read = vi.fn(
+      (_id: string, _agent: string, protocol?: ProviderWireProtocol) =>
+        protocol === 'openai-responses'
+          ? 'responses-key'
+          : protocol === 'anthropic-messages'
+            ? 'messages-key'
+            : 'first-model-guess',
+    );
+    setDiagnosticsKeyReader(read);
+    const spec = resolveSavedProbeSpec(autoId, 'pi', {
+      modelId: 'draft-model',
+      endpoint: responsesEndpoint,
+    });
+    expect(spec).toMatchObject({
+      modelId: 'draft-model',
+      baseUrl: 'https://responses.example/v1',
+      wireProtocol: 'openai-responses',
+      apiKey: 'responses-key',
+    });
+    expect(read).toHaveBeenCalledWith(autoId, 'pi', 'openai-responses');
+  });
+
+  it('binds a fixed protocol provider to the same channel protocol slot', () => {
+    setCustomProviders(buildUserProviderChannels(autoChannelConfig));
+    const read = vi.fn(() => 'responses-key');
+    setDiagnosticsKeyReader(read);
+    const spec = resolveSavedProbeSpec(`${autoId}--openai-responses`, 'pi', {
+      modelId: 'draft-model',
+      endpoint: responsesEndpoint,
+    });
+    expect(spec.apiKey).toBe('responses-key');
+    expect(read).toHaveBeenCalledWith(autoId, 'pi', 'openai-responses');
+  });
+
+  it('uses the containing protocol slot for a saved model', () => {
+    setCustomProviders(buildUserProviderChannels(autoChannelConfig));
+    const read = vi.fn(
+      (_id: string, _agent: string, protocol?: ProviderWireProtocol) =>
+        protocol === 'openai-responses' ? 'responses-key' : 'messages-key',
+    );
+    setDiagnosticsKeyReader(read);
+    const spec = resolveSavedProbeSpec(autoId, 'pi', {
+      modelId: 'responses-model',
+      endpoint: responsesEndpoint,
+    });
+    expect(spec.apiKey).toBe('responses-key');
+    expect(read).toHaveBeenCalledWith(autoId, 'pi', 'openai-responses');
+  });
+
+  it('rejects a different protocol endpoint before reading any key', () => {
+    setCustomProviders(buildUserProviderChannels(autoChannelConfig));
+    const read = vi.fn(() => 'should-not-be-read');
+    setDiagnosticsKeyReader(read);
+    expect(() =>
+      resolveSavedProbeSpec(autoId, 'pi', {
+        modelId: 'messages-model',
+        endpoint: responsesEndpoint,
+      }),
+    ).toThrow(/endpoint differs/);
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it('hydrates header-only credentials for the verified protocol only', () => {
+    setCustomProviders(buildUserProviderChannels(autoChannelConfig));
+    setDiagnosticsKeyReader(() => null);
+    setCustomProviderHeaderReader((_channelId, _agent, protocol) =>
+      protocol === 'openai-responses'
+        ? { authorization: 'Bearer responses-header' }
+        : { authorization: 'Bearer messages-header' },
+    );
+    const spec = resolveSavedProbeSpec(autoId, 'pi', {
+      modelId: 'draft-model',
+      endpoint: responsesEndpoint,
+    });
+    expect(spec.headers).toEqual({ authorization: 'Bearer responses-header' });
+  });
+
+  it('fails closed while the auto provider route mutation is open', () => {
+    setCustomProviders(buildUserProviderChannels(autoChannelConfig));
+    const read = vi.fn(() => 'saved-key');
+    setDiagnosticsKeyReader(read);
+    const release = beginProviderRouteMutation(autoId);
+    try {
+      expect(() =>
+        resolveSavedProbeSpec(autoId, 'pi', {
+          modelId: 'draft-model',
+          endpoint: responsesEndpoint,
+        }),
+      ).toThrow(/configuration is being updated/);
+    } finally {
+      release();
+    }
+    expect(read).not.toHaveBeenCalled();
+  });
+});
+
+describe('saved probe error summaries', () => {
+  const channelConfig: CustomProviderConfig = {
+    id: 'supplier',
+    name: 'Supplier',
+    runtimes: {},
+    channels: {
+      version: 1,
+      channels: [
+        {
+          id: 'primary',
+          name: 'Primary',
+          protocols: {
+            'anthropic-messages': {
+              baseUrl: 'https://channel.example/v1',
+              wireProtocol: 'anthropic-messages',
+              models: [{ id: 'chat-a', name: 'chat-a' }],
+            },
+            'openai-chat': {
+              baseUrl: 'https://chat.example/v1',
+              wireProtocol: 'openai-chat',
+              models: [{ id: 'chat-a', name: 'chat-a' }],
+            },
+          },
+        },
+      ],
+    },
+  };
+  const providerId = 'primary--anthropic-messages';
+  const endpoint = {
+    baseUrl: 'https://channel.example/v1',
+    wireProtocol: 'anthropic-messages' as const,
+    modelsUrl: null,
+  };
+
+  async function probeWith(
+    body: string,
+    contentType: string,
+    status: number,
+    wire: 'anthropic-messages' | 'openai-chat' = 'anthropic-messages',
+  ) {
+    const opaque = `opaque-${randomUUID()}`;
+    setCustomProviders(buildUserProviderChannels(channelConfig));
+    setDiagnosticsKeyReader(() => null);
+    setCustomProviderHeaderReader(() => ({ authorization: `Bearer ${opaque}` }));
+    const seen: { authorization: string | null } = { authorization: null };
+    const targetProviderId = wire === 'openai-chat' ? 'primary--openai-chat' : providerId;
+    const targetEndpoint =
+      wire === 'openai-chat'
+        ? { baseUrl: 'https://chat.example/v1', wireProtocol: 'openai-chat' as const, modelsUrl: null }
+        : endpoint;
+    const result = await testProviderConnection(
+      { kind: 'saved', providerId: targetProviderId, agent: 'pi', modelId: 'chat-a', endpoint: targetEndpoint },
+      async (_url, init) => {
+        seen.authorization = new Headers(init?.headers).get('authorization');
+        return new Response(body.replaceAll('zzz_safe_marker_zzz', opaque), {
+          status,
+          headers: { 'content-type': contentType },
+        });
+      },
+    );
+    return { opaque, seen, result };
+  }
+
+  it('never returns JSON or text upstream errors that echo saved headers', async () => {
+    for (const [contentType, status] of [
+      ['application/json', 401],
+      ['text/plain', 401],
+    ] as const) {
+      const { opaque, seen, result } = await probeWith(
+        JSON.stringify({
+          error: { message: 'rejected zzz_safe_marker_zzz', echo: { value: 'zzz_safe_marker_zzz' } },
+          echoed: '__SAFE_MARKER__'
+        }),
+        contentType,
+        status,
+      );
+      expect(seen.authorization).toBe(`Bearer ${opaque}`);
       expect(result).toMatchObject({ ok: false, code: 'AUTH_INVALID', status: 401 });
-    } finally { vi.unstubAllGlobals(); }
+      expect(result).not.toHaveProperty('detail');
+      expect(JSON.stringify(result)).not.toContain(opaque);
+    }
+  });
+
+  it('never returns a streamed upstream error that echoes saved headers', async () => {
+    const { opaque, result } = await probeWith(
+      `data: ${JSON.stringify({ error: { message: 'rejected zzz_safe_marker_zzz' } })}\n\n`,
+      'text/event-stream',
+      200,
+      'openai-chat',
+    );
+    expect(result.ok).toBe(false);
+    expect(result).not.toHaveProperty('detail');
+    expect(JSON.stringify(result)).not.toContain(opaque);
+  });
+});
+
+describe('provider probe redirect handling', () => {
+  it('blocks same- and cross-origin redirects without a second request', async () => {
+    for (const location of ['/v2/messages', 'https://other.example/v1/messages']) {
+      const key = `opaque-${randomUUID()}`;
+      const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+        expect(init?.redirect).toBe('manual');
+        return new Response(null, { status: 307, headers: { location } });
+      });
+      const result = await testProviderConnection(
+        {
+          kind: 'adhoc',
+          spec: {
+            agent: 'pi',
+            baseUrl: 'https://gateway.example/v1',
+            modelId: 'm',
+            authMethod: 'apiKey',
+            apiKey: key,
+            headers: { 'x-custom-secret': key },
+            wireProtocol: 'anthropic-messages',
+          },
+        },
+        fetchImpl as unknown as typeof fetch,
+      );
+      expect(result).toMatchObject({ ok: false, code: 'REDIRECT_BLOCKED', status: 307 });
+      expect(result).not.toHaveProperty('detail');
+      expect(JSON.stringify(result)).not.toContain(key);
+      expect(fetchImpl).toHaveBeenCalledOnce();
+    }
+  });
+
+  it('never forwards probe credentials to a redirect target through the real outbound fetch', async () => {
+    const key = `opaque-${randomUUID()}`;
+    const header = `header-${randomUUID()}`;
+    let targetHits = 0;
+    let sourceHeaders: Record<string, string | string[] | undefined> = {};
+    const target = createServer((_req, res) => {
+      targetHits += 1;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{}');
+    });
+    const source = createServer((req, res) => {
+      sourceHeaders = req.headers;
+      res.writeHead(307, {
+        location: `http://127.0.0.1:${(target.address() as AddressInfo).port}/target`,
+      });
+      res.end();
+    });
+    await new Promise<void>((resolve) => source.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) => target.listen(0, '127.0.0.1', resolve));
+    try {
+      const result = await testProviderConnection(
+        {
+          kind: 'adhoc',
+          spec: {
+            agent: 'pi',
+            baseUrl: `http://127.0.0.1:${(source.address() as AddressInfo).port}/v1`,
+            modelId: 'm',
+            authMethod: 'apiKey',
+            apiKey: key,
+            headers: { 'x-custom-secret': header },
+            wireProtocol: 'anthropic-messages',
+          },
+        },
+        outboundFetch,
+      );
+      expect(result).toMatchObject({ ok: false, code: 'REDIRECT_BLOCKED', status: 307 });
+      expect(sourceHeaders['x-api-key']).toBe(key);
+      expect(sourceHeaders['x-custom-secret']).toBe(header);
+      expect(targetHits).toBe(0);
+      expect(result).not.toHaveProperty('detail');
+      expect(JSON.stringify(result)).not.toContain(key);
+    } finally {
+      await new Promise<void>((resolve) => source.close(() => resolve()));
+      await new Promise<void>((resolve) => target.close(() => resolve()));
+    }
+  });
+
+  it('returns a safe summary for direct adhoc diagnostics as well', async () => {
+    const opaque = `opaque-${randomUUID()}`;
+    const result = await testProviderConnection(
+      {
+        kind: 'adhoc',
+        spec: {
+          agent: 'pi',
+          baseUrl: 'https://gateway.example/v1',
+          modelId: 'm',
+          authMethod: 'apiKey',
+          apiKey: opaque,
+          headers: { 'x-custom-secret': opaque },
+          wireProtocol: 'anthropic-messages',
+        },
+      },
+      async () =>
+        new Response(
+          JSON.stringify({ error: { message: `bad ${opaque}` }, echo: opaque }),
+          { status: 401, headers: { 'content-type': 'application/json' } },
+        ),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'AUTH_INVALID', status: 401 });
+    expect(result).not.toHaveProperty('detail');
+    expect(JSON.stringify(result)).not.toContain(opaque);
+  });
+});
+
+describe('native SDK redirect handling', () => {
+  it('routes Google Generative AI probes through the redirect-safe HTTP path', async () => {
+    const key = `opaque-${randomUUID()}`;
+    const fetchImpl = vi.fn(async (url: unknown, init?: RequestInit) => {
+      expect(String(url)).toContain(':generateContent');
+      expect(new Headers(init?.headers).get('x-goog-api-key')).toBe(key);
+      expect(init?.redirect).toBe('manual');
+      return new Response(null, { status: 307, headers: { location: 'https://b.example' } });
+    });
+    const result = await runProviderProbe(
+      {
+        agent: 'pi',
+        baseUrl: 'https://gemini.example/v1',
+        modelId: 'gemini-fixture',
+        api: 'google-generative-ai',
+        wireProtocol: 'google-generative-ai',
+        apiKey: key,
+      },
+      fetchImpl as unknown as typeof fetch,
+    );
+    expect(result).toMatchObject({ ok: false, code: 'REDIRECT_BLOCKED', status: 307 });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it('maps an SDK-swallowed redirect to REDIRECT_BLOCKED with the real status', async () => {
+    const row = PROVIDER_MODEL_CATALOG.providers['mistral'][0];
+    const key = `opaque-${randomUUID()}`;
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      expect(init?.redirect).toBe('manual');
+      return new Response(null, { status: 307, headers: { location: 'https://b.example' } });
+    });
+    const result = await runProviderProbe(
+      {
+        agent: 'pi',
+        baseUrl: 'https://api.mistral.ai/v1',
+        modelId: row.id,
+        api: 'mistral-conversations',
+        wireProtocol: 'openai-chat',
+        apiKey: key,
+        nativeModel: row,
+      },
+      fetchImpl as unknown as typeof fetch,
+    );
+    expect(result).toMatchObject({ ok: false, code: 'REDIRECT_BLOCKED', status: 307 });
+    expect(result).not.toHaveProperty('detail');
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+});
+
+describe('Google Generative AI 2xx responses', () => {
+  const spec = {
+    agent: 'pi' as const,
+    baseUrl: 'https://gemini.example/v1',
+    modelId: 'gemini-fixture',
+    api: 'google-generative-ai' as const,
+    wireProtocol: 'google-generative-ai' as const,
+    apiKey: 'fixture-google-key',
+  };
+
+  it.each([
+    ['HTML', 'text/html', '<html>OK</html>', 'WIRE_INCOMPATIBLE', 200],
+    [
+      'error JSON',
+      'application/json',
+      JSON.stringify({ error: { code: 401, message: 'unauthorized' } }),
+      'AUTH_INVALID',
+      401,
+    ],
+    ['empty JSON', 'application/json', '{}', 'WIRE_INCOMPATIBLE', 200],
+    ['empty candidates', 'application/json', JSON.stringify({ candidates: [] }), 'WIRE_INCOMPATIBLE', 200],
+    [
+      'malformed candidates',
+      'application/json',
+      JSON.stringify({ candidates: [{ content: { parts: [] } }] }),
+      'WIRE_INCOMPATIBLE',
+      200,
+    ],
+  ] as const)('fails closed for a 200 %s response', async (_label, contentType, body, code, status) => {
+    const result = await runProviderProbe(
+      spec,
+      async () => new Response(body, { status: 200, headers: { 'content-type': contentType } }),
+    );
+    expect(result).toMatchObject({ ok: false, code, status });
+    expect(result).not.toHaveProperty('detail');
+  });
+
+  it('accepts a valid generateContent response', async () => {
+    const body = JSON.stringify({
+      candidates: [
+        { content: { role: 'model', parts: [{ text: 'pong' }] }, finishReason: 'STOP' },
+      ],
+    });
+    const result = await runProviderProbe(
+      spec,
+      async () => new Response(body, { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
+    expect(result).toMatchObject({ ok: true });
+  });
+
+  it.each([
+    ['HTML', '<html>OK</html>', 'WIRE_INCOMPATIBLE'],
+    ['error JSON', JSON.stringify({ error: { code: 401, message: 'unauthorized' } }), 'AUTH_INVALID'],
+    ['empty JSON', '{}', 'WIRE_INCOMPATIBLE'],
+    ['malformed candidates', JSON.stringify({ candidates: [{ content: { parts: [] } }] }), 'WIRE_INCOMPATIBLE'],
+  ] as const)('validates an api-only Google probe against %s', async (_label, body, code) => {
+    const apiOnly = {
+      agent: 'pi' as const,
+      baseUrl: 'https://gemini.example/v1',
+      modelId: 'gemini-fixture',
+      api: 'google-generative-ai' as const,
+      apiKey: 'fixture-google-key',
+    };
+    const result = await runProviderProbe(
+      apiOnly,
+      async () => new Response(body, { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
+    expect(result).toMatchObject({ ok: false, code });
+    expect(result).not.toHaveProperty('detail');
+  });
+
+  it('accepts a valid api-only Google response', async () => {
+    const body = JSON.stringify({
+      candidates: [
+        { content: { role: 'model', parts: [{ text: 'pong' }] }, finishReason: 'STOP' },
+      ],
+    });
+    const result = await runProviderProbe(
+      {
+        agent: 'pi',
+        baseUrl: 'https://gemini.example/v1',
+        modelId: 'gemini-fixture',
+        api: 'google-generative-ai',
+        apiKey: 'fixture-google-key',
+      },
+      async () => new Response(body, { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
+    expect(result).toMatchObject({ ok: true });
+  });
+
+  const geminiBody = (finishReason?: string) =>
+    JSON.stringify({
+      candidates: [
+        {
+          content: { role: 'model', parts: [{ text: 'pong' }] },
+          ...(finishReason === undefined ? {} : { finishReason }),
+        },
+      ],
+    });
+
+  it.each(['STOP', 'MAX_TOKENS'] as const)('accepts finishReason %s', async (finishReason) => {
+    const result = await runProviderProbe(
+      spec,
+      async () =>
+        new Response(geminiBody(finishReason), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    expect(result).toMatchObject({ ok: true });
+  });
+
+  it('accepts a valid candidate without finishReason', async () => {
+    const result = await runProviderProbe(
+      spec,
+      async () =>
+        new Response(geminiBody(), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    expect(result).toMatchObject({ ok: true });
+  });
+
+  it.each([
+    'SAFETY',
+    'BLOCKLIST',
+    'RECITATION',
+    'PROHIBITED_CONTENT',
+    'SPII',
+    'IMAGE_SAFETY',
+    'IMAGE_PROHIBITED_CONTENT',
+    'IMAGE_RECITATION',
+    'IMAGE_OTHER',
+    'MALFORMED_FUNCTION_CALL',
+    'UNEXPECTED_TOOL_CALL',
+    'NO_IMAGE',
+    'LANGUAGE',
+    'OTHER',
+    'FINISH_REASON_UNSPECIFIED',
+    'SOMETHING_NEW',
+  ] as const)('fails finishReason %s like the SDK stop mapping', async (finishReason) => {
+    const result = await runProviderProbe(
+      spec,
+      async () =>
+        new Response(geminiBody(finishReason), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'RESPONSE_BLOCKED', status: 200 });
+    expect(result).not.toHaveProperty('detail');
+  });
+
+  it('fails a blocked first candidate without content as RESPONSE_BLOCKED', async () => {
+    const body = JSON.stringify({ candidates: [{ finishReason: 'SAFETY' }] });
+    const result = await runProviderProbe(
+      spec,
+      async () =>
+        new Response(body, { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'RESPONSE_BLOCKED', status: 200 });
+    expect(result).not.toHaveProperty('detail');
+  });
+
+  it('fails a blocked first candidate without content even when a later candidate succeeds', async () => {
+    const body = JSON.stringify({
+      candidates: [
+        { finishReason: 'SAFETY' },
+        { content: { parts: [{ text: 'pong' }] }, finishReason: 'STOP' },
+      ],
+    });
+    const result = await runProviderProbe(
+      spec,
+      async () =>
+        new Response(body, { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'RESPONSE_BLOCKED' });
+  });
+
+  it('fails a successful finishReason without usable text', async () => {
+    const body = JSON.stringify({ candidates: [{ finishReason: 'STOP' }] });
+    const result = await runProviderProbe(
+      spec,
+      async () =>
+        new Response(body, { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'WIRE_INCOMPATIBLE' });
+  });
+
+  it('reads the first candidate like the SDK', async () => {
+    const mixed = JSON.stringify({
+      candidates: [
+        { content: { parts: [{ text: 'pong' }] }, finishReason: 'STOP' },
+        { content: { parts: [{ text: 'blocked' }] }, finishReason: 'SAFETY' },
+      ],
+    });
+    const firstOk = await runProviderProbe(
+      spec,
+      async () => new Response(mixed, { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
+    expect(firstOk).toMatchObject({ ok: true });
+
+    const firstBlocked = JSON.stringify({
+      candidates: [
+        { content: { parts: [{ text: 'blocked' }] }, finishReason: 'SAFETY' },
+        { content: { parts: [{ text: 'pong' }] }, finishReason: 'STOP' },
+      ],
+    });
+    const secondOk = await runProviderProbe(
+      spec,
+      async () =>
+        new Response(firstBlocked, {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    expect(secondOk).toMatchObject({ ok: false, code: 'RESPONSE_BLOCKED' });
+  });
+
+  it('fails a prompt blocked before any candidate', async () => {
+    const result = await runProviderProbe(
+      spec,
+      async () =>
+        new Response(JSON.stringify({ promptFeedback: { blockReason: 'SAFETY' } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'RESPONSE_BLOCKED', status: 200 });
+  });
+
+  it('does not expose credentials from a failing Google body stream', async () => {
+    const key = `opaque-${randomUUID()}`;
+    const header = `header-${randomUUID()}`;
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.error(new Error(`body failed ${key} ${header}`));
+      },
+    });
+    const result = await runProviderProbe(
+      {
+        agent: 'pi',
+        baseUrl: 'https://gemini.example/v1',
+        modelId: 'gemini-fixture',
+        api: 'google-generative-ai',
+        wireProtocol: 'google-generative-ai',
+        apiKey: key,
+        headers: { 'x-custom-secret': header },
+      },
+      async () => new Response(stream, { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'WIRE_INCOMPATIBLE', status: 200 });
+    expect(result).not.toHaveProperty('detail');
+    expect(JSON.stringify(result)).not.toContain(key);
+    expect(JSON.stringify(result)).not.toContain(header);
+  });
+
+  it('returns a safe DTO when a probe body stream throws', async () => {
+    const key = `opaque-${randomUUID()}`;
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.error(new Error(`stream failed ${key}`));
+      },
+    });
+    const result = await testProviderConnection(
+      {
+        kind: 'adhoc',
+        spec: {
+          agent: 'pi',
+          baseUrl: 'https://gemini.example/v1',
+          modelId: 'gemini-fixture',
+          api: 'google-generative-ai',
+          apiKey: key,
+        },
+      },
+      async () => new Response(stream, { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'WIRE_INCOMPATIBLE' });
+    expect(result).not.toHaveProperty('detail');
+    expect(JSON.stringify(result)).not.toContain(key);
+  });
+
+  const readErrors: Array<[string, Error, string]> = [
+    ['TimeoutError', Object.assign(new Error('x'), { name: 'TimeoutError' }), 'TIMEOUT'],
+    ['ReadTimeout', Object.assign(new Error('x'), { name: 'ReadTimeout' }), 'TIMEOUT'],
+    ['BodyTimeoutError', Object.assign(new Error('x'), { name: 'BodyTimeoutError' }), 'TIMEOUT'],
+    [
+      'top-level UND_ERR_BODY_TIMEOUT',
+      Object.assign(new Error('x'), { code: 'UND_ERR_BODY_TIMEOUT' }),
+      'TIMEOUT',
+    ],
+    [
+      'cause UND_ERR_BODY_TIMEOUT',
+      Object.assign(new Error('x'), { cause: { code: 'UND_ERR_BODY_TIMEOUT' } }),
+      'TIMEOUT',
+    ],
+    [
+      'nested cause UND_ERR_BODY_TIMEOUT',
+      Object.assign(new Error('x'), { cause: { cause: { code: 'UND_ERR_BODY_TIMEOUT' } } }),
+      'TIMEOUT',
+    ],
+    ['ETIMEDOUT', Object.assign(new Error('x'), { code: 'ETIMEDOUT' }), 'TIMEOUT'],
+    [
+      'AbortError without an expired deadline',
+      Object.assign(new Error('x'), { name: 'AbortError' }),
+      'WIRE_INCOMPATIBLE',
+    ],
+    ['ordinary error', new Error('x'), 'WIRE_INCOMPATIBLE'],
+  ];
+  it.each(readErrors)('classifies a body read %s as %s', async (_label, error, code) => {
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.error(error);
+      },
+    });
+    const result = await runProviderProbe(
+      spec,
+      async () =>
+        new Response(stream, { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
+    expect(result).toMatchObject({ ok: false, code, status: 200 });
+    expect(result).not.toHaveProperty('detail');
+  });
+
+  it(
+    'times out a stalled Google body on the shared deadline and cancels it',
+    async () => {
+      const key = `opaque-${randomUUID()}`;
+      let seenKey: string | undefined;
+      let closed = false;
+      const server = createServer((req, res) => {
+        seenKey = req.headers['x-goog-api-key'] as string | undefined;
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.write('{"candidates":');
+        res.on('close', () => {
+          closed = true;
+        });
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      try {
+        const result = await testProviderConnection(
+          {
+            kind: 'adhoc',
+            spec: {
+              agent: 'pi',
+              baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`,
+              modelId: 'gemini-fixture',
+              api: 'google-generative-ai',
+              wireProtocol: 'google-generative-ai',
+              apiKey: key,
+            },
+          },
+          outboundFetch,
+        );
+        expect(result).toMatchObject({ ok: false, code: 'TIMEOUT', status: 200 });
+        expect(result.latencyMs).toBeGreaterThanOrEqual(9_000);
+        expect(result).not.toHaveProperty('detail');
+        expect(JSON.stringify(result)).not.toContain(key);
+        expect(seenKey).toBe(key);
+        await new Promise<void>((resolve) => {
+          const started = Date.now();
+          const poll = () =>
+            closed || Date.now() - started > 2_000 ? resolve() : setTimeout(poll, 20);
+          poll();
+        });
+        expect(closed).toBe(true);
+      } finally {
+        server.closeAllConnections?.();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+    15_000,
+  );
+
+  it(
+    'cancels a cooperative stalled body reader on the deadline',
+    async () => {
+      let sourceCancel = 0;
+      const late: { controller: ReadableStreamDefaultController<Uint8Array> | null } = {
+        controller: null,
+      };
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          late.controller = controller;
+        },
+        pull() {
+          return new Promise<void>(() => {});
+        },
+        cancel() {
+          sourceCancel += 1;
+          return Promise.resolve();
+        },
+      });
+      const result = await runProviderProbe(
+        spec,
+        async () =>
+          new Response(stream, { status: 200, headers: { 'content-type': 'application/json' } }),
+      );
+      expect(result).toMatchObject({ ok: false, code: 'TIMEOUT', status: 200 });
+      expect(sourceCancel).toBe(1);
+      // A source that resolves after the deadline cannot overwrite the result.
+      try {
+        late.controller?.enqueue(new TextEncoder().encode('late'));
+      } catch {
+        /* the canceled stream may reject late writes */
+      }
+      await Promise.resolve();
+      expect(result.code).toBe('TIMEOUT');
+    },
+    15_000,
+  );
+
+  it(
+    'returns TIMEOUT and still requests cancel for a non-cooperative body source',
+    async () => {
+      let sourceCancel = 0;
+      const stream = new ReadableStream<Uint8Array>({
+        pull() {
+          return new Promise(() => {});
+        },
+        cancel() {
+          sourceCancel += 1;
+          return new Promise(() => {});
+        },
+      });
+      const result = await runProviderProbe(
+        spec,
+        async () =>
+          new Response(stream, { status: 200, headers: { 'content-type': 'application/json' } }),
+      );
+      expect(result).toMatchObject({ ok: false, code: 'TIMEOUT', status: 200 });
+      expect(sourceCancel).toBe(1);
+    },
+    15_000,
+  );
+
+  it('keeps the known status for a non-2xx body read timeout', async () => {
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.error(Object.assign(new Error('x'), { name: 'ReadTimeout' }));
+      },
+    });
+    const result = await runProviderProbe(
+      spec,
+      async () =>
+        new Response(stream, { status: 401, headers: { 'content-type': 'application/json' } }),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'AUTH_INVALID', status: 401 });
+    expect(result).not.toHaveProperty('detail');
+  });
+
+  it('does not expose a fetch error message that echoes credentials', async () => {
+    const key = `opaque-${randomUUID()}`;
+    const result = await testProviderConnection(
+      {
+        kind: 'adhoc',
+        spec: {
+          agent: 'pi',
+          baseUrl: 'https://gemini.example/v1',
+          modelId: 'gemini-fixture',
+          api: 'google-generative-ai',
+          apiKey: key,
+        },
+      },
+      async () => {
+        throw new Error(`request failed ${key}`);
+      },
+    );
+    expect(result.ok).toBe(false);
+    expect(result).not.toHaveProperty('detail');
+    expect(JSON.stringify(result)).not.toContain(key);
+  });
+});
+
+describe('native SDK HTTP status classification', () => {
+  const row = PROVIDER_MODEL_CATALOG.providers['mistral'][0];
+  it.each([
+    [401, 'AUTH_INVALID'],
+    [403, 'AUTH_FORBIDDEN'],
+    [429, 'RATE_LIMITED'],
+    [500, 'UPSTREAM_ERROR'],
+  ] as const)('uses the actual Mistral %s status instead of a body code', async (status, code) => {
+    const result = await runProviderProbe(
+      {
+        agent: 'pi',
+        baseUrl: 'https://api.mistral.ai/v1',
+        modelId: row.id,
+        api: 'mistral-conversations',
+        wireProtocol: 'openai-chat',
+        apiKey: 'fixture-mistral-key',
+        nativeModel: row,
+      },
+      async () =>
+        new Response('{"error":{"message":"no code field"}}', {
+          status,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    expect(result).toMatchObject({ ok: false, code, status });
+  });
+});
+
+describe('native SDK connection probes', () => {
+  it.each(['saved', 'adhoc', 'header-only'] as const)(
+    'refuses a %s Vertex probe because its SDK cannot disable redirects',
+    async (kind) => {
+      const row = PROVIDER_MODEL_CATALOG.providers['google-vertex'][0];
+      const baseUrl = 'https://us-central1-aiplatform.googleapis.com';
+      const globalFetch = vi.fn(async () => {
+        throw new Error('must not send');
+      });
+      vi.stubGlobal('fetch', globalFetch);
+      const wrongTransport = vi.fn(async () => {
+        throw new Error('must not send');
+      });
+      setCustomProviders([
+        buildUserProvider({
+          id: 'vertex-test',
+          name: 'Vertex',
+          auth: { method: 'apiKey' },
+          runtimes: {
+            pi: {
+              baseUrl,
+              wireProtocol: 'google-generative-ai',
+              catalogPresetId: 'google-vertex',
+              models: [{ id: row.id, name: row.name, piApi: 'google-vertex' }],
+            },
+          },
+        }),
+      ]);
+      setDiagnosticsKeyReader(() => 'fixture-vertex-key');
+      try {
+        const result = await testProviderConnection(
+          kind === 'saved'
+            ? { kind, providerId: 'vertex-test', agent: 'pi' }
+            : {
+                kind: 'adhoc',
+                spec: {
+                  agent: 'pi',
+                  baseUrl,
+                  modelId: row.id,
+                  api: 'google-vertex',
+                  wireProtocol: 'google-generative-ai',
+                  ...(kind === 'header-only'
+                    ? { headers: { 'X-Goog-Api-Key': 'fixture-vertex-key' } }
+                    : { apiKey: 'fixture-vertex-key' }),
+                },
+              },
+          wrongTransport,
+        );
+        expect(result, JSON.stringify(result)).toMatchObject({
+          ok: false,
+          code: 'PROBE_UNSUPPORTED',
+        });
+        expect(globalFetch).not.toHaveBeenCalled();
+        expect(wrongTransport).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
+  it('does not turn an SDK authentication error into a successful probe', async () => {
+    const row = PROVIDER_MODEL_CATALOG.providers['mistral'][0];
+    const result = await runProviderProbe(
+      {
+        agent: 'pi',
+        baseUrl: 'https://api.mistral.ai/v1',
+        modelId: row.id,
+        api: 'mistral-conversations',
+        wireProtocol: 'openai-chat',
+        apiKey: 'fixture-mistral-key',
+        nativeModel: row,
+      },
+      async () =>
+        new Response('{"error":{"code":401,"message":"invalid api key"}}', { status: 401 }),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'AUTH_INVALID', status: 401 });
   });
 });
 
@@ -924,16 +2102,25 @@ it('does not let a saved Vertex probe inherit Desktop ADC against an unrelated h
   expect(fetchSpy).not.toHaveBeenCalled();
 });
 
-it('does not let a Bedrock probe inherit Desktop IAM against an unrelated host even with a dummy key', async () => {
+it('refuses a Bedrock probe on an approved host because its SDK exposes no trusted status', async () => {
   const fetchSpy = vi.fn(async () => { throw new Error('must not send'); });
-  const result = await runProviderProbe({
+  const approved = await runProviderProbe({
+    agent: 'pi',
+    baseUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com',
+    modelId: 'claude-fixture',
+    api: 'bedrock-converse-stream',
+    apiKey: 'not-an-aws-key',
+  }, fetchSpy);
+  expect(approved).toMatchObject({ ok: false, code: 'PROBE_UNSUPPORTED' });
+  // The existing endpoint allowlist still wins for unapproved destinations.
+  const unapproved = await runProviderProbe({
     agent: 'pi',
     baseUrl: 'https://attacker.example',
     modelId: 'claude-fixture',
     api: 'bedrock-converse-stream',
     apiKey: 'not-an-aws-key',
   }, fetchSpy);
-  expect(result).toMatchObject({ ok: false, code: 'AUTH_INVALID' });
+  expect(unapproved).toMatchObject({ ok: false, code: 'AUTH_INVALID' });
   expect(fetchSpy).not.toHaveBeenCalled();
 });
 

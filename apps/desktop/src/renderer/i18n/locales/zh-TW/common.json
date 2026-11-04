@@ -350,6 +350,9 @@
     "WIRE_INCOMPATIBLE": "端點與該協議不完全相容（存在無法識別的請求欄位）",
     "UPSTREAM_ERROR": "上游服務錯誤（5xx），請稍後重試",
     "UPSTREAM_UNREACHABLE": "無法連線到端點，請檢查網路與基礎 URL",
+    "REDIRECT_BLOCKED": "端點重新導向到其他位址。請在測試連線時填寫最終端點位址",
+    "PROBE_UNSUPPORTED": "此原生 SDK 傳輸無法在不跟隨重新導向的情況下安全測試連線。請儲存連線後在任務中試用",
+    "RESPONSE_BLOCKED": "模型未傳回可用回應（安全或內容策略限制），請檢查提示詞或模型設定",
     "TIMEOUT": "連線超時，請檢查網路與基礎 URL",
     "UNKNOWN": "未知錯誤，請檢視日誌瞭解詳情",
     "upstreamToast": "供應商「{{provider}}」請求失敗：{{message}}"
@@ -13054,7 +13057,10 @@
         "googleGemini": "Google Gemini"
       },
       "removeModelIdRowLabel": "移除模型 ID {{index}}",
-      "pendingModelId": "請先新增或清空待提交的模型 ID。"
+      "pendingModelId": "請先新增或清空待提交的模型 ID。",
+      "testNeedsCredentials": "請先儲存連線，或填寫新的 API 金鑰後再測試。",
+      "channelOptionLabelWithInstance": "{{name}}，{{protocol}}，{{models}} 個模型 ID，第 {{position}} 個連線，共 {{total}} 個",
+      "channelInstanceSuffix": "{{position}}/{{total}}"
     }
   },
   "regionScreenshot": {

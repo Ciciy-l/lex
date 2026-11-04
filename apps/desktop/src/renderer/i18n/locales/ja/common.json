@@ -350,6 +350,9 @@
     "WIRE_INCOMPATIBLE": "エンドポイントがこのプロトコルと完全には互換していません（認識できないリクエストフィールドがあります）",
     "UPSTREAM_ERROR": "上流サーバーエラー（5xx）です。しばらくしてから再試行してください",
     "UPSTREAM_UNREACHABLE": "エンドポイントに接続できません。ネットワークとベース URL を確認してください",
+    "REDIRECT_BLOCKED": "エンドポイントが別のアドレスにリダイレクトされました。接続テストには最終的なエンドポイント URL を入力してください",
+    "PROBE_UNSUPPORTED": "このネイティブ SDK 転送はリダイレクトを追跡せずに安全に接続テストできません。接続を保存し、タスクで試してください",
+    "RESPONSE_BLOCKED": "モデルが利用可能な応答を返しませんでした（安全性またはコンテンツポリシー）。プロンプトまたはモデル設定を確認してください",
     "TIMEOUT": "接続がタイムアウトしました。ネットワークとベース URL を確認してください",
     "UNKNOWN": "不明なエラーです。詳細はログを確認してください",
     "upstreamToast": "プロバイダー「{{provider}}」のリクエストに失敗しました：{{message}}"
@@ -13054,7 +13057,10 @@
         "googleGemini": "Google Gemini"
       },
       "removeModelIdRowLabel": "モデル ID {{index}} を削除",
-      "pendingModelId": "先に、入力中のモデル ID を追加するかクリアしてください。"
+      "pendingModelId": "先に、入力中のモデル ID を追加するかクリアしてください。",
+      "testNeedsCredentials": "先に接続を保存するか、新しい API キーを入力してからテストしてください。",
+      "channelOptionLabelWithInstance": "{{name}}、{{protocol}}、モデル ID {{models}} 件、接続 {{position}}/{{total}}",
+      "channelInstanceSuffix": "{{position}}/{{total}}"
     }
   },
   "regionScreenshot": {

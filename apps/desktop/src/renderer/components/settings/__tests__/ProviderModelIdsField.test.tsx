@@ -61,6 +61,36 @@ describe('ProviderModelIdsField', () => {
     expect(screen.getByTestId('ids').textContent).toBe('beta-2');
   });
 
+  it('leaves a single-line comma paste to ordinary text input', () => {
+    render(<Harness initial={[]} />);
+    const input = screen.getByLabelText('Add Model ID');
+    const notPrevented = fireEvent.paste(input, {
+      clipboardData: { getData: () => 'model,variant' },
+    });
+    expect(notPrevented).toBe(true);
+  });
+
+  it('merges a multiline paste with the existing draft and cursor position', () => {
+    render(<Harness initial={[]} />);
+    const input = screen.getByLabelText('Add Model ID') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'vendor/' } });
+    input.setSelectionRange(input.value.length, input.value.length);
+    fireEvent.paste(input, {
+      clipboardData: { getData: () => 'model,variant\nnext' },
+    });
+    expect(screen.getByTestId('ids').textContent).toBe('vendor/model,variant|next');
+    expect(input.value).toBe('');
+  });
+
+  it('replaces the selected draft text when pasting multiple lines', () => {
+    render(<Harness initial={[]} />);
+    const input = screen.getByLabelText('Add Model ID') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'vendor/' } });
+    input.setSelectionRange(0, input.value.length);
+    fireEvent.paste(input, { clipboardData: { getData: () => 'x\ny' } });
+    expect(screen.getByTestId('ids').textContent).toBe('x|y');
+  });
+
   it('returns focus to the add field after removing the last row', async () => {
     render(<Harness initial={['alpha']} />);
     fireEvent.click(screen.getByRole('button', { name: 'Remove Model ID 1' }));

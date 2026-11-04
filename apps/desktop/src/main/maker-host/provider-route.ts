@@ -82,6 +82,18 @@ export function setCustomProviderHeaderReader(reader: CustomProviderHeaderReader
   customProviderHeaderReader = reader;
 }
 
+/**
+ * Read the current owner's Main-only headers for one channel protocol. Callers
+ * must keep the values inside Main; they are never serialized to a renderer.
+ */
+export function readHydratedProviderHeaders(
+  channelId: string,
+  agent: AgentKind,
+  protocol: ProviderWireProtocol,
+): Record<string, string> | null {
+  return customProviderHeaderReader(channelId, agent, protocol);
+}
+
 function routeApiKey(
   providerId: string,
   agent: AgentKind,

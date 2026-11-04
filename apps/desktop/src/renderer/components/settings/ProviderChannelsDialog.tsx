@@ -22,10 +22,7 @@ import { Textarea } from '@/components/ui/input';
 import { SegmentedControl } from '@/components/ui/segmented-control';
 import { SettingsTextInput } from './SettingsTextInput';
 import { cn } from '@/lib/utils';
-import {
-  parseProviderModelIds,
-  ProviderModelIdsField,
-} from './ProviderModelIdsField';
+import { ProviderModelIdsField } from './ProviderModelIdsField';
 import {
   appendDiscoveredCustomProviderModels,
   createCustomProvider,
@@ -121,7 +118,8 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
   );
   const [selectedId, setSelectedId] = useState(config.channels!.channels[0]?.id ?? '');
   const [keys, setKeys] = useState<ProviderChannelKeys>({});
-  const [modelDrafts, setModelDrafts] = useState<Record<string, string>>({});
+  /** Rows, not a joined string: an empty array is zero rows, [""] is one blank row. */
+  const [modelDrafts, setModelDrafts] = useState<Record<string, string[]>>({});
   const [modelEntryDrafts, setModelEntryDrafts] = useState<Record<string, string>>({});
   const [headerDrafts, setHeaderDrafts] = useState<Record<string, string>>({});
   const [message, setMessage] = useState<string | null>(null);
@@ -217,6 +215,11 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
     setProtocol(Object.keys(plan.configuration.channels[0].protocols)[0] as ProviderWireProtocol);
   };
   const channels = config.channels!.channels;
+  /** Same visible names are still distinct channels; expose a stable instance ordinal. */
+  const nameInstance = (entry: ProviderChannel) => {
+    const sameName = channels.filter((item) => item.name === entry.name);
+    return { position: sameName.indexOf(entry) + 1, total: sameName.length };
+  };
   const available = channels.filter((channel) => channel.protocols[protocol]);
   const channel = available.find((entry) => entry.id === selectedId) ?? available[0];
   const connection = channel?.protocols[protocol];
@@ -228,24 +231,32 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
     selectRoute(wire, retainedChannel ?? availableForProtocol(wire)[0]?.id);
   };
   const protocolName = (wire: ProviderWireProtocol) => t(protocolLabelKeys[wire]);
-  /** Editable rows keep blank lines while typing; the save path trims and filters them. */
+  /** Saves trim, drop blanks and de-duplicate exactly; rows keep the user's edit state. */
+  const normalizeModelIds = (rows: readonly string[]): string[] => {
+    const seen = new Set<string>();
+    const ids: string[] = [];
+    for (const row of rows) {
+      const id = row.trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      ids.push(id);
+    }
+    return ids;
+  };
   const modelIdRows = (id: string, models: readonly { id: string }[]): string[] =>
-    modelDrafts[id] !== undefined
-      ? modelDrafts[id].split(/\r?\n/u)
-      : models.map((model) => model.id);
+    modelDrafts[id] ?? models.map((model) => model.id);
   const draftModelsFor = (entry: ProviderChannel, wire: ProviderWireProtocol): string[] => {
     const route = entry.protocols[wire];
     if (!route) return [];
-    const draft = modelDrafts[channelProtocolProviderId(entry.id, wire)];
-    return draft !== undefined
-      ? parseProviderModelIds(draft)
-      : route.models.map((model) => model.id);
+    return normalizeModelIds(
+      modelIdRows(channelProtocolProviderId(entry.id, wire), route.models),
+    );
   };
   const currentModelIds = connection ? modelIdRows(draftId, connection.models) : [];
   const updateCurrentModelIds = (ids: readonly string[]) => {
     if (!draftId) return;
     invalidate();
-    setModelDrafts((previous) => ({ ...previous, [draftId]: ids.join('\n') }));
+    setModelDrafts((previous) => ({ ...previous, [draftId]: [...ids] }));
   };
   const prepareConfig = (onlyRoute?: string): CustomProviderConfig => {
     const next = structuredClone(config);
@@ -253,17 +264,12 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
       for (const [wire, route] of Object.entries(item.protocols)) {
         const id = channelProtocolProviderId(item.id, wire as ProviderWireProtocol);
         if (onlyRoute && onlyRoute !== id) continue;
-        const raw = modelDrafts[id];
-        if (raw !== undefined) {
+        const rows = modelDrafts[id];
+        if (rows !== undefined) {
           const existing = new Map(route.models.map((model) => [model.id, model]));
-          route.models = [
-            ...new Set(
-              raw
-                .split('\n')
-                .map((value) => value.trim())
-                .filter(Boolean),
-            ),
-          ].map((id) => existing.get(id) ?? { id, name: id, defaultEnabled: true });
+          route.models = normalizeModelIds(rows).map(
+            (id) => existing.get(id) ?? { id, name: id, defaultEnabled: true },
+          );
         }
         const headers = headerDrafts[id];
         if (headers !== undefined) {
@@ -463,28 +469,28 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
       const saved = p.initial?.channels?.channels.find((item) => item.id === channel.id)?.protocols[
         protocol
       ];
+      const authMethod = config.auth?.method === 'none' ? ('none' as const) : ('apiKey' as const);
       // Probes send chat-shaped requests; a media model at index 0 must not
       // become the probe target just because the user reordered the list.
       const probeModel = firstProviderChatModel(route.models);
-      const savedProbeModel = saved ? firstProviderChatModel(saved.models) : undefined;
-      const sameProbeModel =
-        savedProbeModel?.id === probeModel?.id &&
-        (savedProbeModel?.api ?? null) === (probeModel?.api ?? null) &&
-        (savedProbeModel?.piApi ?? null) === (probeModel?.piApi ?? null) &&
-        JSON.stringify(savedProbeModel?.route ?? null) ===
-          JSON.stringify(probeModel?.route ?? null);
+      const credentialsUntouched =
+        keys[channel.id]?.[protocol] === undefined &&
+        headerDrafts[draftId] === undefined &&
+        p.initial?.auth?.method === config.auth?.method;
       const useSaved =
         !!saved &&
         saved.baseUrl === route.baseUrl &&
         saved.modelsUrl === route.modelsUrl &&
         saved.requestPath === route.requestPath &&
-        keys[channel.id]?.[protocol] === undefined &&
-        headerDrafts[draftId] === undefined &&
-        p.initial?.auth?.method === config.auth?.method &&
-        // Stored credentials stay valid only while the probe target is the
-        // saved one; otherwise test the draft route and its entered key.
-        (discover || sameProbeModel);
-      const authMethod = config.auth?.method === 'none' ? ('none' as const) : ('apiKey' as const);
+        credentialsUntouched;
+      const draftCredentials =
+        keys[channel.id]?.[protocol] !== undefined || headerDrafts[draftId] !== undefined;
+      if (!discover && !useSaved && authMethod !== 'none' && !draftCredentials) {
+        // Never send an unauthenticated probe for an edited model or endpoint:
+        // stored credentials stay Main-only and must not follow a new endpoint.
+        setError(t('models.channels.testNeedsCredentials'));
+        return;
+      }
       const common = {
         agent: 'pi' as const,
         baseUrl: route.baseUrl,
@@ -519,7 +525,7 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
         });
         setModelDrafts((previous) => ({
           ...previous,
-          [draftId]: merged.models.map((model) => model.id).join('\n'),
+          [draftId]: merged.models.map((model) => model.id),
         }));
         setModelEntryDrafts((previous) => {
           const next = { ...previous };
@@ -527,15 +533,39 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
           return next;
         });
       } else {
+        // A model may override the channel route; the probe must target the
+        // exact route the real session would use for this model.
+        const probeRoute = probeModel?.route;
+        const probeBaseUrl = probeRoute?.baseUrl ?? route.baseUrl;
+        const probeWireProtocol = probeRoute?.wireProtocol ?? protocol;
+        const probeRequestPath = probeRoute?.requestPath ?? route.requestPath;
+        const probeApi = probeModel?.api ?? probeModel?.piApi;
         const result = await window.electronAPI.maker.testProviderConnection(
           useSaved
-            ? { kind: 'saved', providerId: draftId, agent: 'pi' }
+            ? {
+                kind: 'saved',
+                providerId: draftId,
+                agent: 'pi',
+                ...(probeModel?.id ? { modelId: probeModel.id } : {}),
+                // Main verifies this against the saved route before reading the
+                // stored key; it never probes the endpoint claimed here.
+                endpoint: {
+                  baseUrl: probeBaseUrl,
+                  wireProtocol: probeWireProtocol,
+                  modelsUrl: route.modelsUrl ?? null,
+                  ...(probeRequestPath ? { requestPath: probeRequestPath } : {}),
+                },
+              }
             : {
                 kind: 'adhoc',
                 spec: {
                   ...common,
+                  baseUrl: probeBaseUrl,
+                  wireProtocol: probeWireProtocol,
                   modelId: probeModel?.id ?? '',
-                  ...(route.requestPath ? { requestPath: route.requestPath } : {}),
+                  ...(probeRequestPath ? { requestPath: probeRequestPath } : {}),
+                  ...(probeApi ? { api: probeApi } : {}),
+                  ...(route.catalogPresetId ? { catalogPresetId: route.catalogPresetId } : {}),
                 },
               },
         );
@@ -722,6 +752,8 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
                   const selected = entry.id === channel?.id;
                   const associatedProtocols = PROVIDER_WIRE_PROTOCOLS
                     .filter((wire) => entry.protocols[wire]);
+                  const instance = nameInstance(entry);
+                  const duplicatedName = instance.total > 1;
                   return (
                     <button
                       key={entry.id}
@@ -732,11 +764,18 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
                       type="button"
                       role="radio"
                       aria-checked={selected}
-                      aria-label={t('models.channels.channelOptionLabel', {
-                        name: entry.name,
-                        protocol: protocolName(protocol),
-                        models: draftModelsFor(entry, protocol).length,
-                      })}
+                      aria-label={t(
+                        duplicatedName
+                          ? 'models.channels.channelOptionLabelWithInstance'
+                          : 'models.channels.channelOptionLabel',
+                        {
+                          name: entry.name,
+                          protocol: protocolName(protocol),
+                          models: draftModelsFor(entry, protocol).length,
+                          position: instance.position,
+                          total: instance.total,
+                        },
+                      )}
                       tabIndex={selected ? 0 : -1}
                       data-channel-id={entry.id}
                       className={cn(
@@ -771,6 +810,17 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
                         <span className="min-w-0 flex-1 truncate text-13 font-medium text-[var(--text-primary)]">
                           {entry.name}
                         </span>
+                        {duplicatedName && (
+                          <span
+                            aria-hidden="true"
+                            className="shrink-0 rounded-full bg-[var(--surface-chip)] px-1.5 py-0.5 text-11 tabular-nums text-[var(--text-secondary)]"
+                          >
+                            {t('models.channels.channelInstanceSuffix', {
+                              position: instance.position,
+                              total: instance.total,
+                            })}
+                          </span>
+                        )}
                         {selected && <Check size={15} aria-hidden="true" />}
                       </span>
                       <span className="text-12 text-[var(--text-secondary)]">
@@ -801,18 +851,37 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
                   <div className="flex flex-wrap gap-2">
                     {channels
                       .filter((entry) => !entry.protocols[protocol])
-                      .map((entry) => (
-                        <Button
-                          key={entry.id}
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => add(entry.id)}
-                        >
-                          <Plus size={13} aria-hidden="true" />
-                          {entry.name}
-                        </Button>
-                      ))}
+                      .map((entry) => {
+                        const instance = nameInstance(entry);
+                        return (
+                          <Button
+                            key={entry.id}
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            aria-label={
+                              instance.total > 1
+                                ? `${entry.name} ${t('models.channels.channelInstanceSuffix', {
+                                    position: instance.position,
+                                    total: instance.total,
+                                  })}`
+                                : undefined
+                            }
+                            onClick={() => add(entry.id)}
+                          >
+                            <Plus size={13} aria-hidden="true" />
+                            {entry.name}
+                            {instance.total > 1 && (
+                              <span className="tabular-nums text-[var(--text-tertiary)]">
+                                {t('models.channels.channelInstanceSuffix', {
+                                  position: instance.position,
+                                  total: instance.total,
+                                })}
+                              </span>
+                            )}
+                          </Button>
+                        );
+                      })}
                   </div>
                 </div>
               )}

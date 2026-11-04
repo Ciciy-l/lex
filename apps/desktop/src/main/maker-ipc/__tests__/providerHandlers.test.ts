@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { afterEach, describe, it, expect, vi } from 'vitest';
@@ -26,6 +28,7 @@ import {
   createProviderImportDraftFromRest,
 } from '../../provider-import/providerImport.js';
 import { throwIpcError } from '../../utils/ipcValidate.js';
+import { beginAppSessionBoundary } from '../../appSessionState.js';
 import { MAKER_INVOKE, MAKER_PUSH } from '../channels.js';
 import { registerProviderHandlers, type ProviderHandlerDeps } from '../providerHandlers.js';
 import { clearModelVisibilityMirror, waitForModelVisibilityMirror, getModelVisibilityMirrorSnapshot } from '../../maker-host/model-visibility-mirror.js';
@@ -3585,6 +3588,126 @@ describe('provider:test-connection handler', () => {
     });
   });
 
+  it('forwards a saved probe draft model and endpoint for Main-side verification', async () => {
+    const harness = new IpcHarness();
+    const testConnection = vi.fn(async () => ({ ok: true as const, latencyMs: 1 }));
+    registerProviderHandlers(harness, makeDeps({ testConnection }));
+
+    await expect(
+      harness.invoke(MAKER_INVOKE.PROVIDER_TEST_CONNECTION, {
+        kind: 'saved',
+        providerId: 'primary--anthropic-messages',
+        agent: 'pi',
+        modelId: '  chat-new  ',
+        endpoint: {
+          baseUrl: 'https://channel.example/v1',
+          wireProtocol: 'anthropic-messages',
+          modelsUrl: null,
+          requestPath: '/v1',
+        },
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(testConnection).toHaveBeenCalledWith({
+      kind: 'saved',
+      providerId: 'primary--anthropic-messages',
+      agent: 'pi',
+      modelId: 'chat-new',
+      endpoint: {
+        baseUrl: 'https://channel.example/v1',
+        wireProtocol: 'anthropic-messages',
+        modelsUrl: null,
+        requestPath: '/v1',
+      },
+    });
+  });
+
+  it('strips upstream error detail before returning a connection-test result', async () => {
+    const harness = new IpcHarness();
+    const opaque = `opaque-${randomUUID()}`;
+    const testConnection = vi.fn(async () => ({
+      ok: false as const,
+      code: 'AUTH_INVALID' as const,
+      status: 401,
+      latencyMs: 5,
+      detail: `upstream echoed ${opaque}`,
+    }));
+    registerProviderHandlers(harness, makeDeps({ testConnection }));
+    const inputs = [
+      { kind: 'saved' as const, providerId: 'primary--anthropic-messages', agent: 'pi' as const },
+      {
+        kind: 'adhoc' as const,
+        spec: {
+          agent: 'pi' as const,
+          baseUrl: 'https://x.example',
+          modelId: 'm',
+          authMethod: 'apiKey' as const,
+        },
+      },
+    ];
+    for (const input of inputs) {
+      const result = await harness.invoke(MAKER_INVOKE.PROVIDER_TEST_CONNECTION, input);
+      expect(result).toMatchObject({ ok: false, code: 'AUTH_INVALID', status: 401, latencyMs: 5 });
+      expect(result).not.toHaveProperty('detail');
+      expect(JSON.stringify(result)).not.toContain(opaque);
+    }
+  });
+
+  it('never forwards probe exception text to the renderer', async () => {
+    const harness = new IpcHarness();
+    const opaque = `opaque-${randomUUID()}`;
+    const testConnection = vi.fn(async () => {
+      throw new Error(`probe failed with ${opaque}`);
+    });
+    registerProviderHandlers(harness, makeDeps({ testConnection }));
+    const inputs = [
+      { kind: 'saved' as const, providerId: 'primary--anthropic-messages', agent: 'pi' as const },
+      {
+        kind: 'adhoc' as const,
+        spec: {
+          agent: 'pi' as const,
+          baseUrl: 'https://x.example',
+          modelId: 'm',
+          authMethod: 'apiKey' as const,
+        },
+      },
+    ];
+    for (const input of inputs) {
+      const error: unknown = await harness
+        .invoke(MAKER_INVOKE.PROVIDER_TEST_CONNECTION, input)
+        .then(
+          () => {
+            throw new Error('expected rejection');
+          },
+          (reason: unknown) => reason,
+        );
+      expect(String(error)).toContain('connection test failed');
+      expect(String(error)).not.toContain(opaque);
+    }
+  });
+
+  it('preserves a TIMEOUT classification without upstream detail', async () => {
+    const harness = new IpcHarness();
+    const testConnection = vi.fn(async () => ({
+      ok: false as const,
+      code: 'TIMEOUT' as const,
+      status: 200,
+      latencyMs: 10_000,
+      detail: 'upstream body text',
+    }));
+    registerProviderHandlers(harness, makeDeps({ testConnection }));
+    const result = await harness.invoke(MAKER_INVOKE.PROVIDER_TEST_CONNECTION, {
+      kind: 'adhoc',
+      spec: {
+        agent: 'pi',
+        baseUrl: 'https://x.example',
+        modelId: 'm',
+        authMethod: 'apiKey',
+      },
+    });
+    expect(result).toMatchObject({ ok: false, code: 'TIMEOUT', status: 200, latencyMs: 10_000 });
+    expect(result).not.toHaveProperty('detail');
+  });
+
   it('accepts a Pi-native connection probe', async () => {
     const harness = new IpcHarness();
     const testConnection = vi.fn(async () => ({ ok: true as const, latencyMs: 2 }));
@@ -3652,11 +3775,111 @@ describe('provider:test-connection handler', () => {
         },
       },
       { kind: 'saved', providerId: '', agent: 'codex' },
+      { kind: 'saved', providerId: 'p', agent: 'pi', modelId: '   ' },
+      {
+        kind: 'saved',
+        providerId: 'p',
+        agent: 'pi',
+        endpoint: { baseUrl: 'ftp://x.example', wireProtocol: 'anthropic-messages' },
+      },
+      {
+        kind: 'saved',
+        providerId: 'p',
+        agent: 'pi',
+        endpoint: { baseUrl: 'https://x.example', wireProtocol: 'not-a-protocol' },
+      },
+      {
+        kind: 'saved',
+        providerId: 'p',
+        agent: 'pi',
+        endpoint: {
+          baseUrl: 'https://x.example',
+          wireProtocol: 'anthropic-messages',
+          requestPath: '//evil.example',
+        },
+      },
+      {
+        kind: 'saved',
+        providerId: 'p',
+        agent: 'pi',
+        endpoint: {
+          baseUrl: 'https://x.example',
+          wireProtocol: 'anthropic-messages',
+          modelsUrl: 'file:///etc/passwd',
+        },
+      },
     ];
     for (const input of bad) {
       await expect(harness.invoke(MAKER_INVOKE.PROVIDER_TEST_CONNECTION, input)).rejects.toThrow(/INVALID_PARAMS/);
     }
     expect(deps.testConnection).not.toHaveBeenCalled();
+  });
+
+  it('rejects an untrusted sender before running the probe', async () => {
+    const harness = new IpcHarness();
+    const testConnection = vi.fn(async () => ({ ok: true as const, latencyMs: 1 }));
+    registerProviderHandlers(
+      harness,
+      makeDeps({
+        assertTrustedSender: () => {
+          throw new Error('untrusted sender');
+        },
+        testConnection,
+      }),
+    );
+    await expect(
+      harness.invoke(MAKER_INVOKE.PROVIDER_TEST_CONNECTION, {
+        kind: 'saved',
+        providerId: 'primary--anthropic-messages',
+        agent: 'pi',
+        modelId: 'chat-new',
+      }),
+    ).rejects.toThrow(/untrusted sender/);
+    expect(testConnection).not.toHaveBeenCalled();
+  });
+
+  it('fails closed while an account boundary is pending', async () => {
+    const harness = new IpcHarness();
+    const testConnection = vi.fn(async () => ({ ok: true as const, latencyMs: 1 }));
+    registerProviderHandlers(harness, makeDeps({ testConnection }));
+    const release = beginAppSessionBoundary();
+    try {
+      await expect(
+        harness.invoke(MAKER_INVOKE.PROVIDER_TEST_CONNECTION, {
+          kind: 'saved',
+          providerId: 'primary--anthropic-messages',
+          agent: 'pi',
+        }),
+      ).rejects.toThrow(/PRECONDITION_FAILED/);
+    } finally {
+      release();
+    }
+    expect(testConnection).not.toHaveBeenCalled();
+  });
+
+  it('rejects a probe whose owner changes while it runs', async () => {
+    const harness = new IpcHarness();
+    let finishProbe!: (value: { ok: true; latencyMs: number }) => void;
+    const testConnection = vi.fn(
+      () =>
+        new Promise<{ ok: true; latencyMs: number }>((resolve) => {
+          finishProbe = resolve;
+        }),
+    );
+    let currentOwner = { dataOwnerId: 'owner-a', generation: 1 };
+    registerProviderHandlers(
+      harness,
+      makeDeps({ testConnection, currentOwnerSession: () => currentOwner }),
+    );
+    const call = harness.invoke(MAKER_INVOKE.PROVIDER_TEST_CONNECTION, {
+      kind: 'saved',
+      providerId: 'primary--anthropic-messages',
+      agent: 'pi',
+    });
+    await vi.waitFor(() => expect(testConnection).toHaveBeenCalledOnce());
+    currentOwner = { dataOwnerId: 'owner-b', generation: 2 };
+    finishProbe({ ok: true, latencyMs: 1 });
+    await expect(call).rejects.toThrow(/INTERNAL/);
   });
 
   it('maps saved-resolve errors (provider not found) to INVALID_PARAMS', async () => {

@@ -103,10 +103,10 @@ export function ProviderModelIdsField({
                   onClick={() => {
                     const next = ids.filter((_, current) => current !== index);
                     onChange(next);
-                    requestAnimationFrame(() => {
-                      if (next.length === 0) addInput.current?.focus();
-                      else rows.current.get(Math.max(0, index - 1))?.focus();
-                    });
+                    // Both targets already exist; focusing synchronously avoids a
+                    // late frame stealing focus from the user's next field.
+                    if (next.length === 0) addInput.current?.focus();
+                    else rows.current.get(Math.max(0, index - 1))?.focus();
                   }}
                 >
                   <Trash2 size={15} aria-hidden="true" />
@@ -131,9 +131,16 @@ export function ProviderModelIdsField({
               onChange={onDraftChange}
               onPaste={(event) => {
                 const pasted = event.clipboardData.getData('text');
-                if (!/[\n,]/u.test(pasted)) return;
+                // Commas are valid ID characters, so a single-line paste is
+                // ordinary text input. Only a line break is a batch separator.
+                if (!/\r?\n/u.test(pasted)) return;
                 event.preventDefault();
-                add(pasted);
+                const input = event.currentTarget;
+                const start = input.selectionStart ?? draft.length;
+                const end = input.selectionEnd ?? draft.length;
+                // Honour the cursor/selection so a prefix such as `vendor/`
+                // stays attached to the first pasted ID.
+                add(draft.slice(0, start) + pasted + draft.slice(end));
               }}
               onKeyDown={(event) => {
                 if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;

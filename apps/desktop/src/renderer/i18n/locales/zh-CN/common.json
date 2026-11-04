@@ -350,6 +350,9 @@
     "WIRE_INCOMPATIBLE": "端点与该协议不完全兼容（存在无法识别的请求字段）",
     "UPSTREAM_ERROR": "上游服务错误（5xx），请稍后重试",
     "UPSTREAM_UNREACHABLE": "无法连接到端点，请检查网络与基础 URL",
+    "REDIRECT_BLOCKED": "端点重定向到了其他地址。请在测试连接时填写最终端点地址",
+    "PROBE_UNSUPPORTED": "该原生 SDK 传输无法在不跟随重定向的情况下安全测试连接。请保存连接后在任务中试用",
+    "RESPONSE_BLOCKED": "模型未返回可用响应（安全或内容策略限制），请检查提示词或模型设置",
     "TIMEOUT": "连接超时，请检查网络与基础 URL",
     "UNKNOWN": "未知错误，请查看日志了解详情",
     "upstreamToast": "供应商「{{provider}}」请求失败：{{message}}"
@@ -13054,7 +13057,10 @@
         "googleGemini": "Google Gemini"
       },
       "removeModelIdRowLabel": "移除模型 ID {{index}}",
-      "pendingModelId": "请先添加或清空待提交的模型 ID。"
+      "pendingModelId": "请先添加或清空待提交的模型 ID。",
+      "testNeedsCredentials": "请先保存连接，或填写新的 API 密钥后再测试。",
+      "channelOptionLabelWithInstance": "{{name}}，{{protocol}}，{{models}} 个模型 ID，第 {{position}} 个连接，共 {{total}} 个",
+      "channelInstanceSuffix": "{{position}}/{{total}}"
     }
   },
   "regionScreenshot": {

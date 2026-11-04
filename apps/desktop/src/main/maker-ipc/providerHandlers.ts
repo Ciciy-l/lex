@@ -77,6 +77,7 @@ import {
   readCustomProviderHeadersForMutation as readChannelHeaders,
 } from '../secrets/providerSecretStore.js';
 import { throwIpcError } from '../utils/ipcValidate.js';
+import { isAppSessionBoundaryPending } from '../appSessionState.js';
 import {
   createCustomProvider,
   customProviderExists,
@@ -94,6 +95,7 @@ import type {
   ProviderProbeSpec,
   ProviderTestInput,
   ProviderTestResult,
+  SavedProbeEndpoint,
 } from '../maker-host/provider-diagnostics.js';
 import {
   beginProviderImportConfirm,
@@ -478,7 +480,57 @@ function parseTestInput(input: unknown): ProviderTestInput | null {
   if (i.kind === 'saved') {
     if (typeof i.providerId !== 'string' || i.providerId.length === 0) return null;
     if (typeof i.agent !== 'string' || !VALID_AGENTS.includes(i.agent)) return null;
-    return { kind: 'saved', providerId: i.providerId, agent: i.agent as AgentKind };
+    if (
+      i.modelId !== undefined &&
+      (typeof i.modelId !== 'string' || !i.modelId.trim() || i.modelId.length > 512)
+    )
+      return null;
+    let endpoint: SavedProbeEndpoint | undefined;
+    if (i.endpoint !== undefined) {
+      if (!i.endpoint || typeof i.endpoint !== 'object' || Array.isArray(i.endpoint)) return null;
+      const e = i.endpoint as Record<string, unknown>;
+      const httpUrl = (value: unknown): value is string => {
+        if (typeof value !== 'string' || value.length === 0) return false;
+        try {
+          const url = new URL(value);
+          return (
+            (url.protocol === 'http:' || url.protocol === 'https:') &&
+            !url.username &&
+            !url.password
+          );
+        } catch {
+          return false;
+        }
+      };
+      if (!httpUrl(e.baseUrl)) return null;
+      if (
+        typeof e.wireProtocol !== 'string' ||
+        !['openai-responses', 'openai-chat', 'anthropic-messages', 'google-generative-ai'].includes(
+          e.wireProtocol,
+        )
+      )
+        return null;
+      if (
+        e.modelsUrl !== undefined &&
+        e.modelsUrl !== null &&
+        (typeof e.modelsUrl !== 'string' || (e.modelsUrl !== '' && !httpUrl(e.modelsUrl)))
+      )
+        return null;
+      if (e.requestPath !== undefined && !isProviderRequestPath(e.requestPath)) return null;
+      endpoint = {
+        baseUrl: e.baseUrl,
+        wireProtocol: e.wireProtocol as ProviderWireProtocol,
+        modelsUrl: (e.modelsUrl as string | null | undefined) ?? null,
+        ...(typeof e.requestPath === 'string' ? { requestPath: e.requestPath } : {}),
+      };
+    }
+    return {
+      kind: 'saved',
+      providerId: i.providerId,
+      agent: i.agent as AgentKind,
+      ...(typeof i.modelId === 'string' ? { modelId: i.modelId.trim() } : {}),
+      ...(endpoint ? { endpoint } : {}),
+    };
   }
   if (i.kind === 'adhoc') {
     const s = i.spec;
@@ -2300,14 +2352,52 @@ export function registerProviderHandlers(
 
   // 测试连接：查询型结构化返回（规则 13 例外条款——renderer 需要 code 渲染分类文案）。
   // 入参非法 / saved 解析失败（供应商不存在等）仍走 throwIpcError。
-  registry.handle(MAKER_INVOKE.PROVIDER_TEST_CONNECTION, async (_event, input: unknown) => {
+  registry.handle(MAKER_INVOKE.PROVIDER_TEST_CONNECTION, async (event, input: unknown) => {
+    // A saved probe can spend the stored key on an inference request, so only
+    // Cindy's own top-level renderer may start one (same guard as discovery).
+    assertTrustedProviderMutationSender(event);
     const parsed = parseTestInput(input);
     if (!parsed) throwIpcError('INVALID_PARAMS', 'invalid test-connection input');
+    if (isAppSessionBoundaryPending())
+      throwIpcError('PRECONDITION_FAILED', 'Account change is in progress');
+    const ownerAtIngress = captureProviderOwnerSession();
+    let mutationKey: string | null = null;
+    let mutationRevision = 0;
     try {
-      return await deps.testConnection(parsed);
+      if (parsed.kind === 'saved') {
+        const providers = await deps.listProviders({ allowSideEffects: false });
+        assertProviderMutationOwner(ownerAtIngress);
+        const provider = providers.find((entry) => entry.id === parsed.providerId);
+        mutationKey = provider?.channel?.supplierId ?? parsed.providerId;
+        if (providerConfigMutationCounts.has(mutationKey))
+          throwIpcError('PRECONDITION_FAILED', 'Provider configuration is being updated');
+        mutationRevision = providerConfigMutationRevisions.get(mutationKey) ?? 0;
+      }
+      const result = await deps.testConnection(parsed);
+      assertProviderMutationOwner(ownerAtIngress);
+      if (isAppSessionBoundaryPending())
+        throwIpcError('PRECONDITION_FAILED', 'Account change is in progress');
+      if (
+        mutationKey &&
+        (providerConfigMutationCounts.has(mutationKey) ||
+          (providerConfigMutationRevisions.get(mutationKey) ?? 0) !== mutationRevision)
+      )
+        throwIpcError(
+          'PRECONDITION_FAILED',
+          'Provider configuration changed during the connection test',
+        );
+      // Upstream error bodies may echo credentials back verbatim. The renderer
+      // only consumes the structured classification and timing.
+      return {
+        ok: result.ok,
+        ...(result.code ? { code: result.code } : {}),
+        ...(result.status !== undefined ? { status: result.status } : {}),
+        latencyMs: result.latencyMs,
+      };
     } catch (err) {
-      // resolveSavedProbeSpec 的解析错误（provider 不存在 / 无该 runtime）→ INVALID_PARAMS。
-      throwIpcError('INVALID_PARAMS', err instanceof Error ? err.message : String(err));
+      if (isIpcError(err)) throw err;
+      // Never forward an SDK/fetch/body error message: it can echo credentials.
+      throwIpcError('INVALID_PARAMS', 'connection test failed');
     }
   });
 

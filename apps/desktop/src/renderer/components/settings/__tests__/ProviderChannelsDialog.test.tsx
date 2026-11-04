@@ -29,6 +29,11 @@ vi.mock('react-i18next', () => ({
       if (key === 'models.channels.protocolTabLabel') return `${values?.protocol} (${values?.count})`;
       if (key === 'models.channels.channelOptionLabel') return `${values?.name} / ${values?.protocol} / ${values?.models}`;
       if (key === 'models.channels.channelSummary') return `${values?.protocols} protocols / ${values?.models} models`;
+      if (key === 'models.channels.channelOptionLabelWithInstance')
+        return `${values?.name} / ${values?.protocol} / ${values?.models} / ${values?.position}/${values?.total}`;
+      if (key === 'models.channels.channelInstanceSuffix')
+        return `${values?.position}/${values?.total}`;
+      if (key === 'models.channels.testNeedsCredentials') return 'TEST_NEEDS_CREDENTIALS';
       if (key === 'models.channels.modelIdRowLabel') return `Model ID ${values?.index}`;
       if (key === 'models.channels.addModelId') return 'Add Model ID';
       if (key === 'models.channels.removeModelIdRowLabel') return `Remove Model ID ${values?.index}`;
@@ -209,7 +214,7 @@ describe('ProviderChannelsDialog protocol and channel navigation', () => {
     expect(screen.queryByText('models.channels.connected')).toBeNull();
   });
 
-  it('probes the first chat model and switches to the draft route after an ID edit', async () => {
+  it('keeps stored credentials for an edited model on the same endpoint', async () => {
     const user = userEvent.setup();
     render(<ProviderChannelsDialog initial={initialConfig()} onSaved={vi.fn()} onClose={vi.fn()} />);
     const testButton = () => screen.getByRole('button', { name: 'models.channels.test' });
@@ -220,6 +225,12 @@ describe('ProviderChannelsDialog protocol and channel navigation', () => {
       kind: 'saved',
       providerId: 'channel-a--anthropic-messages',
       agent: 'pi',
+      modelId: 'claude-a',
+      endpoint: {
+        baseUrl: 'https://anthropic.example.test',
+        wireProtocol: 'anthropic-messages',
+        modelsUrl: null,
+      },
     });
 
     fireEvent.change(screen.getByLabelText('Model ID 1'), { target: { value: 'claude-new' } });
@@ -229,11 +240,10 @@ describe('ProviderChannelsDialog protocol and channel navigation', () => {
     );
     expect(window.electronAPI.maker.testProviderConnection).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        kind: 'adhoc',
-        spec: expect.objectContaining({
-          modelId: 'claude-new',
-          baseUrl: 'https://anthropic.example.test',
-        }),
+        kind: 'saved',
+        providerId: 'channel-a--anthropic-messages',
+        modelId: 'claude-new',
+        endpoint: expect.objectContaining({ baseUrl: 'https://anthropic.example.test' }),
       }),
     );
   });
@@ -254,8 +264,95 @@ describe('ProviderChannelsDialog protocol and channel navigation', () => {
     );
     expect(window.electronAPI.maker.testProviderConnection).toHaveBeenCalledWith(
       expect.objectContaining({
+        kind: 'saved',
+        modelId: 'chat-new',
+      }),
+    );
+  });
+
+  it('blocks keyless tests after an endpoint change and probes with the new key', async () => {
+    const user = userEvent.setup();
+    render(<ProviderChannelsDialog initial={initialConfig()} onSaved={vi.fn()} onClose={vi.fn()} />);
+    const testButton = () => screen.getByRole('button', { name: 'models.channels.test' });
+
+    fireEvent.change(screen.getByLabelText('Base URL'), {
+      target: { value: 'https://changed.example.test' },
+    });
+    await user.click(testButton());
+    expect(window.electronAPI.maker.testProviderConnection).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert').textContent).toBe('TEST_NEEDS_CREDENTIALS');
+
+    await user.type(
+      screen.getByPlaceholderText('Leave unchanged to keep the saved key'),
+      'new-key',
+    );
+    await user.click(testButton());
+    await waitFor(() =>
+      expect(window.electronAPI.maker.testProviderConnection).toHaveBeenCalledOnce(),
+    );
+    expect(window.electronAPI.maker.testProviderConnection).toHaveBeenCalledWith(
+      expect.objectContaining({
         kind: 'adhoc',
-        spec: expect.objectContaining({ modelId: 'chat-new' }),
+        spec: expect.objectContaining({
+          baseUrl: 'https://changed.example.test',
+          apiKey: 'new-key',
+        }),
+      }),
+    );
+  });
+
+  it('allows an edited-model probe when draft headers authenticate the route', async () => {
+    const user = userEvent.setup();
+    render(<ProviderChannelsDialog initial={initialConfig()} onSaved={vi.fn()} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByText('models.channels.advanced'));
+    fireEvent.change(screen.getByLabelText('models.channels.headers'), {
+      target: { value: '{"x-api-key":"header-key"}' },
+    });
+    fireEvent.change(screen.getByLabelText('Model ID 1'), { target: { value: 'claude-new' } });
+
+    await user.click(screen.getByRole('button', { name: 'models.channels.test' }));
+    await waitFor(() =>
+      expect(window.electronAPI.maker.testProviderConnection).toHaveBeenCalledOnce(),
+    );
+    expect(window.electronAPI.maker.testProviderConnection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'adhoc',
+        spec: expect.objectContaining({
+          modelId: 'claude-new',
+          headers: { 'x-api-key': 'header-key' },
+        }),
+      }),
+    );
+  });
+
+  it('tests the probe model on its model-level route instead of the channel default', async () => {
+    const config = initialConfig();
+    config.channels!.channels[0].protocols['anthropic-messages']!.models = [
+      { id: 'chat-a', name: 'chat-a' },
+      {
+        id: 'chat-b',
+        name: 'chat-b',
+        route: {
+          baseUrl: 'https://alternate.example.test/v1',
+          wireProtocol: 'anthropic-messages',
+        },
+      },
+    ];
+    const user = userEvent.setup();
+    render(<ProviderChannelsDialog initial={config} onSaved={vi.fn()} onClose={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: 'Remove Model ID 1' }));
+    await user.click(screen.getByRole('button', { name: 'models.channels.test' }));
+    await waitFor(() =>
+      expect(window.electronAPI.maker.testProviderConnection).toHaveBeenCalledOnce(),
+    );
+    expect(window.electronAPI.maker.testProviderConnection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'saved',
+        modelId: 'chat-b',
+        endpoint: expect.objectContaining({
+          baseUrl: 'https://alternate.example.test/v1',
+        }),
       }),
     );
   });
@@ -286,6 +383,20 @@ describe('ProviderChannelsDialog protocol and channel navigation', () => {
     expect(saved.channels!.channels[0].protocols['anthropic-messages']!.models).toMatchObject([
       { id: 'claude-replaced', name: 'claude-replaced', defaultEnabled: true },
     ]);
+  });
+
+  it('shows no model row after deleting the last one and can add one again', async () => {
+    const user = userEvent.setup();
+    render(<ProviderChannelsDialog initial={initialConfig()} onSaved={vi.fn()} onClose={vi.fn()} />);
+    expect((screen.getByLabelText('Model ID 1') as HTMLInputElement).value).toBe('claude-a');
+
+    await user.click(screen.getByRole('button', { name: 'Remove Model ID 1' }));
+    expect(screen.queryByLabelText('Model ID 1')).toBeNull();
+    expect(screen.getByText('No model IDs yet')).toBeTruthy();
+
+    await user.type(screen.getByLabelText('Add Model ID'), 'claude-new');
+    await user.click(screen.getByRole('button', { name: 'Add Model ID' }));
+    expect((screen.getByLabelText('Model ID 1') as HTMLInputElement).value).toBe('claude-new');
   });
 
   it('switching to an empty protocol does not create or modify any route', async () => {
@@ -334,6 +445,29 @@ describe('ProviderChannelsDialog protocol and channel navigation', () => {
     await user.click(screen.getByRole('tab', { name: 'Google Gemini (1)' }));
     expect(screen.getByDisplayValue('temporary-secret')).toBeTruthy();
     expect(within(document.body).getByText('3 protocols / 0 models')).toBeTruthy();
+  });
+
+  it('gives same-named channels distinct instance labels without merging identities', async () => {
+    const config = initialConfig();
+    config.channels!.channels[1].name = 'Primary East';
+    const user = userEvent.setup();
+    render(<ProviderChannelsDialog initial={config} onSaved={vi.fn()} onClose={vi.fn()} />);
+
+    const cards = screen.getAllByRole('radio', { name: /Primary East/ });
+    expect(cards).toHaveLength(2);
+    expect(cards[0].getAttribute('aria-label')).not.toBe(cards[1].getAttribute('aria-label'));
+    expect(screen.getByText('1/2')).toBeTruthy();
+    expect(screen.getByText('2/2')).toBeTruthy();
+
+    await user.click(cards[1]);
+    expect(
+      (screen.getByDisplayValue('https://anthropic-backup.example.test') as HTMLInputElement).value,
+    ).toBe('https://anthropic-backup.example.test');
+
+    await user.click(screen.getByRole('tab', { name: 'Google Gemini (0)' }));
+    const attach = screen.getAllByRole('button', { name: /Primary East/ });
+    expect(attach).toHaveLength(2);
+    expect(attach[0].getAttribute('aria-label')).not.toBe(attach[1].getAttribute('aria-label'));
   });
 
   it('keeps dirty-cancel confirmation and restores the input when editing continues', async () => {

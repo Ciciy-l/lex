@@ -57,7 +57,9 @@ describe('protocol-channel form requests', () => {
     fireEvent.keyDown(screen.getByLabelText('models.channels.addModelId'), { key: 'Enter' });
     fireEvent.click(screen.getByText('Backup').closest('button')!);
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'models.channels.test' })); });
-    expect(test).toHaveBeenCalledExactlyOnceWith({ kind: 'saved', providerId: 'backup--openai-responses', agent: 'pi' });
+    expect(test).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      kind: 'saved', providerId: 'backup--openai-responses', agent: 'pi', modelId: 'm',
+    }));
     expect(screen.getByRole('status').textContent).toBe('models.channels.connected');
     fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'fake-test-key' } });
     expect(screen.queryByRole('status')).toBeNull();
@@ -90,6 +92,7 @@ describe('protocol-channel form requests', () => {
     expect(screen.queryByText('models.channels.endpointChanged')).toBeNull();
     fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://new.example/v1' } });
     expect(screen.getByText('models.channels.endpointChanged')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'fresh-key' } });
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'models.channels.test' })); });
     expect(screen.getByRole('alert').textContent).toBe('providerError.AUTH_INVALID');
     expect(screen.queryByText('private upstream secret')).toBeNull();

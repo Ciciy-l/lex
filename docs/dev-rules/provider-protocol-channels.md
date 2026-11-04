@@ -60,7 +60,27 @@ canonical 表单带 Main 发出的 `readRevision`，旧窗口及异步发现的�
 按换行 trim、过滤空项、精确去重并保持首次出现顺序；逗号是合法 ID 字符，不是分隔符。
 新增行须先按 Enter 或点「添加」提交；存在未提交行时保存、测试连接和发现模型都被阻止
 并提示，避免草稿被静默丢弃。整理既有 ID 只按精确 ID 复用原模型对象，保留其名称、
-上下文、价格、路由和启用状态；新增 ID 才取默认值。
+上下文、价格、路由和启用状态；新增 ID 才取默认值。多行粘贴与输入框现有内容和光标
+位置合并；单行粘贴中的逗号按合法 ID 字符处理，不拆分。
+
+同名渠道以可访问的实例序号（如 1/2）区分，身份仍按稳定 channel id。已保存端点下
+修改模型 ID 时，Main 在核验可信 sender、owner/generation、账号边界和供应商 mutation
+屏障后，可按已保存端点复用该协议的已存密钥与 Main-only headers 测试草稿模型；端点或
+协议变化、账号边界 pending、供应商正在 mutation 时一律 fail closed 并提示用户保存或
+填写新密钥，不发送探测，也不回填 Renderer。端点变化必须重新填写密钥或请求头，旧凭证
+不得跟随新端点。连接测试不跟随任何重定向（包括同源跳转）：3xx 以 `REDIRECT_BLOCKED`
+失败并提示填写最终端点，避免把已存密钥或自定义认证头重放到第二来源；探测结果只向
+Renderer 返回 code/status/latency 等安全摘要，不返回上游原文。原生 SDK 探测同样禁止
+跟随重定向：可注入 fetch 的适配器使用同一 manual 探测；Google Generative AI 走协议
+HTTP 探测并校验 generateContent 成功结构（2xx HTML、错误 JSON、空或畸形候选均失败）；
+Gemini 的 finishReason 遵循 SDK 语义，仅 STOP/MAX_TOKENS 或缺省成功，其余值（含
+SAFETY/BLOCKLIST/RECITATION 及未来失败枚举）返回 `RESPONSE_BLOCKED`；失败原因优先于
+文本判定，首候选无 content 的安全阻止也归此类。响应体/SSE 读取与 fetch 共用同一
+10s deadline，超时（含 ReadTimeout、嵌套 undici body timeout）返回 `TIMEOUT`，取消
+reader 并保留真实 latency，不重置预算；非 deadline 触发的 abort 不冒充超时。
+Google Vertex 与 Bedrock 的 SDK 无法把受控 fetch/受信 HTTP 状态带回探测，测试连接以
+`PROBE_UNSUPPORTED` 安全拒绝；native 探测以实际响应 status 分类 401/403/429/5xx，
+不依赖上游正文重复的 code。
 
 OMP 模型选择使用已连接供应商的真实受管路由与模型目录。原生订阅保留精确账号身份，
 OpenAI 通过宿主订阅转发替换进程令牌；普通自定义 runtime 不自动借用其他引擎的凭证。
