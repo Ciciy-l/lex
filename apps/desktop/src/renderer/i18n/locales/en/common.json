@@ -12357,7 +12357,19 @@
       "showFull": "Show full text",
       "collapse": "Collapse",
       "roleUser": "User",
-      "roleAssistant": "Assistant"
+      "roleAssistant": "Assistant",
+      "policyCompactProvisionalHint": "This worker is dormant. It will wake first and re-check its real capability; if native presentation cannot compact manually, the reason will be shown.",
+      "failureBusy": "The worker is busy. Retry after the current operation finishes.",
+      "failureContextUnsupported": "This worker does not currently support the selected context action. Retry after it wakes, or use Keep context.",
+      "failureContextUnsupportedAction": "Retry after the worker is idle, or use Keep context.",
+      "failurePreparation": "Context preparation did not finish. Retry after the current operation finishes.",
+      "failureAgentNotReady": "The worker is not ready yet. Try again shortly.",
+      "failureNotFound": "This worker could not be found. Refresh and try again.",
+      "failureGeneric": "The task was not dispatched. Try again shortly.",
+      "historyUnsupportedContent": "This record has no displayable text.",
+      "roleTool": "Tool",
+      "sourceLead": "From Lead",
+      "sourceWorker": "From Worker"
     },
     "createWorker": {
       "title": "Create new worker",

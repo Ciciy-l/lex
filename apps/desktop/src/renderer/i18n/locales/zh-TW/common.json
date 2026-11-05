@@ -12341,7 +12341,19 @@
       "showFull": "展開全文",
       "collapse": "收合",
       "roleUser": "使用者",
-      "roleAssistant": "助理"
+      "roleAssistant": "助理",
+      "policyCompactProvisionalHint": "Worker 休眠中：會先喚醒，再依實際能力複核；若原生介面不支援手動壓縮，會提供具體原因。",
+      "failureBusy": "Worker 忙碌中。請等目前操作完成後重試。",
+      "failureContextUnsupported": "此 Worker 目前不支援所選的上下文操作。請等它喚醒後重試，或改用保留上下文。",
+      "failureContextUnsupportedAction": "請等 Worker 閒置後重試，或改用保留上下文。",
+      "failurePreparation": "上下文操作未完成。請等目前操作完成後重試。",
+      "failureAgentNotReady": "Worker 尚未就緒，請稍後重試。",
+      "failureNotFound": "找不到此 Worker，請重新整理後重試。",
+      "failureGeneric": "任務未派發，請稍後重試。",
+      "historyUnsupportedContent": "此筆記錄沒有可顯示的文字內容。",
+      "roleTool": "工具",
+      "sourceLead": "來自 Lead",
+      "sourceWorker": "來自 Worker"
     },
     "createWorker": {
       "title": "建立新 Worker",

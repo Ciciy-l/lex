@@ -12341,7 +12341,19 @@
       "showFull": "全文を表示",
       "collapse": "折りたたむ",
       "roleUser": "ユーザー",
-      "roleAssistant": "アシスタント"
+      "roleAssistant": "アシスタント",
+      "policyCompactProvisionalHint": "この Worker は休止中です。先に起動し、実際の機能で再確認します。ネイティブ表示が手動圧縮に対応していない場合は理由を表示します。",
+      "failureBusy": "Worker はビジーです。現在の操作が完了してから再試行してください。",
+      "failureContextUnsupported": "この Worker は現在、選択したコンテキスト操作に対応していません。起動後に再試行するか、コンテキストを保持してください。",
+      "failureContextUnsupportedAction": "Worker がアイドルになってから再試行するか、コンテキストを保持してください。",
+      "failurePreparation": "コンテキスト操作が完了しませんでした。現在の操作が完了してから再試行してください。",
+      "failureAgentNotReady": "Worker の準備ができていません。しばらくしてから再試行してください。",
+      "failureNotFound": "この Worker が見つかりません。更新してから再試行してください。",
+      "failureGeneric": "タスクは割り当てられませんでした。しばらくしてから再試行してください。",
+      "historyUnsupportedContent": "この記録には表示できるテキストがありません。",
+      "roleTool": "ツール",
+      "sourceLead": "Lead から",
+      "sourceWorker": "Worker から"
     },
     "createWorker": {
       "title": "新しい Worker を作成",
