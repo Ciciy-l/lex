@@ -51,6 +51,21 @@ describe('Orca dispatch context capability', () => {
     ).toMatchObject({ supported: false, reason: 'manual-compact-unavailable' });
   });
 
+  it.each(['codex', 'pi'] as const)(
+    'keeps dormant %s compact attemptable but marked provisional',
+    (agentKind) => {
+      expect(
+        computeOrcaWorkerContextSupport({
+          agentKind,
+          remoteHostId: null,
+          nativePresentation: false,
+          manualCompactSupported: true,
+          provisionalCompact: true,
+        }).compact,
+      ).toEqual({ supported: true, provisional: true });
+    },
+  );
+
   it('refuses native presentation and remote sessions for compact', () => {
     expect(
       computeOrcaWorkerContextSupport({

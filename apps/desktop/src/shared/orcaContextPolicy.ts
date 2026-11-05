@@ -23,6 +23,11 @@ export type OrcaContextUnsupportedReason =
 export interface OrcaContextCapability {
   supported: boolean;
   reason?: OrcaContextUnsupportedReason;
+  /**
+   * A dormant Codex/Pi worker may attempt manual compact before it has a live
+   * handle; the hint must not promise that the resumed runtime can compress.
+   */
+  provisional?: boolean;
 }
 
 /** Per-worker support for the two destructive/async policies. */

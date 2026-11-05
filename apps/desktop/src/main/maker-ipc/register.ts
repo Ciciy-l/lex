@@ -11374,6 +11374,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       manualCompactSupported: live
         ? live.capabilities.manualCompact?.supported === true
         : agentKind === 'codex' || agentKind === 'pi',
+      // The dormant attempt stays allowed, but the UI must say it is a
+      // provisional capability rather than promising native compaction.
+      provisionalCompact: !live && (agentKind === 'codex' || agentKind === 'pi'),
     });
   }
 

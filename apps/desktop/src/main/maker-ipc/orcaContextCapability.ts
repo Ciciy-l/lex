@@ -21,6 +21,8 @@ export function computeOrcaWorkerContextSupport(input: {
   remoteHostId: string | null;
   nativePresentation: boolean;
   manualCompactSupported: boolean;
+  /** No live handle yet: compact remains attemptable but is not a promise. */
+  provisionalCompact?: boolean;
 }): OrcaWorkerContextSupport {
   if (input.remoteHostId) {
     return {
@@ -42,7 +44,10 @@ export function computeOrcaWorkerContextSupport(input: {
     return {
       clear,
       compact: input.manualCompactSupported
-        ? { supported: true }
+        ? {
+            supported: true,
+            ...(input.provisionalCompact ? { provisional: true } : {}),
+          }
         : { supported: false, reason: 'manual-compact-unavailable' },
     };
   }
