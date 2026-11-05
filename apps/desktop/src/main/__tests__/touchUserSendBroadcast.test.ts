@@ -44,9 +44,14 @@ const h = vi.hoisted(() => {
       const committed = error === undefined ? Promise.resolve(undefined) : Promise.reject(error);
       return Object.assign(committed, {
         returning: () => committed.then(() => {
+          // The production clear now proves the UPDATE matched via RETURNING.
+          // These tests model the resulting row through selectResults (the
+          // effective MAX/COALESCE values SQLite would return).
+          const preset = selectResults.shift();
+          if (preset) return preset.map((row) => ({ nativeId: null, ...row }));
           if (!route.row) return [];
           Object.assign(route.row, update);
-          return [{ ...route.row }];
+          return [{ nativeId: null, ...route.row }];
         }),
       });
     };

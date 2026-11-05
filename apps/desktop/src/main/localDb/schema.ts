@@ -767,6 +767,29 @@ export const orcaWorkers = sqliteTable(
 );
 
 /**
+ * Safe audit trail for explicit Orca dispatch context policies.
+ * Deliberately content-free: only actor/worker identity, policy, outcome and a
+ * short reason code. No message text, native ids or credentials.
+ */
+export const orcaContextEvents = sqliteTable(
+  'orca_context_events',
+  {
+    id: text('id').primaryKey(),
+    leadSessionId: text('lead_session_id').notNull(),
+    workerId: text('worker_id').notNull(),
+    workerSessionId: text('worker_session_id').notNull(),
+    policy: text('policy', { enum: ['clear', 'compact'] }).notNull(),
+    outcome: text('outcome', { enum: ['cleared', 'compacted', 'failed', 'refused'] }).notNull(),
+    reason: text('reason'),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => ({
+    idxLeadCreated: index('idx_orca_context_events_lead_created').on(t.leadSessionId, t.createdAt),
+    idxWorkerCreated: index('idx_orca_context_events_worker_created').on(t.workerId, t.createdAt),
+  }),
+);
+
+/**
  * 跨 renderer/main 创建 worker 的短租约。SQLite 写事务负责原子占用 label 与并发 slot；
  * 创建完成或失败后立即释放，崩溃遗留项由 expiresAt 回收。
  */

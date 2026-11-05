@@ -63,6 +63,9 @@ vi.mock('electron', () => ({
 vi.mock('../../../logger', () => ({
   createLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
 }));
+vi.mock('../../../security/trustedAppRenderer', () => ({
+  assertTrustedAppRendererEvent: vi.fn(),
+}));
 vi.mock('../../../logger.js', () => ({
   createLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
 }));
@@ -102,6 +105,7 @@ import {
   markLatestAgentHandoffConsumed,
   readPriorUserRoundCost,
   registerMessageIpc,
+  readClearedMessages,
   readMessagesList,
   updateMessageContent,
   captureNativeUserMessageLink,
@@ -202,7 +206,7 @@ describe('local-db:messages:list cursor', () => {
       const before = sqlite.prepare('SELECT * FROM messages').all();
       registerMessageIpc();
       const calls: Array<[string, ...unknown[]]> = [
-        ['list', { limit: 10 }], ['view', {}], ['view-intent', []],
+        ['list', { limit: 10 }], ['list-cleared', {}], ['view', {}], ['view-intent', []],
         ['work-details', { key: 'work-old', firstMessageId: 'old', lastMessageId: 'old' }, {}],
         ['around', 'old', { radius: 1 }], ['around-client-id', 'old', { radius: 1 }],
         ['estimatedSessionValue'], ['create', { clientId: 'new', role: 'user', content: 'changed' }],
@@ -214,6 +218,33 @@ describe('local-db:messages:list cursor', () => {
       }
       await expect(readMessagesList('s1', {})).rejects.toThrow('[NOT_FOUND]');
       expect(sqlite.prepare('SELECT * FROM messages').all()).toEqual(before);
+    } finally { sqlite.close(); }
+  });
+
+  it('keeps pre-clear rows readable through the explicit audit entry only', async () => {
+    const sqlite = createDb();
+    sqlite.prepare('INSERT INTO sessions (id, cleared_at) VALUES (?, ?)').run('s1', 100);
+    insertMessage(sqlite, { id: 'old', createdAt: 50, content: 'old sentinel' });
+    insertMessage(sqlite, { id: 'boundary', createdAt: 100, content: 'boundary sentinel' });
+    insertMessage(sqlite, { id: 'new', createdAt: 150, content: 'new task' });
+    sqlite.prepare(
+      'INSERT INTO messages (id, client_id, session_id, role, content, tool_use_id, agent_meta, created_at, rewind_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('rewound', 'rewound', 's1', 'assistant', JSON.stringify('rewound sentinel'), null, null, 60, 70);
+    try {
+      registerMessageIpc();
+      const visible = await readMessagesList('s1', {});
+      expect(visible.map((message) => message.id)).not.toContain('old');
+      expect(visible.map((message) => message.id)).toContain('new');
+      const audit = await readClearedMessages('s1', {});
+      expect(audit.clearedAt).toBe(100);
+      const ids = audit.messages.map((message) => message.id);
+      expect(ids).toContain('old');
+      expect(ids).toContain('boundary');
+      expect(ids).not.toContain('new');
+      expect(ids).not.toContain('rewound');
+      const handler = h.handlers.get('local-db:messages:list-cleared');
+      expect(handler).toBeDefined();
+      await expect(handler!({}, 's1', {})).resolves.toMatchObject({ clearedAt: 100 });
     } finally { sqlite.close(); }
   });
 
