@@ -6,7 +6,8 @@
  * 双栏布局与独立 resize/maximize。
  */
 
-import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import { Send } from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 
@@ -16,6 +17,8 @@ import { isSidebarWindow } from '@/lib/sidebarWindow';
 import { getDataOwnerGeneration, isDataOwnerGenerationCurrent } from '@/contexts/dataOwnerGeneration';
 import { CCAgentSessionView } from './CCAgentSessionView';
 import { CreateWorkerPopover } from './CreateWorkerPopover';
+import { Tip } from '@/components/ui/tooltip';
+import { WorkerDispatchDialog } from './WorkerDispatchDialog';
 import { WorkerListToolbar } from './RolePillDropdown';
 import { useOrcaWorkerSelection } from './hooks/useOrcaWorkerSelection';
 import { subscribeNewWorkerShortcut } from './lib/newWorkerShortcut';
@@ -96,6 +99,8 @@ export function OrcaWorkerPanel({
     onSelectionIntentCleared,
   });
   const lastAgentIslandPayloadRef = useRef<string | string[] | null>(null);
+  const [dispatchOpen, setDispatchOpen] = useState(false);
+  const dispatchWorker = selectedWorkerRecord ?? focusedWorker ?? null;
   const openEpoch = useRef(0);
   const openPending = useRef<number | null>(null);
   const pendingOwner = useRef(getDataOwnerGeneration());
@@ -195,6 +200,24 @@ export function OrcaWorkerPanel({
           onOpenSettings={isSidebarWindow() || deviceId !== null ? undefined : handleOpenSettings}
           onArchiveWorker={handleArchiveWorker}
           clearAttentionWhenVisible={viewVisible}
+          trailingActions={
+            // Local-only entry. A remote controller must let the remote Lead
+            // dispatch through its own MCP tool; this avoids a non-allowlisted
+            // device-link mutation and keeps the context policy capability
+            // negotiation on the host that actually owns the Worker.
+            deviceId === null && dispatchWorker ? (
+              <Tip text={t('orca.dispatch.open')} side="bottom" delay={250}>
+                <button
+                  type="button"
+                  aria-label={t('orca.dispatch.open')}
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+                  onClick={() => setDispatchOpen(true)}
+                >
+                  <Send size={13} />
+                </button>
+              </Tip>
+            ) : undefined
+          }
         />
       </div>
       <div className="chat-rail-compact min-h-0 flex-1">
@@ -225,6 +248,12 @@ export function OrcaWorkerPanel({
         deviceId={deviceId ?? undefined}
         sshRemote={sshRemote}
         remoteHostId={remoteHostId}
+      />
+      <WorkerDispatchDialog
+        open={dispatchOpen}
+        onClose={() => setDispatchOpen(false)}
+        leadSessionId={leadSessionId}
+        worker={dispatchWorker}
       />
     </div>
   );
