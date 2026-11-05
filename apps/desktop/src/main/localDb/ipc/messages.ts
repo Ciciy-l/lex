@@ -384,6 +384,72 @@ export async function readMessagesList(sessionId: unknown, opts: unknown, skipIm
     return outline ? listed.map(withHistoryArtifacts) : listed;
 }
 
+/**
+ * Explicit audit entry for history hidden by /clear or an Orca clear policy.
+ * Ordinary messages:list intentionally filters `createdAt > clearedAt`; this
+ * read returns the retained pre-clear rows so users/tests can prove the old
+ * transcript and worktree context were not deleted, while native context and
+ * future injections stay cut at `clearedAt`.
+ *
+ * Local-only: the device-link allowlist must never expose this channel.
+ */
+export async function readClearedMessages(
+  sessionId: unknown,
+  opts: unknown,
+): Promise<{ clearedAt: number | null; messages: Message[]; hasMore: boolean }> {
+  const sid = requireString(sessionId, 'sessionId');
+  const assertCurrent = await captureMessageSessionAccess(sid);
+  assertCurrent();
+  const [sessionRow] = await getDbClient()
+    .drizzle.select({ clearedAt: sessions.clearedAt })
+    .from(sessions)
+    .where(eq(sessions.id, sid))
+    .limit(1);
+  const clearedAtMs = sessionRow?.clearedAt ?? null;
+  if (clearedAtMs === null) return { clearedAt: null, messages: [], hasMore: false };
+  const limit = clampLimit((opts as { limit?: number } | undefined)?.limit);
+  const before = (opts as { before?: string } | undefined)?.before;
+  const conds: (SQL<unknown> | undefined)[] = [
+    eq(messages.sessionId, sid),
+    isNull(messages.rewindAt),
+    lte(messages.createdAt, clearedAtMs),
+  ];
+  if (typeof before === 'string' && before) {
+    const [beforeRow] = await getDbClient()
+      .drizzle.select({ createdAt: messages.createdAt, rowid: messageRowid })
+      .from(messages)
+      .where(and(eq(messages.id, before), eq(messages.sessionId, sid)))
+      .limit(1);
+    if (beforeRow) {
+      conds.push(
+        or(
+          lt(messages.createdAt, beforeRow.createdAt),
+          and(eq(messages.createdAt, beforeRow.createdAt), lt(messageRowid, beforeRow.rowid)),
+        ),
+      );
+    }
+  }
+  const rows = await getDbClient()
+    .drizzle.select({
+      ...getMessageSelectFields(),
+      rowid: messageRowid,
+    })
+    .from(messages)
+    .where(and(...conds))
+    .orderBy(desc(messages.createdAt), desc(messageRowid))
+    .limit(limit + 1);
+  assertCurrent();
+  const hasMore = rows.length > limit;
+  const pageRows = rows.slice(0, limit);
+  const restored = await restoreTaskImageRows(getDbClient(), pageRows);
+  assertCurrent();
+  return {
+    clearedAt: clearedAtMs,
+    messages: await hydrateLegacyUserTurnCosts(restored.map(messageToCamelWithRowid)),
+    hasMore,
+  };
+}
+
 export function registerMessageIpc(
   readRunning: (sessionId: string) => boolean = () => false,
   readLive: (sessionId: string) => Message[] = () => [],
@@ -391,6 +457,16 @@ export function registerMessageIpc(
   // readMessagesList also serves internal callers and owns its pre-import/delivery checks.
   ipcMain.handle('local-db:messages:list', (_e, sessionId: unknown, opts: unknown) =>
     readMessagesList(sessionId, opts));
+
+  ipcMain.handle('local-db:messages:list-cleared', (event, sessionId: unknown, opts: unknown) => {
+    // Deliberately local-only: cleared history can contain secrets and must not
+    // cross a controller/controlled wire boundary through device-link.
+    if (isDeviceLinkInvoke()) {
+      throwIpcError('PRECONDITION_FAILED', 'cleared history is local-only');
+    }
+    assertTrustedAppRendererEvent(event as Parameters<typeof assertTrustedAppRendererEvent>[0]);
+    return readClearedMessages(sessionId, opts);
+  });
 
   const historyView = createHistoryViewReader({
     list: readMessagesList,

@@ -60,6 +60,8 @@ export {
 } from './switch_focus.js';
 export {
   registerSendToWorkerTool,
+  type OrcaContextOutcome,
+  type OrcaContextPolicy,
   type OrcaMessageDelivery,
   type SendToWorkerDeps,
   type SteerFallbackReason,

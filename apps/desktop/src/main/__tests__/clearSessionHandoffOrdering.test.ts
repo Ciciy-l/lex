@@ -1,17 +1,9 @@
 /**
- * `/clear` handler 里三步的**先后契约**:立墓碑 → cleared_at 落库 → 封 clear 边界。
+ * `/clear` 事务的先后契约:普通路径先立墓碑再落 cleared_at,最后在 finally
+ * 封 clear 边界;native 路径先完成 journal tombstone,再发布队列投影。
  *
- * 纪元的作用是作废「在 clear 之前取过纪元、之后才写回」的交接。它一旦先于落库推进,
- * 那个 await 窗口里启动的引擎切换 / 消息删除就会同时拿到「clear 之后的纪元」和
- * 「clear 之前的 DB 历史」——校验通过,基于已清空历史算出的交接照样盖掉墓碑,下次发送
- * 把用户刚显式清空的上下文重新灌回模型(#738 review P1)。
- *
- * 墓碑必须留在最前:窗口内到达的 send 走 peek,墓碑是同步生效且不回落 DB 的那一层。
- * 而窗口内**写回**的那批(纪元还是 clear 前的值、校验会通过)由 sealClearBoundary 的
- * 重立墓碑兜住——它不只是推进纪元,顺序细节见该方法注释。
- *
- * register.ts 是超大 handler 注册文件、没有可注入的测试入口,repo 里既有的做法就是对
- * 源码断言(见 deviceLinkAutoTitleWiring.test.ts / interruptedContinuationContract.test.ts)。
+ * 事务体由 INPUT_CLEAR_SESSION 与 Orca context_policy=clear 共用
+ * hostSessionClearService.ts;register.ts 只保留 receipts/参数校验/错误映射。
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -22,36 +14,65 @@ const registerSource = readFileSync(
   resolve(__dirname, '..', 'maker-ipc', 'register.ts'),
   'utf8',
 ).replace(/\r\n?/g, '\n');
+const serviceSource = readFileSync(
+  resolve(__dirname, '..', 'maker-ipc', 'hostSessionClearService.ts'),
+  'utf8',
+).replace(/\r\n?/g, '\n');
 
 describe('/clear:墓碑 → cleared_at 落库 → 封 clear 边界', () => {
   const handlerStart = registerSource.indexOf('MAKER_INVOKE.INPUT_CLEAR_SESSION');
   const handlerEnd = registerSource.indexOf('MAKER_INVOKE.ABORT_SESSION', handlerStart);
   const handler = registerSource.slice(handlerStart, handlerEnd);
 
-  it('三步都在同一个 handler 内', () => {
+  it('the IPC handler delegates to the shared host clear transaction', () => {
     expect(handlerStart).toBeGreaterThan(-1);
     expect(handlerEnd).toBeGreaterThan(handlerStart);
-    expect(handler).toContain('agentHandoffPending.invalidate(sid)');
-    expect(handler).toContain('await clearSessionContextInDb(sid, clearBoundaryMs)');
-    expect(handler).toContain('agentHandoffPending.sealClearBoundary(sid)');
+    expect(handler).toContain('const clearService = hostSessionClearHolder');
+    expect(handler).toContain('await clearService.clearSession(sid, {');
+    expect(handler).toContain("receipt.status = 'failed'");
+    expect(handler).toContain("receipt.applied = true");
   });
 
-  it('顺序不可颠倒:纪元推进排在 cleared_at 落库之后,墓碑排在最前', () => {
-    const tombstoneAt = handler.indexOf('agentHandoffPending.invalidate(sid)');
-    const persistAt = handler.indexOf('await clearSessionContextInDb(sid, clearBoundaryMs)');
-    const epochAt = handler.indexOf('agentHandoffPending.sealClearBoundary(sid)');
-    expect(tombstoneAt).toBeLessThan(persistAt);
-    expect(persistAt).toBeLessThan(epochAt);
+  it('ordinary clear places the tombstone before the durable boundary', () => {
+    const projectionAt = serviceSource.indexOf(
+      'const projection = deps.clearInputProjection(sessionId, clearBoundary);',
+    );
+    const ordinaryEnd = serviceSource.indexOf('nativeClear.executor', projectionAt);
+    const ordinary = serviceSource.slice(projectionAt, ordinaryEnd);
+    expect(projectionAt).toBeGreaterThan(-1);
+    const tombstoneAt = ordinary.indexOf('deps.invalidateAgentHandoff(sessionId)');
+    const persistAt = ordinary.indexOf(
+      'await deps.clearSessionContextInDb(sessionId, clearBoundaryMs)',
+    );
+    expect(tombstoneAt).toBeGreaterThan(-1);
+    expect(persistAt).toBeGreaterThan(tombstoneAt);
+    const finallyAt = serviceSource.indexOf('} finally {', projectionAt);
+    const sealAt = serviceSource.indexOf(
+      'deps.sealAgentHandoffClearBoundary(sessionId)',
+      finallyAt,
+    );
+    expect(finallyAt).toBeGreaterThan(persistAt);
+    expect(sealAt).toBeGreaterThan(finallyAt);
   });
 
-  it('普通 clear 保留原失败语义，native clear 报错仍在 finally 封住纪元', () => {
-    const persistAt = handler.indexOf('await clearSessionContextInDb(sid, clearBoundaryMs)');
-    const epochAt = handler.indexOf('agentHandoffPending.sealClearBoundary(sid)');
-    const between = handler.slice(persistAt, epochAt);
-    expect(between).toContain('} catch (err) {');
-    expect(between).toContain("if (receipt) receipt.status = 'failed'");
-    expect(between).toContain('throw error');
-    expect(between).toContain('finally {');
-    expect(handler).toContain('withNativeHistoryClear(nativeClear, at, async guard =>');
+  it('ordinary failures stay best-effort; native failures wait for tombstone before projection', () => {
+    const projectionAt = serviceSource.indexOf(
+      'const projection = deps.clearInputProjection(sessionId, clearBoundary);',
+    );
+    const ordinaryEnd = serviceSource.indexOf('nativeClear.executor', projectionAt);
+    const ordinary = serviceSource.slice(projectionAt, ordinaryEnd);
+    expect(ordinary).toContain('deps.logError(');
+    expect(ordinary).not.toContain('HostSessionClearError(');
+    expect(serviceSource).toContain('await deps.withNativeHistoryClear(nativeClear, at, async (guard) => {');
+    expect(serviceSource).toContain('if (committed) {');
+    expect(serviceSource).toContain("throw new HostSessionClearError(");
+    // The native projection runs after the journal transaction resolves, not
+    // inside its commit callback.
+    const nativeAt = serviceSource.indexOf('await deps.withNativeHistoryClear(nativeClear, at, async (guard) => {');
+    const nativeProjectionAt = serviceSource.indexOf('const projection = finishProjection(boundaryMs);', nativeAt);
+    expect(nativeProjectionAt).toBeGreaterThan(nativeAt);
+    expect(serviceSource.slice(nativeAt, nativeProjectionAt)).not.toContain(
+      'clearInputProjection(sessionId',
+    );
   });
 });

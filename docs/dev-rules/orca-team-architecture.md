@@ -111,7 +111,7 @@ PR #101 之后，Orca 的 main 侧业务由独立 service 承接，`register.ts`
 4. `create_workers`（批量创建；顺序执行、hard limit 后停止并返回逐项汇总）
 5. `list_workers`
 6. `switch_focus`
-7. `send_to_worker`
+7. `send_to_worker`（可选 `context_policy: keep|clear|compact`，缺省 keep）
 8. `interrupt_worker`（原子预留下一条输入并优雅停止当前 turn）
 9. `get_worker_queue_status`（工作态与完整队列）
 10. `update_queued_message`（排队消息控制）
@@ -311,6 +311,77 @@ Git worktree，不改变供应商、模型与 Worker 创建权限偏好。
 1a. **空闲 live 直发前必须先做换窗预检（状态：不变量）**<br>
 目标空闲且已有 live session 时，dispatcher 仍走 `session.send()`，不经过 `sendToSessionInternal()`。这条直发必须先调用与用户发送相同的 `prepareUnhealthySession`：满窗或当前进程内 `needsRollover` 锁存时关闭旧原生窗口，再 `getLiveSession`。不能把 inter-agent 消息打进应被丢弃的旧窗口。prepare → 重新取 live → send 整段必须复用 `sendToSessionInternal` 的 per-session 锁；锁已被占用时先排队，不要把 in-flight prepare 当成健康状态继续直发。没有 live 后释放锁再走 `sendToSessionInternal`，避免自己把自己排队。实现指针：`orcaInterAgentDispatcher.ts` 的 live 分支，以及 `register.ts` 注入的 `prepareUnhealthySession` / `withSendToSessionLock`。
 
+1c. **显式上下文策略必须在真实完成边界后才允许派发（状态：不变量）**<br>
+   `send_to_worker` 新增可选 `context_policy: 'keep' | 'clear' | 'compact'`，缺省 `keep`；
+   旧调用、旧 peer 和省略字段的请求保持原有 keep 行为。`delivery='steer'` 与
+   clear/compact 互斥（`INVALID_ARGS`），失败时零新任务、零上下文变化。clear/compact
+   要求 worker 空闲、当前无运行 turn 且输入队列为空；busy/queued 返回 `BUSY`，不得把
+   显式策略静默降级成 keep 或排队。能力必须按 live handle 判定并随 `list_workers` /
+   `WORKER_CONTEXT_STATUS` 可观察：
+   - `clear`：**不按 agent 能力限制**。Desktop 的 `/clear` 是宿主命令，CC/Codex/Pi/OMP
+     四引擎统一走 `INPUT_CLEAR_SESSION`，由宿主完成 native 代际切断；Orca 的派单前 clear
+     复用同一个 `hostSessionClearService` 事务（native journal/retirement、DB
+     `clearedAt`/`sdkSessionId` 提交、coordinator 队列重置、handoff 墓碑、goal 清理），
+     不得把字符串 `/clear` 当 worker 任务正文发送后按 accepted 认定已清空。所有本地
+     非 SSH 会话可用；Orca 路径使用 `strictPersistence`，DB 失败即零派发；成功后以
+     `preserveWorkspace` 语义关闭旧 runtime（不得触发 onClose 的 worktree auto-stash/删除），
+     再按 Worker 专用 resume 路径重建新一代会话。旧消息仍保留在 DB，可通过仅本机可读的
+     `local-db:messages:list-cleared` 审计入口取回；`clearedAt` 之后的普通投影不再包含它们。
+   - `compact`：只在能证明 native 完成边界时可用。Codex 走
+     `Session.compactSession`（accepted 之后等待真实 completed + terminal）；Pi 等待
+     exclusive RPC 响应并观察 `compact_boundary`。Claude Code 没有 `manualCompact`
+     完成边界、OMP 的 `{}` RPC 结果不足以证明摘要完成、native terminal presentation
+     无法由宿主等待，一律显式 `CONTEXT_POLICY_UNSUPPORTED`，不得用 keep、空结果或单次
+     turn done 冒充完成。超时、abort、owner 变化、runtime 替换或准备失败均零派发。
+   - 上下文准备在 dispatcher 与真实发送共用的 per-session send lock 内、`prepareUnhealthySession`
+     之后、重新读取 live session 之前执行；prepare 抛错时不得进入 queued 或
+     `sendToSessionInternal` 兜底。clear 期间本地内容输入同样被密封，避免队列重置窗口
+     丢掉用户刚提交的任务。准备成功但随后 vendor 派发失败时，回执必须如实带
+     `context_outcome`（`applied: true` 表示 clear/compact 已不可逆发生），不能报告成
+     普通发送失败。
+   - 上下文操作使用独立的 host fence（`orcaContextOperationFence`），不复用可超时
+     bail 的普通 send lock。fence 在 clear/compact 开始前立起，直到真实完成、取消或
+     确认旧 runtime 退出；期间 direct send/steer 明确拒绝，用户直接输入在 accepted
+     前被同一 fence 拒绝。已有活动 fence 时第二次准入必须抛错且不得改写旧 token
+     （register 内联与模块实现同结构）；prepare 捕获后返回 BUSY，不向调用方抛出。
+   - fence 活跃期间的 Orca queue-only 派发与 interrupt 预留必须在 accepted 回调注册、
+     enqueue/reserve 与任何快照写入之前失败。dispatcher 除入口检查外，还必须在
+     `buildCreateOpts`、sender 解析、queue restore 等**所有 await 完成之后**做最终
+     同步复核；复核到回调注册与 enqueue/reserve 之间不得再有 await。异步恢复/准备
+     由 `prepareQueuedMessageEnqueue` / `prepareQueuedMessageReserve` 承担，真正
+     enqueue/reserve 保持同步，因此 fence 在任一时刻激活都不会漏放。失败返回可重试的
+     `SESSION_RUNNING`（提示 completion 后重试同一内容），绝不返回
+     `ok:true/mode:'queued'`。因此 clear/compact 不携带、重放或跨代保留任何排队
+     消息；fence 释放后，调用方重试同一内容正常入队/派发恰好一次，不残留 deferred、
+     marker 或跨代快照。操作自己的派发通过 prepare 产出的 operation token 放行。
+   - clear 投影对持久快照的写/删绑定操作开始时捕获的 owner DB 与 app-session
+     generation。owner/generation 变化后不得对替换 owner 的 SQLite 执行
+     insert/update/delete，也不得覆盖/删除其原有快照；clear 提交后、close await
+     之后以及返回派发前复核，变化时返回 `ok:false + applied:'cleared'`，不得向
+     新 owner 注入队列或报成功。普通 /clear（无 Orca owner options）与正常队列
+     路径保持原行为。
+   - clear 的 strict 路径必须在真实 DB update 返回后确认 sdkSessionId=null 与
+     clearedAt 提交；retired/deleted/CAS 零行更新是失败，不是成功。native journal
+     tombstone 失败但 DB 已提交时，不发布队列投影，回执标 failed+applied，Orca
+     `context_outcome` 保留 applied=true；旧 runtime 未确认退出时 fence 保持。
+   - compact 超时不是完成：保留 fence，等 native promise/会话关闭后只释放该次
+     operation 的 token；晚回调不能释放新 operation。Pi 的 nothing-to-compact
+     `noop` 直接作为完成，不等 boundary；只有 trigger=manual 的 compact_boundary
+     才能作为本次 manual 完成，unrelated auto boundary 无效。
+   - 审计事件写入必须使用操作开始时捕获的 owner DB/generation；owner 切换后跳过
+     写入，不得把旧 owner 的 worker 标识写到当前全局 DB。clear 提交后、close
+     await 之后以及返回派发前都必须再次 assertCurrent + owner.assertCurrent；
+     owner/generation 变化时返回 `ok:false + applied:'cleared'`，不得向新 owner
+     注入队列或报成功。
+     UI 审计历史自动分页到安全上限，并支持展开完整原文（不做 600 字静默截断）；
+     radio 组使用标准 Arrow/Home/End roving 语义。
+   - `orca_context_events` 只持久化 actor/worker/session、policy、outcome 和短 reason
+     码，不写消息正文、native id 或凭证。UI 的显式策略入口只在本机可用；
+     `maker:worker:send` / `maker:worker:context-status` / cleared-history 审计均不进
+     device-link allowlist，旧 peer 会拒绝未知通道而不是静默丢字段。
+   实现指针：`send_to_worker.ts`、`orcaTeamService.ts`、`orcaInterAgentDispatcher.ts`、
+   `hostSessionClearService.ts`、`register.ts`、`localDb/orcaContextStore.ts`。
+
 2. **accepted 才能产生运行副作用（状态：不变量）**<br>
    只有底层 send accepted 后，才能把 worker 标成 `running`、建立 auto-bridge pending 并广播 UI；dispatch 失败必须 rollback 到 accepted 前状态，且 rollback 不得覆盖已有终态。实现指针：`orcaTeamService.ts` 的 `dispatchResolvedWorker` 与 `rollbackAcceptedDispatchState`。
 
@@ -385,7 +456,8 @@ Worker turn 被 vendor 报终止型 error，但 interrupted-turn auto-resume 仍
 - Auto-resume × auto-bridge：pending/deferred 的 vendor 终态不得 bridge / 置 `error`；失败轮随后的 unclaimed `done` 同样不得收口（含用户接手 force-flush 之后、无 persist-id 的零输出尾巴）；无配对 `done` 的旧 tail 不得吞掉后续更大 generation 的产品 `done`；surface/exhaust 恰好一次收口；成功续跑保持 `running` 且 pending 仍在；手动 stop 仍不 bridge。见 `autoResumeBookkeeping.test.ts` 的 `shouldSkipOrcaWorkerTerminal` 与 `interruptedContinuationContract.test.ts`。
 - 空闲 live 直发：`orcaInterAgentDispatcher` 在 `session.send()` 前必须先 `prepareUnhealthySession`，再重新 `getLiveSession`；prepare 关闭旧 handle 后不得继续向旧对象 send。并发直发必须串行化到同一把 per-session 锁。
 - Worker 创建权限偏好：覆盖无保存偏好时默认 `bypassPermissions`、已保存的 `auto` / `bypassPermissions` 继续优先、MCP 显式 `auto → bypassPermissions` 必须先经用户确认且取消／超时零副作用、复用 Team 时省略不重置／显式才更新、首个与后续 Worker 都读取共享创建偏好、已有 Worker 权限不反写、renderer localStorage 启动同步与 tool 写回，以及旧 device-link 被控端被阻止开启协同并提示升级。
-- MCP 工具：`cindy_orca` 20 工具（17 team + 3 只读诊断）的 role gate、ctx 缺失、worker/main 误调用、soft/hard limit、duplicate label、budget model API mode gate；`create_workers` 另覆盖默认 hard limit、配置 hard=3、部分成功、连续失败与 hard-limit 后不再调用 host；诊断工具的纯只读语义（无 active team 时返回空 workspace、不建 team）；排队消息控制 6 工具的归属校验（跨 lead 拒绝）、完整 consuming 投影、非 lead 条目拒绝（`NOT_LEAD_MESSAGE`）、自身队列非协同条目拒绝（`NOT_ORCA_MESSAGE`）、steering 拒绝（`MESSAGE_CONSUMING`）、撤回结清 accepted 暂存、合并的连续性、冲突零修改与移除回调结清，以及转插话的原因回执与排序落点；`send_to_worker` / `send_to_lead` 的 `delivery` 缺省不透传、显式插话与各类 fallback 原因；`interrupt_worker` 另覆盖队首预留、暂停态、graceful-stop 全部 outcome、auto-bridge 抑制和 done 互斥。
+- MCP 工具：`cindy_orca` 20 工具（17 team + 3 只读诊断）的 role gate、ctx 缺失、worker/main 误调用、soft/hard limit、duplicate label、budget model API mode gate；`create_workers` 另覆盖默认 hard limit、配置 hard=3、部分成功、连续失败与 hard-limit 后不再调用 host；诊断工具的纯只读语义（无 active team 时返回空 workspace、不建 team）；排队消息控制 6 工具的归属校验（跨 lead 拒绝）、完整 consuming 投影、非 lead 条目拒绝（`NOT_LEAD_MESSAGE`）、自身队列非协同条目拒绝（`NOT_ORCA_MESSAGE`）、steering 拒绝（`MESSAGE_CONSUMING`）、撤回结清 accepted 暂存、合并的连续性、冲突零修改与移除回调结清，以及转插话的原因回执与排序落点；`send_to_worker` / `send_to_lead` 的 `delivery` 缺省不透传、显式插话与各类 fallback 原因；`send_to_worker` 的 `context_policy` 缺省不透传、显式策略结果/拒绝回执与 steer 互斥；`interrupt_worker` 另覆盖队首预留、暂停态、graceful-stop 全部 outcome、auto-bridge 抑制和 done 互斥。
+- 上下文策略专项：服务层 clear/compact 能力探测、busy/queued 零派发、clear 成功但派发失败的 `context_outcome`、compact 超时/失败零派发；dispatcher 的 prepare 在 send lock 内先于 vendor send、prepare 抛错不排队/不兜底、requireIdle 的 SESSION_RUNNING 竞态 fail closed；clear 服务与 `/clear` 共享事务顺序、strict/non-strict DB 失败、native journal 失败仍封 gate；`orca_context_events` 只写安全字段；UI 的能力禁用原因、策略提交、clear 后部分失败文案和本机审计读取；device-link 三个新通道保持非 allowlist（旧 peer fail closed）。
 - Codex MCP context：`CodexMcpThreadContextStore` 覆盖按 threadId 查 context、unknown / missing threadId fail-closed、unregister 后清理、`vendorOptions` 引用保持；`codexHttpBridge` 覆盖从 JSON-RPC `params._meta.threadId` 注入真实 session context。
 - Host 归属校验：`send_to_worker`、`interrupt_worker`、队列控制、`idle_worker`、`archive_worker` 经共享 `resolveWorkerRef`（同时接受 worker_id / session_id 两种 id）必须以 caller 自身 Lead 身份校验，拒绝跨 workflow worker id 与 ctx 缺失；即使模型传错 id 或换用另一种 id，也不能越权操作。
 - UI route：Orca worker 不出现在 sidebar，Lead 自动进 split route，worker deep link 解析到 Lead split route；已有测试守住“不用 fork parentSessionId 或标题推断 Orca mapping”，见 `apps/desktop/src/renderer/__tests__/orcaWorkflowRoute.test.ts` 的 `does not use fork parentSessionId or title-linked worker lookup for Orca mapping`。

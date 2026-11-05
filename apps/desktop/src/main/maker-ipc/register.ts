@@ -419,6 +419,10 @@ import {
   setWorkerFocus,
   updateWorkerStatus,
 } from '../localDb/orcaTeamStore.js';
+import {
+  listOrcaContextEvents,
+  recordOrcaContextEvent,
+} from '../localDb/orcaContextStore.js';
 import { messages, orcaTeams, orcaWorkers, orcaWorkerCreationReservations, sessions } from '../localDb/schema.js';
 
 
@@ -789,13 +793,29 @@ import {
   type ListWorkerQueuedMessagesResult,
   type MergeWorkerQueuedMessagesResult,
   type MoveWorkerQueuedMessageResult,
+  type OrcaContextAuditEvent,
+  type OrcaContextPreparationResult,
   type OrcaTeamService,
   type OrcaWorkerEffort,
+  type OrcaWorkerLinkSnapshot,
+  type OrcaWorkerRecordSnapshot,
   type SendToWorkerResult,
   type SteerWorkerQueuedMessageResult,
   type WorkerQueuedMessageControlResult,
   type WorkerTerminalTurnCapture,
 } from './orcaTeamService.js';
+import {
+  isOrcaContextPolicy,
+  type OrcaContextPolicy,
+  type OrcaWorkerContextSupport,
+} from '../../shared/orcaContextPolicy.js';
+import {
+  createHostSessionClearService,
+  type HostSessionClearService,
+} from './hostSessionClearService.js';
+import { computeOrcaWorkerContextSupport } from './orcaContextCapability.js';
+import { activeOrcaContextOperation } from './orcaContextOperationFence.js';
+import type { OrcaContextOwnerScope } from './orcaContextOwner.js';
 import {
   createOrcaWorkerCreationService,
   normalizeOrcaWorkerLabel,
@@ -1064,7 +1084,6 @@ import {
 } from './sessionTurnActivityTracker.js';
 import { SilentStopTurnLeaseGate, SessionTurnLeaseTracker } from './sessionTurnLease.js';
 import { ProductTurnUsageTargetTracker, ProductTurnWallClockTracker } from './turnWallClock.js';
-import { resolveClearSessionBoundary } from './clearSessionBoundary.js';
 import {
   assertAgentCommandListIpcCaller,
   toAgentCommandListFailure,
@@ -2111,6 +2130,7 @@ interface OrcaCollabService {
     targetSessionId: string;
     message: string;
     delivery?: 'queue' | 'steer';
+    contextPolicy?: OrcaContextPolicy;
   }) => Promise<SendToWorkerResult>;
   interruptWorker: (params: {
     callerLeadSessionId: string;
@@ -3250,6 +3270,33 @@ async function syncLibraryReadonlyExtraDir(
 
 let agentInputCoordinatorHolder: AgentInputCoordinator | null = null;
 let nativeInputBindingDepsHolder: Omit<NativeInputBindingDeps, 'isCurrent'> | null = null;
+let hostSessionClearHolder: HostSessionClearService | null = null;
+
+/** Native compaction can legitimately take minutes; never leave dispatch waiting forever. */
+const ORCA_CONTEXT_COMPACT_TIMEOUT_MS = 10 * 60_000;
+/** Pi may publish its compact_boundary just after the RPC response. */
+const ORCA_CONTEXT_COMPACT_BOUNDARY_GRACE_MS = 15_000;
+
+class ContextOperationTimeoutError extends Error {
+  constructor(operation: string) {
+    super(`${operation} timed out`);
+    this.name = 'ContextOperationTimeoutError';
+  }
+}
+
+function withContextTimeout<T>(promise: Promise<T>, ms: number, operation: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new ContextOperationTimeoutError(operation)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 let nativeRuntimeBindingDepsHolder: Omit<NativeRuntimeBindingDeps, 'isCurrent'> | null = null;
 let nativeStopBindingDepsHolder: Omit<NativeStopBindingDeps, 'isCurrent'> | null = null;
 let contextOverflowRolloverHolder: ReturnType<typeof createContextOverflowRollover> | null = null;
@@ -10737,20 +10784,23 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     prepareUnhealthySession: (sessionId) =>
       contextOverflowRolloverHolder?.prepareUnhealthySession(sessionId) ?? Promise.resolve(false),
     buildCreateOptsForQueuedSession,
-    enqueueQueuedMessage: (sessionId, item) => {
+    prepareQueuedMessageEnqueue: async (sessionId) => {
       // 先 await 恢复再 enqueue:确保恢复的排队 prompt 在新消息之前,且恢复后
       // 队列处于 paused 态不会被新消息的 getDrainableHead 立刻 drain。
-      void (async () => {
-        await inputCoordinator.ensureQueueRestored(sessionId).catch(() => undefined);
-        inputCoordinator.enqueue(sessionId, item);
-      })();
+      // 这里不得入队:dispatcher 在等待结束后做最终 fence 复核,然后同步入队。
+      await inputCoordinator.ensureQueueRestored(sessionId).catch(() => undefined);
     },
-    reserveNextQueuedMessage: async (sessionId, item, onReserved, beforeReserve) => {
+    enqueueQueuedMessage: (sessionId, item) => {
+      inputCoordinator.enqueue(sessionId, item);
+    },
+    prepareQueuedMessageReserve: async (sessionId, beforeReserve) => {
       await inputCoordinator.ensureQueueRestored(sessionId);
       if (!inputCoordinator.isQueueRestored(sessionId)) {
         throw new Error(`queue restore incomplete for ${sessionId}`);
       }
       await beforeReserve?.();
+    },
+    reserveNextQueuedMessage: async (sessionId, item, onReserved) => {
       return inputCoordinator.reserveNextInput(sessionId, item, { onReserved }).reserved;
     },
     sendToSessionInternal,
@@ -11122,7 +11172,98 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   ipcMain.handle(MAKER_INVOKE.WORKER_LIST, async (_e, leadSessionId: unknown) => {
     if (typeof leadSessionId !== 'string')
       throwIpcError('INVALID_PARAMS', 'leadSessionId required');
-    return listWorkersByLead(leadSessionId);
+    const workers = await listWorkersByLead(leadSessionId);
+    // Capability travels with the list so remote mirrors can disable the
+    // explicit policies instead of dropping them. Unknown/old hosts omit it and
+    // the renderer treats absence as unsupported.
+    return Promise.all(
+      workers.map(async (worker) => {
+        let contextSupport: OrcaWorkerContextSupport;
+        try {
+          contextSupport = await getOrcaWorkerContextPolicySupport(worker);
+        } catch {
+          contextSupport = {
+            clear: { supported: false, reason: 'host-version' },
+            compact: { supported: false, reason: 'host-version' },
+          };
+        }
+        let hasClearedHistory = false;
+        try {
+          const [row] = await getDbClient()
+            .drizzle.select({ clearedAt: sessions.clearedAt })
+            .from(sessions)
+            .where(eq(sessions.id, worker.sessionId))
+            .limit(1);
+          hasClearedHistory = row?.clearedAt !== null && row?.clearedAt !== undefined;
+        } catch {
+          hasClearedHistory = false;
+        }
+        return { ...worker, contextSupport, hasClearedHistory };
+      }),
+    );
+  });
+
+  ipcMain.handle(MAKER_INVOKE.WORKER_CONTEXT_STATUS, async (event, body: unknown) => {
+    const b = body as Record<string, unknown> | null | undefined;
+    if (!b || typeof b.leadSessionId !== 'string' || typeof b.workerId !== 'string') {
+      throwIpcError('INVALID_PARAMS', 'leadSessionId and workerId required');
+    }
+    if (!isDeviceLinkInvoke()) assertTrustedAppRendererEvent(event as Parameters<typeof assertTrustedAppRendererEvent>[0]);
+    const workers = await listWorkersByLead(b.leadSessionId);
+    const worker = workers.find((item) => item.id === b.workerId);
+    if (!worker) throwIpcError('WORKER_NOT_FOUND', 'worker not found');
+    const contextSupport = await getOrcaWorkerContextPolicySupport(worker).catch(
+      (): OrcaWorkerContextSupport => ({
+        clear: { supported: false, reason: 'host-version' },
+        compact: { supported: false, reason: 'host-version' },
+      }),
+    );
+    const [row] = await getDbClient()
+      .drizzle.select({ clearedAt: sessions.clearedAt })
+      .from(sessions)
+      .where(eq(sessions.id, worker.sessionId))
+      .limit(1);
+    const events = await listOrcaContextEvents(worker.id, 5).catch(() => []);
+    return {
+      ok: true,
+      workerId: worker.id,
+      workerSessionId: worker.sessionId,
+      contextSupport,
+      clearedAt: row?.clearedAt ?? null,
+      historyRetained: row?.clearedAt !== null && row?.clearedAt !== undefined,
+      lastContextEvent: events[0] ?? null,
+    };
+  });
+
+  ipcMain.handle(MAKER_INVOKE.WORKER_SEND, async (event, body: unknown) => {
+    const b = body as Record<string, unknown> | null | undefined;
+    if (!b || typeof b.leadSessionId !== 'string' || typeof b.workerId !== 'string') {
+      throwIpcError('INVALID_PARAMS', 'leadSessionId and workerId required');
+    }
+    if (typeof b.message !== 'string' || b.message.length === 0) {
+      throwIpcError('INVALID_PARAMS', 'message required');
+    }
+    const contextPolicy =
+      b.contextPolicy === undefined ? 'keep' : b.contextPolicy;
+    if (!isOrcaContextPolicy(contextPolicy)) {
+      throwIpcError('INVALID_PARAMS', 'contextPolicy must be keep, clear or compact');
+    }
+    // This channel is intentionally local-only. A remote controller must first
+    // negotiate host capability; an old peer rejects the unknown channel instead
+    // of silently dropping the explicit policy.
+    if (isDeviceLinkInvoke()) {
+      throwIpcError('PRECONDITION_FAILED', 'worker dispatch is not available through device-link');
+    }
+    assertTrustedAppRendererEvent(event as Parameters<typeof assertTrustedAppRendererEvent>[0]);
+    const workers = await listWorkersByLead(b.leadSessionId);
+    const worker = workers.find((item) => item.id === b.workerId);
+    if (!worker) throwIpcError('WORKER_NOT_FOUND', 'worker not found');
+    return orcaTeamService.sendToWorker({
+      callerLeadSessionId: b.leadSessionId,
+      targetSessionId: worker.id,
+      message: b.message,
+      contextPolicy,
+    });
   });
 
   ipcMain.handle(MAKER_INVOKE.WORKER_SWITCH_FOCUS, async (_e, body: unknown) => {
@@ -11190,6 +11331,396 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       inputCoordinator.hasQueuedItemWhere(sessionId, () => true, { includeRecovery: true })
     );
   };
+
+  async function hasOrcaWorkerPendingInput(sessionId: string): Promise<boolean> {
+    await inputCoordinator.ensureQueueRestored(sessionId).catch(() => undefined);
+    // A failed restore is itself a pending condition: never clear/compact while
+    // the durable follow-up snapshot is still unavailable.
+    if (!inputCoordinator.isQueueRestored(sessionId)) return true;
+    return (
+      inputCoordinator.hasPendingQueuedWork(sessionId) ||
+      inputCoordinator.hasQueuedItemWhere(sessionId, () => true, { includeRecovery: true })
+    );
+  }
+
+  async function readOrcaWorkerRemoteHostId(sessionId: string): Promise<string | null> {
+    const [row] = await getDbClient()
+      .drizzle.select({ remoteHostId: sessions.remoteHostId })
+      .from(sessions)
+      .where(eq(sessions.id, sessionId))
+      .limit(1);
+    return row?.remoteHostId ?? null;
+  }
+
+  /**
+   * Capability is derived from the live handle, not just the agent's static
+   * declaration: OMP's native presentation has no host-awaitable compact, and
+   * OMP's `{}` RPC result is not proof of a native summary boundary. Claude
+   * Code has no manualCompact capability at all. Missing host capability is a
+   * refusal, never a silent keep.
+   */
+  async function getOrcaWorkerContextPolicySupport(
+    worker: OrcaWorkerRecordSnapshot,
+  ): Promise<OrcaWorkerContextSupport> {
+    const live = maker.getSession(worker.sessionId);
+    const remoteHostId = live?.remoteHostId ?? (await readOrcaWorkerRemoteHostId(worker.sessionId));
+    const agentKind = live?.agentKind ?? worker.session.agentKind;
+    return computeOrcaWorkerContextSupport({
+      agentKind,
+      remoteHostId,
+      nativePresentation: Boolean(live?.presentation),
+      // A dormant Codex/Pi worker is still eligible: the resume path creates
+      // the live handle before prepare re-checks its real capability.
+      manualCompactSupported: live
+        ? live.capabilities.manualCompact?.supported === true
+        : agentKind === 'codex' || agentKind === 'pi',
+      // The dormant attempt stays allowed, but the UI must say it is a
+      // provisional capability rather than promising native compaction.
+      provisionalCompact: !live && (agentKind === 'codex' || agentKind === 'pi'),
+    });
+  }
+
+  async function prepareOrcaWorkerContext(
+    params: {
+      worker: OrcaWorkerRecordSnapshot;
+      link: OrcaWorkerLinkSnapshot;
+      policy: 'clear' | 'compact';
+    },
+    assertCurrent?: () => Promise<void>,
+    owner?: OrcaContextOwnerScope | null,
+  ): Promise<OrcaContextPreparationResult> {
+    const sessionId = params.worker.sessionId;
+    // Inline global fence access keeps this function evaluable by the existing
+    // production-source fixtures while sharing state with the dispatcher.
+    const fenceKey = Symbol.for('cindy.orcaContextOperationFence.v1');
+    const fences = (((globalThis as unknown as Record<PropertyKey, unknown>)[fenceKey] ??=
+      new Map()) as Map<string, {
+        token: symbol;
+        policy: 'clear' | 'compact';
+        assertCurrent?: () => void | Promise<void>;
+      }>);
+    const armFence = (): symbol => {
+      const existing = fences.get(sessionId);
+      if (existing) {
+        const error = new Error(
+          `Orca context operation (${existing.policy}) is already active; admission refused`,
+        );
+        (error as { code?: string }).code = 'SESSION_RUNNING';
+        throw error;
+      }
+      const token = Symbol(`orca-context-operation:${params.policy}`);
+      fences.set(sessionId, {
+        token,
+        policy: params.policy,
+        assertCurrent: async () => {
+          await assertCurrent?.();
+          owner?.assertCurrent();
+        },
+      });
+      return token;
+    };
+    const armFenceSafe = (): symbol | null => {
+      try {
+        return armFence();
+      } catch {
+        return null;
+      }
+    };
+    const releaseFence = (token: symbol | undefined): void => {
+      if (!token) return;
+      if (fences.get(sessionId)?.token === token) fences.delete(sessionId);
+    };
+    // The token is an internal handoff to the service, not part of the public
+    // preparation receipt; keep it non-enumerable so fixtures/clients that
+    // compare result objects are not surprised by an opaque symbol.
+    const withOperationToken = <T extends object>(value: T, token: symbol): T => {
+      Object.defineProperty(value, 'operationToken', { value: token, enumerable: false });
+      return value;
+    };
+    try {
+      owner?.assertCurrent();
+    } catch {
+      return { ok: false, errorCode: 'FAILED', message: 'context owner changed before preparation' };
+    }
+    const live = maker.getSession(sessionId);
+    if (!live) {
+      return { ok: false, errorCode: 'FAILED', message: 'worker session is not live' };
+    }
+    if (live.remoteHostId) {
+      return { ok: false, errorCode: 'UNSUPPORTED', message: 'remote sessions are not supported' };
+    }
+    if (live.isTurnRunning()) {
+      return { ok: false, errorCode: 'BUSY', message: 'worker turn is still running' };
+    }
+    try {
+      if (await hasOrcaWorkerPendingInput(sessionId)) {
+        return { ok: false, errorCode: 'BUSY', message: 'worker input queue is not empty' };
+      }
+    } catch {
+      return { ok: false, errorCode: 'BUSY', message: 'worker input queue could not be verified' };
+    }
+
+    if (params.policy === 'compact') {
+      if (live.presentation) {
+        return { ok: false, errorCode: 'UNSUPPORTED', message: 'native presentation has no host-awaitable compact' };
+      }
+      if (live.agentKind === 'claude-code') {
+        return { ok: false, errorCode: 'UNSUPPORTED', message: 'Claude Code has no manual compact completion boundary' };
+      }
+      if (live.agentKind === 'omp') {
+        return { ok: false, errorCode: 'UNSUPPORTED', message: 'OMP native compaction completion is unverified' };
+      }
+      if (live.agentKind !== 'codex' && live.agentKind !== 'pi') {
+        return { ok: false, errorCode: 'UNSUPPORTED', message: 'manual compact is not available' };
+      }
+      if (!live.capabilities.manualCompact?.supported) {
+        return { ok: false, errorCode: 'UNSUPPORTED', message: 'manual compact is not declared by this runtime' };
+      }
+      const operationToken = armFenceSafe();
+      if (!operationToken) {
+        return { ok: false, errorCode: 'BUSY', message: 'another context operation is active' };
+      }
+      let compactBoundarySeen = false;
+      const stopObserve =
+        live.agentKind === 'pi'
+          ? live.onEvent((event) => {
+              // Only this manual operation's boundary may stand in for
+              // completion. An unrelated auto-compaction boundary is not it.
+              if (event.type === 'compact_boundary'
+                && (event.data as { trigger?: unknown } | undefined)?.trigger === 'manual') {
+                compactBoundarySeen = true;
+              }
+            })
+          : () => undefined;
+      let stopTimeoutStatus: (() => void) | undefined;
+      let compactPromise: Promise<{ noop?: boolean }> | undefined;
+      try {
+        compactPromise = live.compactSession();
+        const compacted = await withContextTimeout(
+          compactPromise,
+          ORCA_CONTEXT_COMPACT_TIMEOUT_MS,
+          'manual compact',
+        );
+        if (!compacted || typeof compacted !== 'object') {
+          releaseFence(operationToken);
+          return { ok: false, errorCode: 'FAILED', message: 'manual compact returned no completion' };
+        }
+        if (live.agentKind === 'pi' && compacted.noop !== true && !compactBoundarySeen) {
+          const deadline = Date.now() + ORCA_CONTEXT_COMPACT_BOUNDARY_GRACE_MS;
+          while (!compactBoundarySeen && Date.now() < deadline) await delay(50);
+        }
+        if (live.agentKind === 'pi' && compacted.noop !== true && !compactBoundarySeen) {
+          releaseFence(operationToken);
+          return {
+            ok: false,
+            errorCode: 'FAILED',
+            message: 'manual compact completion boundary was not observed',
+          };
+        }
+        await assertCurrent?.();
+        owner?.assertCurrent();
+        if (maker.getSession(sessionId) !== live) {
+          releaseFence(operationToken);
+          return { ok: false, errorCode: 'ABORTED', message: 'worker runtime changed during compaction' };
+        }
+        if (live.isTurnRunning()) {
+          releaseFence(operationToken);
+          return { ok: false, errorCode: 'FAILED', message: 'worker turn was still running after compaction' };
+        }
+        if (await hasOrcaWorkerPendingInput(sessionId).catch(() => true)) {
+          releaseFence(operationToken);
+          return { ok: false, errorCode: 'BUSY', message: 'worker input queue changed during compaction' };
+        }
+        return withOperationToken({
+          ok: true,
+          outcome: 'compacted',
+          ...(compacted.noop ? { compactNoop: true } : {}),
+        }, operationToken);
+      } catch (err) {
+        if (err instanceof ContextOperationTimeoutError) {
+          // Timeout is not completion. Keep the fence until the native promise
+          // settles or the runtime closes; late callbacks release only this
+          // exact token, never a newer operation's fence.
+          const releaseWhenNativeSettles = (): void => {
+            releaseFence(operationToken);
+            stopTimeoutStatus?.();
+            stopTimeoutStatus = undefined;
+          };
+          if (compactPromise) void compactPromise.then(releaseWhenNativeSettles, releaseWhenNativeSettles);
+          if (typeof live.onStatusChange === 'function') {
+            stopTimeoutStatus = live.onStatusChange((status) => {
+              if (status === 'closed' || status === 'error') releaseWhenNativeSettles();
+            });
+          }
+          return withOperationToken({
+            ok: false,
+            errorCode: 'TIMEOUT',
+            message: 'manual compact timed out before native completion',
+            keepFence: true,
+          }, operationToken);
+        }
+        releaseFence(operationToken);
+        return {
+          ok: false,
+          errorCode: 'FAILED',
+          message: 'manual compact failed before native completion',
+        };
+      } finally {
+        stopObserve();
+      }
+    }
+
+    const clearService = hostSessionClearHolder;
+    if (!clearService) {
+      return { ok: false, errorCode: 'FAILED', message: 'host clear service is unavailable' };
+    }
+    // Block local content-bearing input for the whole clear transaction. A
+    // message enqueued during the queue reset would otherwise be discarded as
+    // pre-clear input, contradicting the explicit "clear then this task" intent.
+    const operationToken = armFenceSafe();
+    if (!operationToken) {
+      return { ok: false, errorCode: 'BUSY', message: 'another context operation is active' };
+    }
+    hostInputClearInFlightSessions.add(sessionId);
+    const watchOldRuntimeExit = (token: symbol): void => {
+      const session = maker.getSession(sessionId);
+      if (session && typeof session.onStatusChange === 'function') {
+        session.onStatusChange((status) => {
+          if (status === 'closed' || status === 'error') releaseFence(token);
+        });
+      }
+    };
+    const closeOldRuntime = async (): Promise<boolean> => {
+      const beforeClose = maker.getSession(sessionId);
+      if (!beforeClose) return true;
+      // Same soft-restart semantics as /clear: preserve the worktree and
+      // uncommitted files. A plain maker.closeSession would trigger onClose's
+      // auto-stash + delete and silently destroy the Worker workspace.
+      await withRehydrateCloseSuppressed(sessionId, () => maker.closeSession(sessionId));
+      cleanupPendingInteractionsForSession(sessionId, 'session_closed');
+      return maker.getSession(sessionId) === undefined;
+    };
+    try {
+      // Re-check after the gate and fence are armed: input that won the race
+      // before them is now visible, while new local/remote input and ordinary
+      // Orca dispatches are already rejected.
+      if (await hasOrcaWorkerPendingInput(sessionId).catch(() => true)) {
+        releaseFence(operationToken);
+        return { ok: false, errorCode: 'BUSY', message: 'worker input queue is not empty' };
+      }
+      try {
+        owner?.assertCurrent();
+      } catch {
+        releaseFence(operationToken);
+        return { ok: false, errorCode: 'FAILED', message: 'context owner changed before clear' };
+      }
+      await clearService.clearSession(sessionId, {
+        isRemoteInvoke: false,
+        strictPersistence: true,
+        ...(owner ? { owner } : {}),
+      });
+      let ownerStillCurrent = true;
+      try {
+        await assertCurrent?.();
+        owner?.assertCurrent();
+      } catch {
+        ownerStillCurrent = false;
+      }
+      if (!ownerStillCurrent) {
+        // Do not touch a runtime or snapshot that now belongs to the replacement
+        // owner.
+        releaseFence(operationToken);
+        return withOperationToken({
+          ok: false,
+          errorCode: 'ABORTED',
+          message: 'context was cleared but the owner changed before dispatch',
+          applied: 'cleared',
+        }, operationToken);
+      }
+      // Retire the old runtime so no old native thread can be resumed into the
+      // new generation. Session.close is used directly: abort() here would emit
+      // a terminal event for a turn we already proved idle.
+      const closed = await closeOldRuntime().catch(() => false);
+      // The close await is another owner boundary: a replacement owner must
+      // never receive this operation's task or a stale queue projection.
+      let ownerCurrentAfterClose = true;
+      try {
+        await assertCurrent?.();
+        owner?.assertCurrent();
+      } catch {
+        ownerCurrentAfterClose = false;
+      }
+      if (!ownerCurrentAfterClose) {
+        releaseFence(operationToken);
+        return withOperationToken({
+          ok: false,
+          errorCode: 'ABORTED',
+          message: 'context was cleared but the owner changed while the old runtime closed',
+          applied: 'cleared',
+        }, operationToken);
+      }
+      if (!closed) {
+        watchOldRuntimeExit(operationToken);
+        return withOperationToken({
+          ok: false,
+          errorCode: 'FAILED',
+          message: 'old worker runtime did not close after clear',
+          applied: 'cleared',
+          keepFence: true,
+        }, operationToken);
+      }
+      return withOperationToken({ ok: true, outcome: 'cleared', historyRetained: true }, operationToken);
+    } catch (err) {
+      const applied = (err as { applied?: 'cleared' }).applied === 'cleared' ? 'cleared' : undefined;
+      if (applied) {
+        let ownerChanged = false;
+        try {
+          await assertCurrent?.();
+          owner?.assertCurrent();
+        } catch {
+          ownerChanged = true;
+        }
+        if (ownerChanged) {
+          releaseFence(operationToken);
+          return withOperationToken({
+            ok: false,
+            errorCode: 'ABORTED',
+            message: 'context was cleared but the owner changed before projection',
+            applied: 'cleared',
+          }, operationToken);
+        }
+        // DB/native retirement already committed. Try to retire the old
+        // runtime; if it cannot be confirmed gone, keep the fence so a new
+        // dispatch cannot reuse the old context.
+        const closed = await closeOldRuntime().catch(() => false);
+        if (!closed) {
+          watchOldRuntimeExit(operationToken);
+          return withOperationToken({
+            ok: false,
+            errorCode: 'FAILED',
+            message: 'context was cleared but the old worker runtime could not be retired',
+            applied: 'cleared',
+            keepFence: true,
+          }, operationToken);
+        }
+        return withOperationToken({
+          ok: false,
+          errorCode: 'FAILED',
+          message: 'context was cleared but the clear transaction did not fully complete',
+          applied: 'cleared',
+        }, operationToken);
+      }
+      // No durable clear happened; the old context and queue are intact.
+      releaseFence(operationToken);
+      return {
+        ok: false,
+        errorCode: 'FAILED',
+        message: 'context clear did not complete; no task was dispatched',
+      };
+    } finally {
+      hostInputClearInFlightSessions.delete(sessionId);
+    }
+  }
 
   const orcaTeamService = createOrcaTeamService({
     captureControlAuthority: async (leadSessionId) => (await captureOrcaPluginAuthority(leadSessionId)).assertCurrent,
@@ -11265,11 +11796,20 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       }
       getAgentIslandService()?.notifyQueueEmptied(leadSessionId);
     },
+    getWorkerContextPolicySupport: (worker) => getOrcaWorkerContextPolicySupport(worker),
+    prepareWorkerContext: (params, assertCurrent) =>
+      prepareOrcaWorkerContext(params, assertCurrent),
+    recordContextAudit: async (event, owner) => {
+      await recordOrcaContextEvent(event, owner);
+    },
     dispatchWorkerMessage: async ({
       targetSessionId,
       message,
       workerId,
       delivery,
+      prepareContext,
+      requireIdle,
+      contextOperationToken,
       dispatchMeta,
       onAccepted,
       onAcceptedRollback,
@@ -11282,6 +11822,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         senderLabel: 'Lead',
         workerId,
         ...(delivery ? { delivery } : {}),
+        ...(prepareContext ? { prepareContext } : {}),
+        ...(requireIdle ? { requireIdle: true } : {}),
+        ...(contextOperationToken ? { contextOperationToken } : {}),
         meta: dispatchMeta,
         onAccepted,
         onAcceptedRollback,
@@ -14154,6 +14697,13 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   // cannot let the first finally block release the gate while the second one
   // is still sealing.
   const inputClearInFlightSessions = new Map<string, number>();
+  /**
+   * Host-initiated clears (Orca context_policy=clear) cannot rely on a
+   * renderer-side fence: a local enqueue during the synchronous queue reset
+   * would be discarded as pre-clear input. Block local content-bearing input
+   * for the whole clear transaction, then release after the durable seal.
+   */
+  const hostInputClearInFlightSessions = new Set<string>();
   const beginRemoteInputClearGate = (sessionId: string): void => {
     inputClearInFlightSessions.set(sessionId, (inputClearInFlightSessions.get(sessionId) ?? 0) + 1);
   };
@@ -14163,10 +14713,18 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     else inputClearInFlightSessions.set(sessionId, count - 1);
   };
   const assertRemoteInputClearNotInFlight = (sessionId: string, remote: boolean): void => {
-    if (!remote || !inputClearInFlightSessions.has(sessionId)) return;
+    const remoteGate = inputClearInFlightSessions.has(sessionId);
+    const hostGate = hostInputClearInFlightSessions.has(sessionId);
+    const contextOperation = activeOrcaContextOperation(sessionId);
+    if (!remoteGate && !hostGate && !contextOperation) return;
+    // A host-initiated clear/compact blocks local content input as well; a
+    // remote clear only needs the service gate. Either gate must fail closed.
+    if (!remote && !hostGate && !contextOperation) return;
     throwIpcError(
       'PRECONDITION_FAILED',
-      'REMOTE_OPTIMISTIC_INPUT_CLEARED: session clear is still sealing',
+      contextOperation
+        ? 'ORCA_CONTEXT_OPERATION_IN_PROGRESS: explicit clear/compact is still running'
+        : 'REMOTE_OPTIMISTIC_INPUT_CLEARED: session clear is still sealing',
     );
   };
 
@@ -14850,6 +15408,22 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     getPersistedClientIds: getPersistedInputClientIds,
   });
   agentInputCoordinatorHolder = inputCoordinator;
+  hostSessionClearHolder = createHostSessionClearService({
+    beginRemoteInputClearGate,
+    endRemoteInputClearGate,
+    captureNativeHistoryClearDependencies,
+    readNativeHistoryForClear,
+    withNativeHistoryClear,
+    clearSessionContextInDb,
+    clearInputProjection: (sessionId, boundary) => inputCoordinator.clearSession(sessionId, boundary),
+    discardWorkingDirectoryRecovery: (sessionId) => workingDirectoryRecovery.discard(sessionId),
+    resetAutomaticRecoveryForExplicitStop,
+    invalidateAgentHandoff: (sessionId) => agentHandoffPending.invalidate(sessionId),
+    sealAgentHandoffClearBoundary: (sessionId) => agentHandoffPending.sealClearBoundary(sessionId),
+    notifyQueueEmptied: (sessionId) => getAgentIslandService()?.notifyQueueEmptied(sessionId),
+    clearGoal: (sessionId) => goalClearObserver?.(sessionId),
+    logError: (message, fields) => log.error(message, fields),
+  });
   nativeInputBindingDepsHolder = {
     coordinator: inputCoordinator, accept: acceptNativeInput,
     steer: (session, input, options) => steerToAgentAccepted(session.id, input.message, options, { session, input }),
@@ -16522,93 +17096,50 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       }
       const sid = requireSessionId(sessionId);
       await assertReviewExternalInputAllowed(sid);
-      // Fence remote content-bearing controls for the whole clear lifecycle,
-      // including the DB await below.  Local clear is gated too so a remote
-      // controller cannot enter the same sealing window through another peer.
-      beginRemoteInputClearGate(sid);
+      const clearService = hostSessionClearHolder;
+      if (!clearService) {
+        throwIpcError('INTERNAL', 'Session clear service is not ready');
+      }
+      const remoteInvoke = isDeviceLinkInvoke();
       const owner = getCurrentDbClientSnapshot();
       let receipt: AgentInputClearReceipt | undefined;
+      if (!remoteInvoke && typeof clearedAt === 'string' && owner) {
+        receipt = inputClearReceipts.begin(owner, getActiveAppSession().generation, sid, clearedAt);
+      }
       try {
-        const remoteInvoke = isDeviceLinkInvoke();
-        const clearBoundary = resolveClearSessionBoundary({
-          clearedAt: typeof clearedAt === 'string' ? clearedAt : undefined,
+        // The shared primitive owns the remote-input clear gate, native history
+        // journal/retirement, DB commit, queue reset and handoff seal. Orca's
+        // context_policy=clear uses the exact same transaction.
+        const result = await clearService.clearSession(sid, {
+          ...(typeof clearedAt === 'string' ? { clearedAt } : {}),
           isRemoteInvoke: remoteInvoke,
+          onNative: () => {
+            if (receipt) receipt.native = true;
+          },
         });
-        const nativeClear = captureNativeHistoryClearDependencies(sid);
-        if (!remoteInvoke && typeof clearedAt === 'string' && owner)
-          receipt = inputClearReceipts.begin(owner, getActiveAppSession().generation, sid, clearedAt);
-        const commitClear = async () => {
-          nativeClear.assertCurrent();
-          const projection = inputCoordinator.clearSession(sid, clearBoundary);
-          workingDirectoryRecovery.discard(sid);
-          resetAutomaticRecoveryForExplicitStop(sid);
-          // 丢弃缓存的待注入交接 / fork 来源标记:它们是按 clear 之前的历史算出来的,
-          // DB 侧的 cleared_at 抑制拦不住已经落进 registry 内存的那一份(首发被拒后
-          // 缓存仍在),下次 send 会把旧血缘灌进用户刚显式清空的上下文。
-          //
-          // 用 invalidate(留 null 墓碑)而不是 clear(删条目):删条目会让后续 send 回落到
-          // DB 重建,把旧交接捞回来再缓存住。墓碑同步生效,窗口内的 send 立刻拿到 null;
-          // clear 纪元则要等下面 cleared_at 落库之后才推进。
-          agentHandoffPending.invalidate(sid);
-          getAgentIslandService()?.notifyQueueEmptied(sid);
-          // 清上下文后,active 目标失去其依据(objective 引用的内容已被抹掉)→ 一并清除目标。
-          goalClearObserver?.(sid);
-          // cleared_at 在 handler 内**同步**落库,本地与远程同一口径。
-          //
-          // 过去本地路径只靠 renderer 事后 fire-and-forget 写这一列,于是 handler 返回到那次
-          // 写入落库之间有个窗口:此刻启动的引擎切换 / 消息删除会读到**尚未标记 clear**的
-          // DB 历史,却又拿到 clear 之后的纪元——纪元校验因此形同虚设,基于已清空历史算出的
-          // 交接会盖掉刚立的墓碑。在这里同步写掉,那个窗口就不存在了;renderer 之后若再写一次
-          // 也是同值幂等。
-          const clearBoundaryMs =
-            typeof clearBoundary === 'number' ? clearBoundary : new Date(clearBoundary).getTime();
-          try {
-            await clearSessionContextInDb(sid, clearBoundaryMs);
-          } catch (err) {
-            // The in-memory fence is still authoritative for this process. Keep
-            // /clear remains a local cleanup action even when persistence fails;
-            // surface the failure in logs, and
-            // let the next input/projection boundary retry the durable token.
-            log.error('clear session context persist failed', {
-              sessionId: sid,
-              remoteInvoke,
-              err: err instanceof Error ? err.message : String(err),
-            });
-          }
-          return projection;
-        };
-        if (nativeClear.executor || readNativeHistoryForClear(nativeClear.root, sid)) {
-          const at = typeof clearBoundary === 'number' ? clearBoundary : new Date(clearBoundary).getTime();
-          if (receipt) receipt.native = true;
-          // Publish queue cleanup only after DB commit AND journal retirement.
-          // A failed transaction must not emit a speculative clear projection.
-          await withNativeHistoryClear(nativeClear, at, async guard => {
-            if (!guard) throw new Error('Native clear guard missing');
-            agentHandoffPending.invalidate(sid);
-            await clearSessionContextInDb(sid, guard.at, guard.expected);
+        if (receipt) {
+          Object.assign(receipt, {
+            status: 'committed',
+            boundaryMs: result.boundaryMs,
+            native: result.native,
           });
-          nativeClear.assertCurrent();
-          const state = await nativeClear.readState();
-          nativeClear.assertCurrent();
-          workingDirectoryRecovery.discard(sid);
-          resetAutomaticRecoveryForExplicitStop(sid);
-          getAgentIslandService()?.notifyQueueEmptied(sid);
-          goalClearObserver?.(sid);
-          const projection = inputCoordinator.clearSession(sid, state.clearedAt ?? at);
-          if (receipt) Object.assign(receipt, { status: 'committed', boundaryMs: state.clearedAt ?? at });
-          return { ...projection, ...(receipt ? { clearReceipt: { ...receipt } } : {}) };
         }
-        const projection = await commitClear();
-        if (receipt) Object.assign(receipt, { status: 'committed', native: false });
-        return { ...projection, ...(receipt ? { clearReceipt: { ...receipt } } : {}) };
+        return {
+          ...result.projection,
+          ...(receipt ? { clearReceipt: { ...receipt } } : {}),
+        };
       } catch (error) {
-        if (receipt) receipt.status = 'failed';
+        if (receipt) {
+          receipt.status = 'failed';
+          if ((error as { applied?: 'cleared' }).applied === 'cleared') {
+            receipt.applied = true;
+            const boundary = (error as { boundaryMs?: unknown }).boundaryMs;
+            if (typeof boundary === 'number' && Number.isFinite(boundary)) {
+              receipt.boundaryMs = boundary;
+            }
+          }
+        }
         throw error;
-      } finally {
-        // 落库尝试结束后封边界:重立墓碑(清掉这段 await 里用 clear 前纪元挤进来的那份)
-        // + 推进纪元(挡住后面才写回的那批)。顺序不可颠倒,理由见 sealClearBoundary 注释。
-        agentHandoffPending.sealClearBoundary(sid);
-        endRemoteInputClearGate(sid);
       }
     },
   );

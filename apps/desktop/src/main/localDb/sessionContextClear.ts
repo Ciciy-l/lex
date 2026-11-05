@@ -26,14 +26,21 @@ export async function commitSessionContextClear(client: DbClient, sessionId: str
       ...(expected ? [expected.nativeId === null ? isNull(sessions.sdkSessionId) : eq(sessions.sdkSessionId, expected.nativeId),
         expected.clearedAt === null ? isNull(sessions.clearedAt) : eq(sessions.clearedAt, expected.clearedAt)] : [])));
   const fields = { clearedAt: sessions.clearedAt, updatedAt: sessions.updatedAt, nativeId: sessions.sdkSessionId };
-  // Native CAS must prove that this UPDATE matched, not mistake a different
-  // writer's later clear for its own commit. Ordinary clear keeps its existing
-  // readback of the newest monotonic boundary for device-link broadcasts.
-  if (!expected) await update;
-  const [updated] = expected ? await update.returning(fields)
-    : await db.select(fields).from(sessions)
-      .where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, sessionId))).limit(1);
-  if (expected && (!updated || updated.nativeId !== null || updated.clearedAt === null || updated.clearedAt < ts))
+  // Both the native CAS path and the ordinary path must prove that this exact
+  // UPDATE matched. A retired/deleted task or a CAS miss produces zero rows;
+  // that is a failed clear, not a success with an undefined readback.
+  const [updated] = await update.returning(fields);
+  if (!updated) {
+    throwIpcError(
+      'PRECONDITION_FAILED',
+      expected ? 'Native history clear did not commit' : 'Session clear did not update the task',
+    );
+  }
+  if (expected && (updated.nativeId !== null || updated.clearedAt === null || updated.clearedAt < ts)) {
     throwIpcError('PRECONDITION_FAILED', 'Native history clear did not commit');
+  }
+  if (updated.nativeId !== null || updated.clearedAt === null || updated.clearedAt < ts) {
+    throwIpcError('PRECONDITION_FAILED', 'Session clear did not commit the generation boundary');
+  }
   return updated;
 }

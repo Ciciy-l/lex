@@ -834,6 +834,13 @@
       "when": 1793353062586,
       "tag": "0118_cindy_session_import",
       "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "6",
+      "when": 1793842636741,
+      "tag": "0119_wise_iron_monger",
+      "breakpoints": true
     }
   ]
 }

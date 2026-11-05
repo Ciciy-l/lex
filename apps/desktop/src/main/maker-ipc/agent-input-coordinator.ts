@@ -37,6 +37,7 @@ import { createLogger } from '../logger.js';
 import { AUTO_REVIEW_DELEGATED_CONTINUATION, readAutoReviewUserText } from './autoReviewUserIntent.js';
 import { createMessage as createDbMessage } from '../localDb/ipc/messages.js';
 import { touchUserSendInDb } from '../localDb/ipc/sessions.js';
+import { captureOrcaContextOwner, type OrcaContextOwnerScope } from './orcaContextOwner.js';
 import {
   isAcceptedTurnContinuationOnlyReason,
   type InterruptedTurnErrorSignals,
@@ -667,6 +668,8 @@ type AgentInputSendFailure = Extract<
 
 interface SessionInputState {
   pendingQueue: AgentInputQueuedMessage[];
+  /** Captured DB owner/generation for a clear projection snapshot row. */
+  queueSnapshotOwner?: OrcaContextOwnerScope | null;
   pendingCompacts: PendingCompactRequest[];
   steeringQueueClientIds: string[];
   /** Identity of the currently owned steer transaction for each visible clientId. */
@@ -1351,6 +1354,17 @@ export class AgentInputCoordinator {
   private async restoreQueueSnapshot(sessionId: string): Promise<void> {
     const preState = this.getState(sessionId);
     const preGeneration = preState.generation;
+    const preOwner = preState.queueSnapshotOwner;
+    if (preOwner) {
+      try {
+        preOwner.assertCurrent();
+      } catch {
+        // The clear that owned this state no longer owns the current DB; do not
+        // read a replacement owner's snapshot into the old generation.
+        this.restoredQueueSessions.add(sessionId);
+        return;
+      }
+    }
     if (this.deps.loadClearBoundary) {
       try {
         const clearedAt = await this.deps.loadClearBoundary(sessionId);
@@ -1375,6 +1389,15 @@ export class AgentInputCoordinator {
         error: errorMessage(err),
       });
       throw err;
+    }
+    const postOwner = this.getState(sessionId).queueSnapshotOwner;
+    if (postOwner) {
+      try {
+        postOwner.assertCurrent();
+      } catch {
+        this.restoredQueueSessions.add(sessionId);
+        return;
+      }
     }
     const state = this.getState(sessionId);
     if (state !== preState || state.generation !== preGeneration) {
@@ -3579,12 +3602,18 @@ export class AgentInputCoordinator {
     }
     this.cancelPreSendActiveTurn(sessionId, prev, false);
     // 显式清上下文:强制开启持久化闸门,让 emit 写出空快照(删行),
-    // 即使此前该会话从未触发恢复(否则旧快照残留,下次打开会诈尸)。
+    // 即使此前该会话从未触发恢复。
     this.restoredQueueSessions.add(sessionId);
-    this.states.set(
-      sessionId,
-      createInitialInputState(prev.generation + 1, clearBoundaryMs, prev.fencedStaleTerminal),
+    const next = createInitialInputState(
+      prev.generation + 1,
+      clearBoundaryMs,
+      prev.fencedStaleTerminal,
     );
+    // Bind this clear projection write to the owner that initiated it. The
+    // guard is cleared when the write settles so a later owner can write its
+    // own future snapshots through this coordinator.
+    next.queueSnapshotOwner = captureOrcaContextOwner();
+    this.states.set(sessionId, next);
     this.emit(sessionId);
     return this.getProjection(sessionId);
   }
@@ -4169,17 +4198,41 @@ export class AgentInputCoordinator {
     if (!this.restoredQueueSessions.has(sessionId)) return;
     const state = this.states.get(sessionId);
     if (!state) return;
+    const owner = state.queueSnapshotOwner;
+    if (owner) {
+      try {
+        owner.assertCurrent();
+      } catch {
+        // A replacement owner/generation must not receive this clear's row.
+        return;
+      }
+    }
     const items = this.computeQueueSnapshotItems(state);
     const json = JSON.stringify(items);
-    if (this.lastQueueSnapshotJson.get(sessionId) === json) return;
+    const clearOwnerAfterWrite = (): void => {
+      // The clear projection guard covers exactly one write. Once that write
+      // settles (or is unnecessary), a later owner may persist its own future
+      // snapshots through this state.
+      if (owner && state.queueSnapshotOwner === owner) {
+        state.queueSnapshotOwner = undefined;
+      }
+    };
+    if (this.lastQueueSnapshotJson.get(sessionId) === json) {
+      clearOwnerAfterWrite();
+      return;
+    }
     this.lastQueueSnapshotJson.set(sessionId, json);
     const result = this.deps.persistQueueSnapshot(sessionId, items);
-    if (result && typeof (result as Promise<void>).catch === 'function') {
-      (result as Promise<void>).catch(() => {
+    if (result && typeof (result as Promise<void>).then === 'function') {
+      (result as Promise<void>).then(clearOwnerAfterWrite, () => {
+        // Forget the cached comparison so the next emit retries the write.
         if (this.lastQueueSnapshotJson.get(sessionId) === json) {
           this.lastQueueSnapshotJson.delete(sessionId);
         }
+        clearOwnerAfterWrite();
       });
+    } else {
+      clearOwnerAfterWrite();
     }
   }
 

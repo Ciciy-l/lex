@@ -27,6 +27,10 @@ import type {
   ControlSteerOutcome,
 } from './agent-input-coordinator.js';
 import { runAcceptedCallback, runAcceptedRollback } from './acceptedCallbackRunner.js';
+import {
+  activeOrcaContextOperation,
+  assertOrcaContextOperationAllowed,
+} from './orcaContextOperationFence.js';
 
 const defaultLog = createLogger('maker-ipc');
 
@@ -63,6 +67,15 @@ export interface DispatchOrcaInterAgentMessageParams {
   workerId?: string;
   /** 发送方显式选择；缺省排队。steer 只在目标正在运行时插进当前 turn。 */
   delivery?: 'queue' | 'steer';
+  /**
+   * Runs inside the per-session send lock after unhealthy-session preparation and
+   * before the live session is re-read. Throw to abort with zero dispatch/queue.
+   */
+  prepareContext?: () => Promise<void>;
+  /** clear/compact must fail closed instead of silently queueing behind a busy turn. */
+  requireIdle?: boolean;
+  /** The operation's own token; ordinary callers must not cross an active context fence. */
+  contextOperationToken?: symbol;
   /** Synchronous reserve boundary hook; must return before drain is scheduled. */
   onReserved?: () => void;
   beforeReserve?: () => Promise<void>;
@@ -178,7 +191,21 @@ export interface OrcaInterAgentDispatcherDeps<TSessionMeta> {
     sessionId: string,
     meta: TSessionMeta,
   ) => Promise<AgentInputCreateOpts>;
+  /**
+   * Await queue restore or other pre-commit work. Must not mutate the queue;
+   * the dispatcher performs the final synchronous fence check afterwards.
+   */
+  prepareQueuedMessageEnqueue?: (sessionId: string) => Promise<void>;
+  /** Synchronous queue commit; the dispatcher has already done the final fence check. */
   enqueueQueuedMessage: (sessionId: string, item: AgentInputQueuedMessage) => void;
+  /**
+   * Await queue restore and beforeReserve work. Must not reserve anything; the
+   * dispatcher performs the final synchronous fence check afterwards.
+   */
+  prepareQueuedMessageReserve?: (
+    sessionId: string,
+    beforeReserve?: () => Promise<void>,
+  ) => Promise<void>;
   /** Restore first, then synchronously reserve the item at the live queue head. */
   reserveNextQueuedMessage: (
     sessionId: string,
@@ -314,6 +341,28 @@ export function createOrcaInterAgentDispatcher<TSessionMeta>(
   const dispatchOrEnqueueOrcaInterAgentMessage = async (
     params: DispatchOrcaInterAgentMessageParams,
   ): Promise<DispatchOrcaInterAgentMessageResult> => {
+    // Ordinary dispatch (queue or direct) must not enter an in-flight
+    // clear/compact. Fail before any accepted callback, enqueue or snapshot
+    // write; the sender retries the same content after the fence releases.
+    // The operation's own dispatch carries prepareContext/token and is checked
+    // again against its exact token below.
+    if (!params.prepareContext && !params.contextOperationToken) {
+      try {
+        assertOrcaContextOperationAllowed(params.targetSessionId);
+      } catch (err) {
+        return {
+          ok: false,
+          dispatchOutcome: {
+            ...createHostSendFailure(
+              'SESSION_RUNNING',
+              err instanceof Error ? err.message : 'Orca context operation is in progress',
+            ),
+            source: params.meta.source,
+            context: params.meta.context,
+          },
+        };
+      }
+    }
     const [meta, dbRow] = await Promise.all([
       deps.getSessionMeta(params.targetSessionId).catch(() => null),
       deps.getSessionRowSnapshot(params.targetSessionId),
@@ -386,6 +435,21 @@ export function createOrcaInterAgentDispatcher<TSessionMeta>(
         ? { steerFallbackReason: steerFallbackReason ?? 'INPUT_BOUNDARY_BUSY' }
         : {};
     const enqueueQueuedMessage = async (logEvent: string): Promise<DispatchOrcaInterAgentMessageResult> => {
+      // Re-check at the actual queue boundary: a clear/compact may have started
+      // while the target metadata was being read. Nothing has been accepted or
+      // written yet, so the sender can retry the same content after it ends.
+      try {
+        assertOrcaContextOperationAllowed(params.targetSessionId, params.contextOperationToken);
+      } catch (err) {
+        return failureResult({
+          ...createHostSendFailure(
+            'SESSION_RUNNING',
+            err instanceof Error ? err.message : 'Orca context operation is in progress',
+          ),
+          source: params.meta.source,
+          context: params.meta.context,
+        });
+      }
       const createOpts = await deps.buildCreateOptsForQueuedSession(params.targetSessionId, meta);
       const queued = buildQueuedOrcaInterAgentMessage({
         clientId,
@@ -396,6 +460,33 @@ export function createOrcaInterAgentDispatcher<TSessionMeta>(
         senderLabel: await resolveSenderLabel(),
         createOpts,
       });
+      try {
+        await deps.prepareQueuedMessageEnqueue?.(params.targetSessionId);
+      } catch (err) {
+        return failureResult({
+          ...createHostSendFailure(
+            'SEND_FAILED',
+            err instanceof Error ? err.message : 'queue preparation failed',
+          ),
+          source: params.meta.source,
+          context: params.meta.context,
+        });
+      }
+      // Final synchronous admission check. Everything above may await; from
+      // this assertion to the callback registration and queue commit there is
+      // no await, so a fence activated at any earlier point is caught here.
+      try {
+        assertOrcaContextOperationAllowed(params.targetSessionId, params.contextOperationToken);
+      } catch (err) {
+        return failureResult({
+          ...createHostSendFailure(
+            'SESSION_RUNNING',
+            err instanceof Error ? err.message : 'Orca context operation is in progress',
+          ),
+          source: params.meta.source,
+          context: params.meta.context,
+        });
+      }
       if (params.onAccepted) {
         registerQueuedOrcaInterAgentAcceptedCallback(
           clientId,
@@ -449,6 +540,21 @@ export function createOrcaInterAgentDispatcher<TSessionMeta>(
             !liveTurn.isTurnRunning?.() ||
             liveTurn.getTurnGeneration?.() !== expectedTurn.turnGeneration
           ) return null;
+          try {
+            assertOrcaContextOperationAllowed(
+              params.targetSessionId,
+              params.contextOperationToken,
+            );
+          } catch (err) {
+            return failureResult({
+              ...createHostSendFailure(
+                'SESSION_RUNNING',
+                err instanceof Error ? err.message : 'Orca context operation is in progress',
+              ),
+              source: params.meta.source,
+              context: params.meta.context,
+            });
+          }
           const outcome = await deps.steerControlInput!(params.targetSessionId, item, expectedTurn);
           if (outcome === 'steered') {
             // The message joined the running turn. Accepted/commit callbacks claim a new
@@ -495,11 +601,42 @@ export function createOrcaInterAgentDispatcher<TSessionMeta>(
       || deps.hasSendToSessionLock(params.targetSessionId)
       || deps.getLiveSession(params.targetSessionId)?.isTurnRunning?.() === true;
     if (shouldQueue) {
+      if (params.requireIdle) {
+        return failureResult({
+          ...createHostSendFailure(
+            'SESSION_RUNNING',
+            'context policy requires an idle worker; the target is busy or has pending input',
+          ),
+          source: params.meta.source,
+          context: params.meta.context,
+        });
+      }
       return enqueueQueuedMessage('orca inter-agent message queued');
     }
 
     try {
+      let contextPrepared = false;
+      const prepareDispatchContext = async (): Promise<void> => {
+        if (!params.prepareContext) return;
+        await params.prepareContext();
+        contextPrepared = true;
+      };
+      const permittedContextToken = (): symbol | undefined =>
+        params.contextOperationToken
+        ?? (contextPrepared ? activeOrcaContextOperation(params.targetSessionId)?.token : undefined);
       const sendToInternal = async (): Promise<DispatchOrcaInterAgentMessageResult> => {
+        try {
+          assertOrcaContextOperationAllowed(params.targetSessionId, permittedContextToken());
+        } catch (err) {
+          return failureResult({
+            ...createHostSendFailure(
+              'SESSION_RUNNING',
+              err instanceof Error ? err.message : 'Orca context operation is in progress',
+            ),
+            source: params.meta.source,
+            context: params.meta.context,
+          });
+        }
         const result = await deps.sendToSessionInternal({
           ...(nativeBody ? { [ORCA_NATIVE_BODY]: nativeBody } : {}),
           autoReviewUserText: { kind: 'delegated-continuation' },
@@ -521,6 +658,16 @@ export function createOrcaInterAgentDispatcher<TSessionMeta>(
             // A live/resume send can cross accepted and still lose a SESSION_RUNNING race. Undo
             // that provisional lifecycle before the same message waits for a fresh acceptance.
             await rollbackAcceptedForRequeue();
+            if (params.requireIdle) {
+              return failureResult({
+                ...createHostSendFailure(
+                  'SESSION_RUNNING',
+                  'context policy requires an idle worker; the target became busy before dispatch',
+                ),
+                source: params.meta.source,
+                context: params.meta.context,
+              });
+            }
           }
           if (result.wakeKind !== 'queued' && acceptedDidRun) {
             await runAcceptedCallback(
@@ -554,8 +701,46 @@ export function createOrcaInterAgentDispatcher<TSessionMeta>(
       };
       const dispatchLive = async (): Promise<DispatchOrcaInterAgentMessageResult | null> => {
         await deps.prepareUnhealthySession?.(params.targetSessionId);
+        try {
+          await prepareDispatchContext();
+        } catch (err) {
+          return failureResult({
+            ...createHostSendFailure(
+              'SEND_FAILED',
+              err instanceof Error ? err.message : 'Context preparation failed',
+            ),
+            source: params.meta.source,
+            context: params.meta.context,
+          });
+        }
+        try {
+          assertOrcaContextOperationAllowed(params.targetSessionId, permittedContextToken());
+        } catch (err) {
+          return failureResult({
+            ...createHostSendFailure(
+              'SESSION_RUNNING',
+              err instanceof Error ? err.message : 'Orca context operation is in progress',
+            ),
+            source: params.meta.source,
+            context: params.meta.context,
+          });
+        }
         const live = deps.getLiveSession(params.targetSessionId);
-        if (!live) return null;
+        if (!live) {
+          // A context policy prepared a fresh generation; falling through to the
+          // generic resume path would bypass the Worker-specific rehydration.
+          if (contextPrepared) {
+            return failureResult({
+              ...createHostSendFailure(
+                'HOST_NOT_READY',
+                'worker session is not live after context preparation',
+              ),
+              source: params.meta.source,
+              context: params.meta.context,
+            });
+          }
+          return null;
+        }
         const senderLabel = await resolveSenderLabel();
         const result = await sendPersistedUserMessageToSession(deps, {
           nativeBody,
@@ -585,6 +770,16 @@ export function createOrcaInterAgentDispatcher<TSessionMeta>(
         }
         if (result.dispatchOutcome.kind === 'host-send' && result.dispatchOutcome.code === 'SESSION_RUNNING') {
           await rollbackAcceptedForRequeue();
+          if (params.requireIdle) {
+            return failureResult({
+              ...createHostSendFailure(
+                'SESSION_RUNNING',
+                'context policy requires an idle worker; the target became busy before dispatch',
+              ),
+              source: params.meta.source,
+              context: params.meta.context,
+            });
+          }
           return enqueueQueuedMessage('orca inter-agent message queued after SESSION_RUNNING race');
         }
         return failureResult(result.dispatchOutcome);
@@ -593,6 +788,16 @@ export function createOrcaInterAgentDispatcher<TSessionMeta>(
         ? await deps.withSendToSessionLock(params.targetSessionId, dispatchLive)
         : await dispatchLive();
       if (liveResult) return liveResult;
+      if (contextPrepared) {
+        return failureResult({
+          ...createHostSendFailure(
+            'HOST_NOT_READY',
+            'worker session disappeared after context preparation',
+          ),
+          source: params.meta.source,
+          context: params.meta.context,
+        });
+      }
       return await sendToInternal();
     } catch (err) {
       return failureResult({
@@ -606,6 +811,21 @@ export function createOrcaInterAgentDispatcher<TSessionMeta>(
   const reserveNextOrcaInterAgentMessage = async (
     params: DispatchOrcaInterAgentMessageParams,
   ): Promise<DispatchOrcaInterAgentMessageResult> => {
+    try {
+      assertOrcaContextOperationAllowed(params.targetSessionId, params.contextOperationToken);
+    } catch (err) {
+      return {
+        ok: false,
+        dispatchOutcome: {
+          ...createHostSendFailure(
+            'SESSION_RUNNING',
+            err instanceof Error ? err.message : 'Orca context operation is in progress',
+          ),
+          source: params.meta.source,
+          context: params.meta.context,
+        },
+      };
+    }
     const [meta, dbRow] = await Promise.all([
       deps.getSessionMeta(params.targetSessionId).catch(() => null),
       deps.getSessionRowSnapshot(params.targetSessionId),
@@ -654,6 +874,44 @@ export function createOrcaInterAgentDispatcher<TSessionMeta>(
       senderLabel,
       createOpts,
     });
+    try {
+      await deps.prepareQueuedMessageReserve?.(params.targetSessionId, params.beforeReserve);
+    } catch (err) {
+      return {
+        ok: false,
+        dispatchOutcome: {
+          ...createHostSendFailure(
+            (err as { code?: string } | null)?.code === 'SESSION_RUNNING'
+              ? 'SESSION_RUNNING'
+              : 'SEND_FAILED',
+            err instanceof Error ? err.message : 'queue preparation failed',
+          ),
+          source: params.meta.source,
+          context: params.meta.context,
+        },
+      };
+    }
+    // Final synchronous admission check before accepted registration and the
+    // reserve commit. No await separates this check from the reserve call (the
+    // production reserve implementation commits synchronously).
+    try {
+      assertOrcaContextOperationAllowed(
+        params.targetSessionId,
+        params.contextOperationToken,
+      );
+    } catch (err) {
+      return {
+        ok: false,
+        dispatchOutcome: {
+          ...createHostSendFailure(
+            'SESSION_RUNNING',
+            err instanceof Error ? err.message : 'Orca context operation is in progress',
+          ),
+          source: params.meta.source,
+          context: params.meta.context,
+        },
+      };
+    }
     const callbackAlreadyRegistered = queuedOrcaInterAgentAcceptedCallbacks.has(clientId);
     if (params.onAccepted && !callbackAlreadyRegistered) {
       registerQueuedOrcaInterAgentAcceptedCallback(
@@ -678,7 +936,12 @@ export function createOrcaInterAgentDispatcher<TSessionMeta>(
       return {
         ok: false,
         dispatchOutcome: {
-          ...createHostSendFailure('SEND_FAILED', err instanceof Error ? err.message : String(err)),
+          ...createHostSendFailure(
+            (err as { code?: string } | null)?.code === 'SESSION_RUNNING'
+              ? 'SESSION_RUNNING'
+              : 'SEND_FAILED',
+            err instanceof Error ? err.message : String(err),
+          ),
           source: params.meta.source,
           context: params.meta.context,
         },

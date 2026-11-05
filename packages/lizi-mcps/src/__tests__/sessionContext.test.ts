@@ -181,8 +181,77 @@ describe('dynamic lizi MCP session context', () => {
     const schemaKeys = Object.keys(
       tools(server).send_to_worker.inputSchema?.shape ?? {},
     );
-    expect(schemaKeys).toEqual(['target_session_id', 'message', 'delivery']);
+    expect(schemaKeys).toEqual(['target_session_id', 'message', 'delivery', 'context_policy']);
     expect(schemaKeys).not.toContain('interrupt');
+  });
+
+  it('forwards an explicit context policy and omits it for the legacy keep default', async () => {
+    const sendToWorker = vi.fn<OrcaMcpDeps['sendToWorker']>()
+      .mockResolvedValueOnce({
+        ok: true,
+        agentKind: 'codex',
+        wakeKind: 'resumed',
+        targetTitle: null,
+        targetLastUserSendAt: null,
+        contextOutcome: { policy: 'clear', outcome: 'cleared', applied: true },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        agentKind: 'codex',
+        wakeKind: 'already-active',
+        targetTitle: null,
+        targetLastUserSendAt: null,
+      });
+    const server = createOrcaMcpServer(createOrcaDeps({ sendToWorker }), {
+      agentKind: 'codex',
+      workingDir: '/repo',
+      sessionId: 'lead-1',
+      vendorOptions: { orcaRole: 'lead' },
+    });
+
+    const cleared = parse(await tools(server).send_to_worker.handler({
+      target_session_id: 'worker-session-1',
+      message: 'fresh task',
+      context_policy: 'clear',
+    }) as never);
+    expect(cleared).toMatchObject({
+      ok: true,
+      context_outcome: { policy: 'clear', outcome: 'cleared', applied: true },
+    });
+    expect(sendToWorker).toHaveBeenNthCalledWith(1, {
+      callerLeadSessionId: 'lead-1',
+      targetSessionId: 'worker-session-1',
+      message: 'fresh task',
+      contextPolicy: 'clear',
+    });
+
+    parse(await tools(server).send_to_worker.handler({
+      target_session_id: 'worker-session-1',
+      message: 'legacy task',
+    }) as never);
+    expect(sendToWorker.mock.calls[1]?.[0]).not.toHaveProperty('contextPolicy');
+  });
+
+  it('returns an explicit unsupported refusal instead of a keep fallback', async () => {
+    const sendToWorker = vi.fn<OrcaMcpDeps['sendToWorker']>().mockResolvedValueOnce({
+      ok: false,
+      errorCode: 'CONTEXT_POLICY_UNSUPPORTED',
+      message: 'context policy compact is not supported by this worker (native-completion-unverified)',
+    });
+    const server = createOrcaMcpServer(createOrcaDeps({ sendToWorker }), {
+      agentKind: 'codex',
+      workingDir: '/repo',
+      sessionId: 'lead-1',
+      vendorOptions: { orcaRole: 'lead' },
+    });
+    const result = parse(await tools(server).send_to_worker.handler({
+      target_session_id: 'worker-session-1',
+      message: 'task',
+      context_policy: 'compact',
+    }) as never);
+    expect(result).toMatchObject({ ok: false, errorCode: 'CONTEXT_POLICY_UNSUPPORTED' });
+    expect(sendToWorker).toHaveBeenCalledTimes(1);
+    expect(sendToWorker.mock.calls[0]?.[0]).toMatchObject({ contextPolicy: 'compact' });
   });
 
   it('forwards explicit send_to_worker delivery and reports steered or fallback receipts', async () => {

@@ -14,6 +14,17 @@ import { errorPayload, okPayload } from './_payload.js';
 /** 协同消息投递方式:queue = 普通直发/排队(缺省),steer = 尝试插进对方当前 turn。 */
 export type OrcaMessageDelivery = 'queue' | 'steer';
 
+/** 派发前的上下文策略;缺省 keep,与旧 schema/旧 peer 行为一致。 */
+export type OrcaContextPolicy = 'keep' | 'clear' | 'compact';
+
+/** 已实际执行的上下文结果;只在 host 观察到真实 clear/compact 完成边界后才出现。 */
+export interface OrcaContextOutcome {
+  policy: OrcaContextPolicy;
+  outcome: 'kept' | 'cleared' | 'compacted';
+  applied: boolean;
+  compactNoop?: boolean;
+}
+
 /** 请求 steer 但未插成、消息进入队列时的原因。 */
 export type SteerFallbackReason = 'STEER_UNSUPPORTED' | 'INPUT_BOUNDARY_BUSY' | 'STEER_UNCERTAIN';
 
@@ -27,6 +38,8 @@ export interface SendToWorkerDeps {
     message: string;
     /** 仅调用方显式选择时传入;缺省等价 'queue'(普通直发/排队)。 */
     delivery?: OrcaMessageDelivery;
+    /** 仅调用方显式选择时传入;缺省 keep。 */
+    contextPolicy?: OrcaContextPolicy;
   }) => Promise<
     ControlResult<
       {
@@ -37,9 +50,21 @@ export interface SendToWorkerDeps {
         queuedMessageId?: string;
         /** 请求了 steer 但消息进了队列时的原因;空闲直发不带。 */
         steerFallbackReason?: SteerFallbackReason;
+        /** 显式策略的实际结果;缺省 keep 的旧调用不带。 */
+        contextOutcome?: OrcaContextOutcome;
       },
-      'NOT_FOUND' | 'ARCHIVED' | 'DELETED' | 'BUSY' | 'AGENT_NOT_READY' | 'INVALID_ARGS'
-    >
+      | 'NOT_FOUND'
+      | 'ARCHIVED'
+      | 'DELETED'
+      | 'BUSY'
+      | 'AGENT_NOT_READY'
+      | 'INVALID_ARGS'
+      | 'CONTEXT_POLICY_UNSUPPORTED'
+      | 'CONTEXT_PREPARATION_FAILED'
+    > & {
+      /** 失败但上下文已不可逆地清空时的安全结果。 */
+      contextOutcome?: OrcaContextOutcome;
+    }
   >;
   interruptWorker: (params: {
     callerLeadSessionId: string;
@@ -69,8 +94,10 @@ const DESCRIPTION =
   '在它被消费前可用 get_worker_queue_status / update_queued_message / cancel_queued_message 查看、修改或撤回。' +
   '纠错或 worker 正在等的信息可用 delivery=steer 插进其当前 turn(返回 steered=true);新任务保持默认。' +
   '没插成时照常直发或排队,排队时附 steer_fallback_reason。' +
+  'context_policy 缺省 keep(续用现有上下文);clear 在派发前清空旧上下文并开启新一代 native 会话;compact 等待真实压缩完成后再派发。' +
+  'clear/compact 要求 worker 空闲且队列为空,与 delivery=steer 互斥;harness 或远端不支持时会明确拒绝,不会静默退回 keep。' +
   '需要替换 worker 当前任务时改用 interrupt_worker。' +
-  '失败码: LEAD_NOT_SUPPORTED / NOT_FOUND / ARCHIVED / DELETED / BUSY / AGENT_NOT_READY。';
+  '失败码: LEAD_NOT_SUPPORTED / NOT_FOUND / ARCHIVED / DELETED / BUSY / AGENT_NOT_READY / CONTEXT_POLICY_UNSUPPORTED / CONTEXT_PREPARATION_FAILED。';
 
 export function registerSendToWorkerTool(
   registry: XdtHelperToolRegistry,
@@ -93,8 +120,14 @@ export function registerSendToWorkerTool(
         .enum(['queue', 'steer'])
         .optional()
         .describe('投递方式:queue(默认)= 直发或排队;steer = 尝试插进 worker 当前 turn'),
+      context_policy: z
+        .enum(['keep', 'clear', 'compact'])
+        .optional()
+        .describe(
+          '派发前的上下文策略:keep(默认)= 续用现有上下文;clear = 清空旧上下文后开新一代会话;compact = 等真实压缩完成后再派发。clear/compact 要求 worker 空闲且不能与 steer 同用。',
+        ),
     },
-    handler: async ({ target_session_id, message, delivery }) => {
+    handler: async ({ target_session_id, message, delivery, context_policy }) => {
       const ctx = deps.getSessionContext?.();
       if (!ctx?.sessionId) {
         return errorPayload('LEAD_NOT_SUPPORTED', '当前 session 类型不支持作为 Lead, 已拒绝 worker 控制操作。');
@@ -104,13 +137,16 @@ export function registerSendToWorkerTool(
         targetSessionId: target_session_id,
         message,
         ...(delivery ? { delivery } : {}),
+        ...(context_policy ? { contextPolicy: context_policy } : {}),
       });
 
       if (!result.ok) {
         if (result.errorCode === 'HOST_NOT_READY') {
           return errorPayload('HOST_NOT_READY', `${BRAND_NAME} 主进程会话服务尚未就绪。`);
         }
-        return errorPayload(result.errorCode, result.message);
+        return errorPayload(result.errorCode, result.message, result.contextOutcome
+          ? { context_outcome: result.contextOutcome }
+          : {});
       }
 
       return okPayload({
@@ -124,6 +160,7 @@ export function registerSendToWorkerTool(
         target_last_user_send_at: result.targetLastUserSendAt,
         ...(result.queuedMessageId ? { queued_message_id: result.queuedMessageId } : {}),
         ...(result.steerFallbackReason ? { steer_fallback_reason: result.steerFallbackReason } : {}),
+        ...(result.contextOutcome ? { context_outcome: result.contextOutcome } : {}),
       });
     },
   });

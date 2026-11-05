@@ -658,6 +658,10 @@ export const MAKER_INVOKE = {
   /** New wire contract for automatic done acknowledgements; old peers reject it safely. */
   WORKER_ACKNOWLEDGE_DONE: 'maker:worker:acknowledge-done',
   WORKER_ARCHIVE: 'maker:worker:archive',
+  /** UI-initiated dispatch with an optional context policy; old peers reject the channel. */
+  WORKER_SEND: 'maker:worker:send',
+  /** Per-worker capability + last safe context audit for the UI. */
+  WORKER_CONTEXT_STATUS: 'maker:worker:context-status',
   TEAM_END: 'maker:team:end',
   COLLABORATION_SETTINGS_GET: 'maker:collaboration-settings:get',
   COLLABORATION_SETTINGS_SET: 'maker:collaboration-settings:set',

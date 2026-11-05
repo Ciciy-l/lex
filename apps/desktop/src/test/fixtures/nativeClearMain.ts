@@ -11,6 +11,7 @@ import { InputClearReceipts } from '../../main/maker-ipc/inputClearReceipts.js';
 import { withNativeHistoryClear } from '../../main/maker-ipc/nativeHistoryClear.js';
 import { readNativeHistoryForClear } from '../../main/maker-ipc/nativeHistoryJournal.js';
 import { createRehydrateCloseSuppression } from '../../main/maker-host/rehydrateCloseSuppression.js';
+import { createHostSessionClearService } from '../../main/maker-ipc/hostSessionClearService.js';
 
 /** Compile only the production clear entry points; importing register itself
  * would initialize unrelated Electron/provider singletons in a SQLite test. */
@@ -53,10 +54,39 @@ export function productionClearFixture(client: DbClient, root: string, initial?:
       calls.push('persist'); await hooks.beforePersist?.(); return commitSessionContextClear(client, id, at, expected);
     }, withNativeHistoryClear, readNativeHistoryForClear, log: { error() {} },
   };
+  // The IPC handler now delegates to the shared clear transaction. Compile the
+  // captured native-clear dependency function first, then construct the same
+  // service binding register.ts uses so the fixture exercises production logic.
+  const captureCode = transpileModule(
+    capture + '\nreturn captureNativeHistoryClearDependencies;',
+    { compilerOptions: { target: ScriptTarget.ES2022 } },
+  ).outputText;
+  const captureNativeHistoryClearDependencies = new Function(
+    ...Object.keys(dependencies),
+    captureCode,
+  )(...Object.values(dependencies)) as () => never;
+  const hostSessionClearHolder = createHostSessionClearService({
+    beginRemoteInputClearGate: dependencies.beginRemoteInputClearGate,
+    endRemoteInputClearGate: dependencies.endRemoteInputClearGate,
+    captureNativeHistoryClearDependencies,
+    readNativeHistoryForClear,
+    withNativeHistoryClear,
+    clearSessionContextInDb: dependencies.clearSessionContextInDb,
+    clearInputProjection: ((sessionId: string) =>
+      dependencies.inputCoordinator.clearSession(sessionId)) as never,
+    discardWorkingDirectoryRecovery: () => undefined,
+    resetAutomaticRecoveryForExplicitStop: () => undefined,
+    invalidateAgentHandoff: dependencies.agentHandoffPending.invalidate,
+    sealAgentHandoffClearBoundary: dependencies.agentHandoffPending.sealClearBoundary,
+    notifyQueueEmptied: () => undefined,
+    clearGoal: () => undefined,
+    logError: () => undefined,
+  });
+  const allDependencies = { ...dependencies, hostSessionClearHolder };
   const code = transpileModule(capture + '\nreturn (' + callback + ');', { compilerOptions: { target: ScriptTarget.ES2022 } }).outputText;
-  const handler = new Function(...Object.keys(dependencies), code)(...Object.values(dependencies));
+  const handler = new Function(...Object.keys(allDependencies), code)(...Object.values(allDependencies));
   const readCode = transpileModule(capture + String.fromCharCode(10) + 'return (' + readCallback + ');', { compilerOptions: { target: ScriptTarget.ES2022 } }).outputText;
-  const readHandler = new Function(...Object.keys(dependencies), readCode)(...Object.values(dependencies));
+  const readHandler = new Function(...Object.keys(allDependencies), readCode)(...Object.values(allDependencies));
   return { calls, replaceExecutor: (next?: Session) => { current = next; },
     currentExecutor: () => current, receipts, changeOwner: () => { generation++; },
     read: (at = 500, id = 's1') => readHandler(undefined, id, { clearRequestAt: new Date(at).toISOString() }),
