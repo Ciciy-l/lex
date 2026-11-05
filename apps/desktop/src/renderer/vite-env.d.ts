@@ -4881,6 +4881,16 @@ interface ElectronAPI {
         expectedStatus?: 'done',
       ) => Promise<unknown>;
       archiveWorker: (leadSessionId: string, workerId: string) => Promise<unknown>;
+      sendWorkerTask: (input: {
+        leadSessionId: string;
+        workerId: string;
+        message: string;
+        contextPolicy?: 'keep' | 'clear' | 'compact';
+      }) => Promise<unknown>;
+      getWorkerContextStatus: (
+        leadSessionId: string,
+        workerId: string,
+      ) => Promise<unknown>;
       endTeam: (leadSessionId: string) => Promise<unknown>;
       getCollaborationSettings: () => Promise<unknown>;
       setCollaborationSetting: (key: string, value: number) => Promise<unknown>;
@@ -4893,6 +4903,14 @@ interface ElectronAPI {
         sessionId: string,
         opts?: { limit?: number; before?: string; beforeTs?: number },
       ) => Promise<import('@/lib/ccAgent.types').Message[]>;
+      listCleared: (
+        sessionId: string,
+        opts?: { limit?: number; before?: string },
+      ) => Promise<{
+        clearedAt: number | null;
+        messages: import('@/lib/ccAgent.types').Message[];
+        hasMore: boolean;
+      }>;
       estimatedSessionValue: (sessionId: string) => Promise<{
         totalValueMoney?: import('../shared/regionalMoney').RegionalMoney | null;
         totalValueUsd?: number;

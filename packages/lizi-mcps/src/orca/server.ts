@@ -60,6 +60,8 @@ import {
   registerArchiveWorkerTool,
   registerListAvailableModelsTool,
   type ModelDescriptor,
+  type OrcaContextOutcome,
+  type OrcaContextPolicy,
   type OrcaMessageDelivery,
   type QueuedMessageControlErrorCode,
   type QueuedMessageSteerReason,
@@ -132,6 +134,8 @@ export interface OrcaMcpDeps {
     message: string;
     /** 仅模型显式选择时传入;缺省等价 'queue'。 */
     delivery?: OrcaMessageDelivery;
+    /** 仅模型显式选择时传入;缺省 keep。 */
+    contextPolicy?: OrcaContextPolicy;
   }) => Promise<
     ControlResult<
       {
@@ -142,9 +146,21 @@ export interface OrcaMcpDeps {
         queuedMessageId?: string;
         /** 请求 steer 但消息进了队列时的原因。 */
         steerFallbackReason?: SteerFallbackReason;
+        /** 显式策略的实际结果;缺省 keep 的旧调用不带。 */
+        contextOutcome?: OrcaContextOutcome;
       },
-      'NOT_FOUND' | 'ARCHIVED' | 'DELETED' | 'BUSY' | 'AGENT_NOT_READY' | 'INVALID_ARGS'
-    >
+      | 'NOT_FOUND'
+      | 'ARCHIVED'
+      | 'DELETED'
+      | 'BUSY'
+      | 'AGENT_NOT_READY'
+      | 'INVALID_ARGS'
+      | 'CONTEXT_POLICY_UNSUPPORTED'
+      | 'CONTEXT_PREPARATION_FAILED'
+    > & {
+      /** 失败但上下文已不可逆地清空时的安全结果。 */
+      contextOutcome?: OrcaContextOutcome;
+    }
   >;
   /** 原子预留替换输入并请求优雅停止当前 worker turn。 */
   interruptWorker: (params: {

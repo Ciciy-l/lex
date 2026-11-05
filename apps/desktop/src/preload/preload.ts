@@ -5504,6 +5504,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
       },
       archiveWorker: (leadSessionId: string, workerId: string): Promise<unknown> =>
         ipcRenderer.invoke('maker:worker:archive', { leadSessionId, workerId }),
+      sendWorkerTask: (input: {
+        leadSessionId: string;
+        workerId: string;
+        message: string;
+        contextPolicy?: 'keep' | 'clear' | 'compact';
+      }): Promise<unknown> => ipcRenderer.invoke('maker:worker:send', input),
+      getWorkerContextStatus: (
+        leadSessionId: string,
+        workerId: string,
+      ): Promise<unknown> =>
+        ipcRenderer.invoke('maker:worker:context-status', { leadSessionId, workerId }),
       endTeam: (leadSessionId: string): Promise<unknown> =>
         ipcRenderer.invoke('maker:team:end', leadSessionId),
       getCollaborationSettings: (): Promise<unknown> =>
@@ -5522,6 +5533,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
         sessionId: string,
         opts?: { limit?: number; before?: string; beforeTs?: number },
       ): Promise<unknown> => ipcRenderer.invoke('local-db:messages:list', sessionId, opts),
+      /** Local-only audit read for transcript rows hidden by /clear. */
+      listCleared: (
+        sessionId: string,
+        opts?: { limit?: number; before?: string },
+      ): Promise<unknown> => ipcRenderer.invoke('local-db:messages:list-cleared', sessionId, opts),
       estimatedSessionValue: (sessionId: string): Promise<unknown> =>
         ipcRenderer.invoke('local-db:messages:estimatedSessionValue', sessionId),
       around: (

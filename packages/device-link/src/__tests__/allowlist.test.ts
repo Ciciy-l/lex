@@ -133,6 +133,15 @@ describe('REMOTE_INVOKE_ALLOWLIST', () => {
     expect(REMOTE_INVOKE_ALLOWLIST.has('local-db:orca-workflows:list-workers-by-leads')).toBe(false);
   });
 
+  it('keeps Orca context-policy dispatch and cleared-history audit local-only', () => {
+    // Explicit clear/compact must not cross an old peer that would drop the
+    // field. Old hosts reject the unknown channel; new controllers are gated by
+    // supportsOrcaWorkerContextPolicy and never call this adapter remotely.
+    expect(REMOTE_INVOKE_ALLOWLIST.has('maker:worker:send')).toBe(false);
+    expect(REMOTE_INVOKE_ALLOWLIST.has('maker:worker:context-status')).toBe(false);
+    expect(REMOTE_INVOKE_ALLOWLIST.has('local-db:messages:list-cleared')).toBe(false);
+  });
+
   it('放行 workflow 逐 agent 进度树只读(记录文件真相在被控端 HOME,控制端本机读必落空)', () => {
     expect(REMOTE_INVOKE_ALLOWLIST.has('maker:get-workflow-progress')).toBe(true);
   });

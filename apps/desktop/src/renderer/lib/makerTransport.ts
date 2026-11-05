@@ -758,6 +758,8 @@ export interface RoutableOrcaWorkflows {
   switchFocus: FullOrca['switchFocus'];
   idleWorker: FullOrca['idleWorker'];
   archiveWorker: FullOrca['archiveWorker'];
+  sendWorkerTask: FullOrca['sendWorkerTask'];
+  getWorkerContextStatus: FullOrca['getWorkerContextStatus'];
   endTeam: FullOrca['endTeam'];
   getCollaborationSettings: FullOrca['getCollaborationSettings'];
 }
@@ -801,6 +803,19 @@ function remoteOrcaWorkflows(deviceId: string): RoutableOrcaWorkflows {
       invokeRemote(deviceId, 'maker:worker:archive', [
         { leadSessionId, workerId },
       ])) as FullOrca['archiveWorker'],
+    // Deliberately not allowlisted. The controller's local dispatch composer is
+    // hidden for remote Leads; if a future caller reaches this adapter, fail
+    // closed instead of dropping context_policy and pretending success.
+    sendWorkerTask: (async () => {
+      throw new Error(
+        '[PRECONDITION_FAILED] worker dispatch from a remote controller is not supported; ask the remote Lead to dispatch',
+      );
+    }) as FullOrca['sendWorkerTask'],
+    getWorkerContextStatus: (async () => {
+      throw new Error(
+        '[PRECONDITION_FAILED] worker context status is local-only; old or remote hosts cannot negotiate it',
+      );
+    }) as FullOrca['getWorkerContextStatus'],
     endTeam: t('maker:team:end') as FullOrca['endTeam'],
     getCollaborationSettings: t(
       'maker:collaboration-settings:get',

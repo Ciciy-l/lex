@@ -6,6 +6,7 @@ import {PluginTaskError} from '../pluginTaskService.js';
 import { AcceptedCallbackDispatchCancelled, runAcceptedCallback } from '../acceptedCallbackRunner';
 
 import type { AgentInputQueuedMessage } from '../../../shared/agentInputQueue';
+import type { OrcaWorkerContextSupport } from '../../../shared/orcaContextPolicy';
 import {
   createOrcaTeamService,
   findFocusTargetWorker,
@@ -3314,4 +3315,198 @@ it('release closes under its own send fence and fails closed on close error',asy
  vi.mocked(deps.archiveWorkerSession).mockClear();vi.mocked(deps.closeWorkerSessionIfIdle).mockRejectedValue(new Error('close failed'));
  expect((await service.archiveWorker({callerLeadSessionId:'lead-1',workerId:'worker-1',onlyIfIdle:true})).ok).toBe(false);
  expect(deps.archiveWorkerSession).not.toHaveBeenCalled();
+});
+
+describe('dispatch context policy', () => {
+  type Prep = import('../orcaTeamService').OrcaContextPreparationResult;
+  function createContextHarness(opts: {
+    support?: OrcaWorkerContextSupport;
+    prepare?: Prep;
+    live?: boolean;
+    running?: boolean;
+    pending?: boolean;
+  } = {}) {
+    const liveSession = { isTurnRunning: () => opts.running === true };
+    const harness = createDeps({
+      getLiveSession: vi.fn(() => (opts.live === false ? null : liveSession)),
+      getWorkerContextPolicySupport: vi.fn(async () =>
+        opts.support ?? ({ clear: { supported: true }, compact: { supported: true } } satisfies OrcaWorkerContextSupport),
+      ),
+      prepareWorkerContext: vi.fn(async () =>
+        opts.prepare ?? ({ ok: true, outcome: 'cleared', historyRetained: true } satisfies Prep),
+      ),
+      recordContextAudit: vi.fn(async () => undefined),
+      hasPendingWorkerInput: vi.fn(async () => opts.pending === true),
+    });
+    const dispatch = vi.fn(async (
+      params: Parameters<OrcaTeamServiceDeps['dispatchWorkerMessage']>[0],
+    ): Promise<DispatchWorkerMessageResult> => {
+      await params.prepareContext?.();
+      await params.onAccepted?.();
+      return {
+        ok: true,
+        mode: 'dispatched',
+        clientId: 'client-context',
+        dispatchOutcome: { kind: 'session-dispatch', source: params.dispatchMeta.source, dispatched: true },
+        targetTitle: 'Worker',
+        targetLastUserSendAt: null,
+      };
+    });
+    harness.deps.dispatchWorkerMessage = dispatch;
+    return { ...harness, dispatch, liveSession };
+  }
+
+  it('rejects steer combined with an explicit policy before any host work', async () => {
+    const { service, deps } = createContextHarness();
+    const result = await service.sendToWorker({
+      callerLeadSessionId: 'lead-1',
+      targetSessionId: 'worker-session-1',
+      message: 'task',
+      delivery: 'steer',
+      contextPolicy: 'clear',
+    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'INVALID_ARGS' });
+    expect(deps.getWorkerContextPolicySupport).not.toHaveBeenCalled();
+    expect(deps.resumeWorkerSession).not.toHaveBeenCalled();
+    expect(deps.dispatchWorkerMessage).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unsupported policy without resuming or dispatching', async () => {
+    const { service, deps } = createContextHarness({
+      support: { clear: { supported: true }, compact: { supported: false, reason: 'native-completion-unverified' } },
+    });
+    const result = await service.sendToWorker({
+      callerLeadSessionId: 'lead-1',
+      targetSessionId: 'worker-session-1',
+      message: 'task',
+      contextPolicy: 'compact',
+    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'CONTEXT_POLICY_UNSUPPORTED' });
+    expect((result as { message: string }).message).toContain('native-completion-unverified');
+    expect(deps.resumeWorkerSession).not.toHaveBeenCalled();
+    expect(deps.dispatchWorkerMessage).not.toHaveBeenCalled();
+    expect(deps.recordContextAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ policy: 'compact', outcome: 'refused', reason: 'native-completion-unverified' }),
+      null,
+    );
+  });
+
+  it('rejects a busy or queued worker before clear', async () => {
+    const busy = createContextHarness({ running: true });
+    expect(await busy.service.sendToWorker({
+      callerLeadSessionId: 'lead-1',
+      targetSessionId: 'worker-session-1',
+      message: 'task',
+      contextPolicy: 'clear',
+    })).toMatchObject({ ok: false, errorCode: 'BUSY' });
+    expect(busy.deps.prepareWorkerContext).not.toHaveBeenCalled();
+
+    const queued = createContextHarness({ pending: true });
+    expect(await queued.service.sendToWorker({
+      callerLeadSessionId: 'lead-1',
+      targetSessionId: 'worker-session-1',
+      message: 'task',
+      contextPolicy: 'compact',
+    })).toMatchObject({ ok: false, errorCode: 'BUSY' });
+    expect(queued.deps.dispatchWorkerMessage).not.toHaveBeenCalled();
+  });
+
+  it('clears, restarts the worker and reports a resumed dispatch', async () => {
+    const { service, deps } = createContextHarness({ live: true });
+    const result = await service.sendToWorker({
+      callerLeadSessionId: 'lead-1',
+      targetSessionId: 'worker-session-1',
+      message: 'task',
+      contextPolicy: 'clear',
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      wakeKind: 'resumed',
+      contextOutcome: { policy: 'clear', outcome: 'cleared', applied: true },
+    });
+    expect(vi.mocked(deps.prepareWorkerContext!).mock.calls[0]?.[0]).toMatchObject({
+      policy: 'clear',
+      worker: expect.objectContaining({ id: 'worker-1' }),
+    });
+    expect(deps.resumeWorkerSession).toHaveBeenCalledTimes(1);
+    expect(deps.dispatchWorkerMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ requireIdle: true, prepareContext: expect.any(Function) }),
+    );
+    expect(deps.recordContextAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ policy: 'clear', outcome: 'cleared' }),
+      null,
+    );
+  });
+
+  it('compacts without restarting and keeps the live wake kind', async () => {
+    const { service, deps } = createContextHarness({
+      live: true,
+      prepare: { ok: true, outcome: 'compacted', compactNoop: true },
+    });
+    const result = await service.sendToWorker({
+      callerLeadSessionId: 'lead-1',
+      targetSessionId: 'worker-session-1',
+      message: 'task',
+      contextPolicy: 'compact',
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      wakeKind: 'already-active',
+      contextOutcome: { policy: 'compact', outcome: 'compacted', applied: true, compactNoop: true },
+    });
+    expect(deps.resumeWorkerSession).not.toHaveBeenCalled();
+  });
+
+  it('keeps the irreversible clear outcome when dispatch fails afterward', async () => {
+    const { service, deps, dispatch } = createContextHarness({ live: true });
+    dispatch.mockImplementationOnce(async (params) => {
+      await params.prepareContext?.();
+      return {
+        ok: false,
+        dispatchOutcome: {
+          kind: 'host-send',
+          accepted: false,
+          code: 'SEND_FAILED',
+          message: 'vendor refused',
+          source: params.dispatchMeta.source,
+          context: params.dispatchMeta.context,
+        },
+      };
+    });
+    const result = await service.sendToWorker({
+      callerLeadSessionId: 'lead-1',
+      targetSessionId: 'worker-session-1',
+      message: 'task',
+      contextPolicy: 'clear',
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      errorCode: 'AGENT_NOT_READY',
+      contextOutcome: { policy: 'clear', outcome: 'cleared', applied: true },
+    });
+    expect(deps.recordContextAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ policy: 'clear', outcome: 'cleared', reason: 'dispatch-failed' }),
+      null,
+    );
+  });
+
+  it('maps a host preparation failure to a preparation error with zero dispatch', async () => {
+    const { service, deps } = createContextHarness({
+      live: true,
+      prepare: { ok: false, errorCode: 'TIMEOUT', message: 'compaction timed out' },
+    });
+    const result = await service.sendToWorker({
+      callerLeadSessionId: 'lead-1',
+      targetSessionId: 'worker-session-1',
+      message: 'task',
+      contextPolicy: 'compact',
+    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'CONTEXT_PREPARATION_FAILED' });
+    // The dispatcher hook is entered, but prepare rejects before any vendor send;
+    // the service must surface that failure instead of treating it as a dispatch.
+    expect(deps.recordContextAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ policy: 'compact', outcome: 'failed', reason: 'timeout' }),
+      null,
+    );
+  });
 });

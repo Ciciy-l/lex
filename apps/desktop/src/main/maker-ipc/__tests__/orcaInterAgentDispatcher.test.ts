@@ -1,7 +1,7 @@
 import type { SessionSendOptions, SessionSendResult, UserMessage } from '@cindy/maker-core';
 import { AUTO_REVIEW_DELEGATED_CONTINUATION, appendAutoReviewUserIntent, AUTO_REVIEW_USER_INTENT, ORCA_NATIVE_BODY, type OrcaNativeBodySource } from '@cindy/maker-core';
 import { readOrcaNativeBody } from '../orcaNativeInput.js';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 
@@ -10,6 +10,11 @@ import {
   createOrcaInterAgentDispatcher,
   type OrcaInterAgentDispatcherDeps,
 } from '../orcaInterAgentDispatcher.js';
+import {
+  __resetOrcaContextOperationFenceForTest,
+  beginOrcaContextOperation,
+  releaseOrcaContextOperation,
+} from '../orcaContextOperationFence.js';
 
 const mocks = vi.hoisted(() => ({
   logger: {
@@ -891,10 +896,10 @@ describe('Orca lead/worker dispatcher', () => {
       reserveNextInput: vi.fn((_id, _item, opts) => { opts.onReserved(); return { reserved: true }; }),
     };
     const source = readFileSync(new URL('../register.ts', import.meta.url), 'utf8');
-    const start = source.indexOf('    reserveNextQueuedMessage: async');
+    const start = source.indexOf('    prepareQueuedMessageReserve: async');
     const adapter = source.slice(start, source.indexOf('    sendToSessionInternal,', start));
-    const reserveNextQueuedMessage = new Function('inputCoordinator', ts.transpileModule(`return ({${adapter}}).reserveNextQueuedMessage;`, {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)(inputCoordinator);
-    const h = createHarness({ reserveNextQueuedMessage });
+    const queueAdapters = new Function('inputCoordinator', ts.transpileModule(`return ({${adapter}});`, {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)(inputCoordinator);
+    const h = createHarness(queueAdapters);
     const result = await h.dispatcher.reserveNextOrcaInterAgentMessage({
       targetSessionId: 'target-session', rawContent: 'replacement', source: 'lead', senderLabel: 'Lead',
       meta: { source: 'orca', context: 'restore-check' }, onReserved: stop,
@@ -904,6 +909,29 @@ describe('Orca lead/worker dispatcher', () => {
     expect(result.ok).toBe(!revoked);
     expect(inputCoordinator.reserveNextInput).toHaveBeenCalledTimes(revoked ? 0 : 1);
     expect(stop).toHaveBeenCalledTimes(revoked ? 0 : 1);
+  });
+
+  it('restores the queue before the synchronous enqueue adapter commits', async () => {
+    let restored = false;
+    const enqueued: AgentInputQueuedMessage[] = [];
+    const inputCoordinator = {
+      ensureQueueRestored: async () => { restored = true; },
+      enqueue: (_sessionId: string, item: AgentInputQueuedMessage) => { enqueued.push(item); },
+    };
+    const source = readFileSync(new URL('../register.ts', import.meta.url), 'utf8');
+    const start = source.indexOf('    prepareQueuedMessageEnqueue: async');
+    const adapter = source.slice(start, source.indexOf('    sendToSessionInternal,', start));
+    const queueAdapters = new Function('inputCoordinator', ts.transpileModule(`return ({${adapter}});`, {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)(inputCoordinator);
+    const item = { clientId: 'synthetic-prep' } as AgentInputQueuedMessage;
+
+    await queueAdapters.prepareQueuedMessageEnqueue('target-session');
+    expect(restored).toBe(true);
+    // Preparation must not mutate the queue; the dispatcher commits only after
+    // its final synchronous fence check.
+    expect(enqueued).toEqual([]);
+
+    queueAdapters.enqueueQueuedMessage('target-session', item);
+    expect(enqueued).toEqual([item]);
   });
 
   it('discards the accepted callback when priority reservation throws', async () => {
@@ -942,4 +970,179 @@ it.each(['Do not publish', ''])('ordinary live continuation retains the last acc
   });
   const result=await h.dispatcher.dispatchOrEnqueueOrcaInterAgentMessage({targetSessionId:'target-session',rawContent:'Publish now',source:'lead',senderLabel:'Lead',meta:{source:'orca',context:'ordinary-live'}});
   expect(result.ok).toBe(true);
+});
+
+describe('context preparation before Orca dispatch', () => {
+  const params = {
+    targetSessionId: 'target-session',
+    rawContent: 'task',
+    source: 'lead' as const,
+    senderLabel: 'Lead',
+    meta: { source: 'orca', context: 'context-test' },
+  };
+
+  it('runs prepareContext inside the send lock before the vendor send', async () => {
+    const order: string[] = [];
+    const h = createHarness({
+      withSendToSessionLock: async (_id, operation) => {
+        order.push('lock');
+        return operation();
+      },
+    });
+    h.liveSession.send.mockImplementation(async (_message, opts) => {
+      order.push('send');
+      await opts?.onAccepted?.();
+      return { accepted: true };
+    });
+    const result = await h.dispatcher.dispatchOrEnqueueOrcaInterAgentMessage({
+      ...params,
+      prepareContext: async () => {
+        order.push('prepare');
+      },
+      requireIdle: true,
+    });
+    expect(result).toMatchObject({ ok: true, mode: 'dispatched' });
+    expect(order).toEqual(['lock', 'prepare', 'send']);
+  });
+
+  it('aborts with zero send or queue when prepareContext throws', async () => {
+    const h = createHarness();
+    const result = await h.dispatcher.dispatchOrEnqueueOrcaInterAgentMessage({
+      ...params,
+      prepareContext: async () => {
+        throw new Error('context preparation failed');
+      },
+      requireIdle: true,
+    });
+    expect(result.ok).toBe(false);
+    expect(h.liveSession.send).not.toHaveBeenCalled();
+    expect(h.queuedItems).toHaveLength(0);
+    expect(h.deps.sendToSessionInternal).not.toHaveBeenCalled();
+  });
+
+  it('fails closed instead of queueing when requireIdle sees a busy target', async () => {
+    const h = createHarness({ shouldQueueNewTurn: () => true });
+    const result = await h.dispatcher.dispatchOrEnqueueOrcaInterAgentMessage({
+      ...params,
+      prepareContext: vi.fn(),
+      requireIdle: true,
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect(h.queuedItems).toHaveLength(0);
+    expect(h.liveSession.send).not.toHaveBeenCalled();
+  });
+
+  it('fails closed instead of queueing after a SESSION_RUNNING race', async () => {
+    const h = createHarness();
+    h.liveSession.send.mockRejectedValue(
+      Object.assign(new Error('SESSION_RUNNING: busy'), { code: 'SESSION_RUNNING' }),
+    );
+    const result = await h.dispatcher.dispatchOrEnqueueOrcaInterAgentMessage({
+      ...params,
+      prepareContext: vi.fn(),
+      requireIdle: true,
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect(h.queuedItems).toHaveLength(0);
+  });
+
+  it('does not fall through to the generic resume path after preparation', async () => {
+    const h = createHarness({ getLiveSession: vi.fn(() => null) });
+    const result = await h.dispatcher.dispatchOrEnqueueOrcaInterAgentMessage({
+      ...params,
+      prepareContext: vi.fn(),
+      requireIdle: true,
+    });
+    expect(result.ok).toBe(false);
+    expect(h.deps.sendToSessionInternal).not.toHaveBeenCalled();
+    expect(h.queuedItems).toHaveLength(0);
+  });
+});
+
+
+describe('context operation fence queue gate', () => {
+  const params = {
+    targetSessionId: 'target-session',
+    rawContent: 'late task',
+    source: 'lead' as const,
+    senderLabel: 'Lead',
+    meta: { source: 'orca', context: 'fence-test' },
+  };
+
+  beforeEach(() => {
+    __resetOrcaContextOperationFenceForTest();
+  });
+
+  afterEach(() => {
+    __resetOrcaContextOperationFenceForTest();
+  });
+
+  it('rejects a direct send while a clear fence is active, without vendor send', async () => {
+    const h = createHarness();
+    const token = beginOrcaContextOperation('target-session', 'clear');
+    const result = await h.dispatcher.dispatchOrEnqueueOrcaInterAgentMessage(params);
+    expect(result.ok).toBe(false);
+    expect(h.liveSession.send).not.toHaveBeenCalled();
+    expect(h.deps.sendToSessionInternal).not.toHaveBeenCalled();
+    releaseOrcaContextOperation(token);
+  });
+
+  it.each(['clear', 'compact'] as const)(
+    'rejects queue-only dispatch during an active %s fence before accepted/enqueue',
+    async (policy) => {
+      const h = createHarness({ shouldQueueNewTurn: () => true });
+      const token = beginOrcaContextOperation('target-session', policy);
+      const accepted = vi.fn();
+      const result = await h.dispatcher.dispatchOrEnqueueOrcaInterAgentMessage({
+        ...params,
+        onAccepted: accepted,
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        dispatchOutcome: { kind: 'host-send', code: 'SESSION_RUNNING' },
+      });
+      if (result.ok) throw new Error('expected rejection');
+      expect(result.dispatchOutcome.message).toContain('retry');
+      expect(accepted).not.toHaveBeenCalled();
+      expect(h.deps.enqueueQueuedMessage).not.toHaveBeenCalled();
+      expect(h.queuedItems).toHaveLength(0);
+      expect(h.deps.sendToSessionInternal).not.toHaveBeenCalled();
+      releaseOrcaContextOperation(token);
+    },
+  );
+
+  it('dispatches the same content exactly once after the fence releases', async () => {
+    const h = createHarness({ shouldQueueNewTurn: () => true });
+    const accepted = vi.fn();
+    const token = beginOrcaContextOperation('target-session', 'clear');
+    expect(await h.dispatcher.dispatchOrEnqueueOrcaInterAgentMessage({
+      ...params,
+      onAccepted: accepted,
+    })).toMatchObject({ ok: false });
+    expect(h.deps.enqueueQueuedMessage).not.toHaveBeenCalled();
+
+    releaseOrcaContextOperation(token);
+    expect(await h.dispatcher.dispatchOrEnqueueOrcaInterAgentMessage({
+      ...params,
+      onAccepted: accepted,
+    })).toMatchObject({ ok: true, mode: 'queued', clientId: 'client-1' });
+    expect(h.deps.enqueueQueuedMessage).toHaveBeenCalledOnce();
+    expect(h.queuedItems).toHaveLength(1);
+    expect(h.queuedItems[0]?.text).toContain('late task');
+    // Acceptance side effects still belong to the queued item's drain, not to
+    // this receipt; no deferred replay can run later.
+    expect(accepted).not.toHaveBeenCalled();
+  });
+
+  it('allows the operation own token to dispatch', async () => {
+    const h = createHarness();
+    const token = beginOrcaContextOperation('target-session', 'compact');
+    const result = await h.dispatcher.dispatchOrEnqueueOrcaInterAgentMessage({
+      ...params,
+      contextOperationToken: token,
+    });
+    expect(result).toMatchObject({ ok: true, mode: 'dispatched' });
+    expect(h.liveSession.send).toHaveBeenCalledOnce();
+    releaseOrcaContextOperation(token);
+  });
 });

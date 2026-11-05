@@ -1,6 +1,16 @@
 import type { AgentKind } from '@cindy/maker-core';
 
 import type { AgentInputQueuedMessage } from '../../shared/agentInputQueue.js';
+import { captureOrcaContextOwner, type OrcaContextOwnerScope } from './orcaContextOwner.js';
+import { releaseOrcaContextOperation } from './orcaContextOperationFence.js';
+import type {
+  OrcaContextAuditEvent,
+  OrcaContextOutcome,
+  OrcaContextPolicy,
+  OrcaWorkerContextSupport,
+} from '../../shared/orcaContextPolicy.js';
+
+export type { OrcaContextAuditEvent } from '../../shared/orcaContextPolicy.js';
 import { createHostSendFailure } from '../maker-host/send-outcome.js';
 import type {
   CollabDispatchFailureOutcome,
@@ -55,7 +65,15 @@ export interface OrcaWorkerLinkSnapshot {
 
 /** send_to_worker 对外允许暴露的错误码，内部 host-send code 必须在 service 边界归一。 */
 export type SendToWorkerFailureCode =
-  'NOT_FOUND' | 'ARCHIVED' | 'DELETED' | 'BUSY' | 'AGENT_NOT_READY' | 'INVALID_ARGS' | 'INTERNAL';
+  | 'NOT_FOUND'
+  | 'ARCHIVED'
+  | 'DELETED'
+  | 'BUSY'
+  | 'AGENT_NOT_READY'
+  | 'INVALID_ARGS'
+  | 'CONTEXT_POLICY_UNSUPPORTED'
+  | 'CONTEXT_PREPARATION_FAILED'
+  | 'INTERNAL';
 
 /** provider / IPC 共享的 send_to_worker 结果；worker 派活不允许创建新 session。 */
 export type SendToWorkerResult =
@@ -69,11 +87,15 @@ export type SendToWorkerResult =
       queuedMessageId?: string;
       /** 请求插话却进了队列时的原因。 */
       steerFallbackReason?: OrcaSteerFallbackReason;
+      /** 显式 context policy 的实际结果；keep/旧调用不带。 */
+      contextOutcome?: OrcaContextOutcome;
     }
   | {
       ok: false;
       errorCode: SendToWorkerFailureCode;
       message: string;
+      /** clear/compact 已不可逆地执行但派发失败时的可读结果。 */
+      contextOutcome?: OrcaContextOutcome;
     };
 
 export type WorkerInterruptStopOutcome =
@@ -110,11 +132,36 @@ export type DispatchWorkerMessageResult =
 export interface DispatchWorkerTaskParams {
   targetSessionId: string;
   message: string;
+  /** Trusted internal callers may request a context policy too. */
+  contextPolicy?: OrcaContextPolicy;
   dispatchMeta: {
     source: string;
     context: string;
   };
 }
+
+/** Host preparation outcome for an explicit clear/compact request. */
+export type OrcaContextPreparationResult =
+  | {
+      ok: true;
+      outcome: 'cleared' | 'compacted';
+      /** compact only: native compaction reported nothing to summarize. */
+      compactNoop?: boolean;
+      /** clear only: pre-clear messages remain readable through the audit entry. */
+      historyRetained?: boolean;
+      /** Opaque fence token; only this operation may dispatch after prepare. */
+      operationToken?: symbol;
+    }
+  | {
+      ok: false;
+      errorCode: 'UNSUPPORTED' | 'BUSY' | 'FAILED' | 'TIMEOUT' | 'ABORTED';
+      message: string;
+      /** clear only: the irreversible clear completed, but residency/dispatch did not. */
+      applied?: 'cleared';
+      /** Present when a native operation is still pending and the host fence stays active. */
+      operationToken?: symbol;
+      keepFence?: boolean;
+    };
 
 /** worker 派活的 domain 结果，保留 queued 与 dispatchOutcome 供不同 adapter 自行翻译。 */
 export type DispatchWorkerTaskResult =
@@ -295,6 +342,16 @@ export interface OrcaTeamServiceDeps {
     onAccepted?: () => void | Promise<void>;
     onAcceptedRollback?: () => void | Promise<void>;
     onAcceptedCommit?: () => void | Promise<void>;
+    /**
+     * Runs inside the same per-session send lock as the real dispatch, after
+     * unhealthy-session preparation and before the live session is re-read.
+     * A throw aborts dispatch; nothing has been accepted or queued yet.
+     */
+    prepareContext?: () => Promise<void>;
+    /** clear/compact must never silently queue behind a busy worker. */
+    requireIdle?: boolean;
+    /** The operation's own dispatch may cross the host context fence. */
+    contextOperationToken?: symbol;
   }): Promise<DispatchWorkerMessageResult>;
   reserveWorkerMessage(params: {
     targetSessionId: string;
@@ -308,6 +365,33 @@ export interface OrcaTeamServiceDeps {
     onAcceptedRollback?: () => void | Promise<void>;
     onAcceptedCommit?: () => void | Promise<void>;
   }): Promise<DispatchWorkerMessageResult>;
+  /**
+   * Host-observed capability for `context_policy=clear|compact`. Missing or
+   * throwing implementations are treated as unsupported, never as keep.
+   */
+  getWorkerContextPolicySupport?(
+    worker: OrcaWorkerRecordSnapshot,
+  ): Promise<OrcaWorkerContextSupport>;
+  /**
+   * Host clear/compact primitive. It must return ok only after the real host
+   * boundary (native retirement + DB commit, or proven native compact
+   * completion). `applied: 'cleared'` is returned when the clear succeeded but
+   * post-clear residency failed.
+   */
+  prepareWorkerContext?(
+    params: {
+      worker: OrcaWorkerRecordSnapshot;
+      link: OrcaWorkerLinkSnapshot;
+      policy: 'clear' | 'compact';
+    },
+    assertCurrent?: () => Promise<void>,
+    owner?: OrcaContextOwnerScope | null,
+  ): Promise<OrcaContextPreparationResult>;
+  /** Best-effort durable audit; a failure must never change dispatch semantics. */
+  recordContextAudit?(
+    event: OrcaContextAuditEvent,
+    owner?: OrcaContextOwnerScope | null,
+  ): Promise<unknown>;
   requestWorkerInterrupt(sessionId: string): Promise<{
     stopOutcome: WorkerInterruptStopOutcome;
     queuePaused: boolean;
@@ -364,6 +448,7 @@ export interface OrcaTeamService {
     targetSessionId: string;
     message: string;
     delivery?: 'queue' | 'steer';
+    contextPolicy?: OrcaContextPolicy;
   }, assertCurrent?: () => Promise<void>): Promise<SendToWorkerResult>;
   /** Sole public entry for replacing the active worker turn. */
   interruptWorker(params: {
@@ -443,6 +528,21 @@ interface AutoBridgeState {
 }
 
 const MAX_CAPTURED_TEXT = 8192;
+
+/** Internal abort after context preparation failure; never exposed as a raw error. */
+class ContextPreparationAbort extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ContextPreparationAbort';
+  }
+}
+
+function unsupportedContextSupport(): OrcaWorkerContextSupport {
+  return {
+    clear: { supported: false, reason: 'host-version' },
+    compact: { supported: false, reason: 'host-version' },
+  };
+}
 
 /**
  * switch_focus 专用的 worker 解析：worker_id / session_id 优先精确匹配，label 兜底。
@@ -778,6 +878,30 @@ export function createOrcaTeamService(deps: OrcaTeamServiceDeps): OrcaTeamServic
     };
   }
 
+  function sendToWorkerFailureFromExecution(
+    execution: ResolvedWorkerDispatchExecution,
+  ): Extract<SendToWorkerResult, { ok: false }> {
+    if (!execution.result.ok && execution.contextFailure) {
+      return {
+        ok: false,
+        errorCode: execution.contextFailure.errorCode,
+        message: execution.contextFailure.message,
+        ...(execution.contextOutcome ? { contextOutcome: execution.contextOutcome } : {}),
+      };
+    }
+    if (execution.result.ok) {
+      return {
+        ok: false,
+        errorCode: 'INTERNAL',
+        message: 'worker dispatch did not settle as a failure',
+      };
+    }
+    const failure = sendToWorkerFailureFromDispatchOutcome(execution.result.dispatchOutcome);
+    return execution.contextOutcome
+      ? { ...failure, contextOutcome: execution.contextOutcome }
+      : failure;
+  }
+
   function sendToWorkerFailureFromDispatchOutcome(
     outcome: CollabDispatchFailureOutcome,
   ): Extract<SendToWorkerResult, { ok: false }> {
@@ -815,6 +939,9 @@ export function createOrcaTeamService(deps: OrcaTeamServiceDeps): OrcaTeamServic
     params: DispatchWorkerTaskParams,
     assertCurrent?: () => Promise<void>,
   ): Promise<DispatchWorkerTaskResult> {
+    const contextOwner = params.contextPolicy && params.contextPolicy !== 'keep'
+      ? captureOrcaContextOwner()
+      : null;
     const link = await deps.getWorkerLinkBySessionId(params.targetSessionId);
     if (!link) {
       return {
@@ -850,6 +977,8 @@ export function createOrcaTeamService(deps: OrcaTeamServiceDeps): OrcaTeamServic
       resolved: { worker: target, link },
       message: params.message,
       mode: 'normal',
+      ...(params.contextPolicy ? { contextPolicy: params.contextPolicy } : {}),
+      contextOwner,
       dispatchMeta: params.dispatchMeta,
       assertCurrent,
     });
@@ -864,6 +993,15 @@ export function createOrcaTeamService(deps: OrcaTeamServiceDeps): OrcaTeamServic
   interface ResolvedWorkerDispatchExecution {
     result: DispatchWorkerMessageResult;
     wasLiveBeforeDispatch: boolean;
+    /** Set once the host reached an irreversible/applied context boundary. */
+    contextOutcome?: OrcaContextOutcome;
+    /** Explicit failure at the context boundary; overrides the generic host-send code. */
+    contextFailure?: {
+      errorCode: 'CONTEXT_POLICY_UNSUPPORTED' | 'CONTEXT_PREPARATION_FAILED' | 'BUSY' | 'INVALID_ARGS';
+      message: string;
+    };
+    /** clear restarted the worker runtime; report resumed instead of already-active. */
+    contextRestarted?: boolean;
     stopResult?: {
       stopOutcome: WorkerInterruptStopOutcome;
       queuePaused: boolean;
@@ -898,7 +1036,9 @@ export function createOrcaTeamService(deps: OrcaTeamServiceDeps): OrcaTeamServic
       wakeKind:
         result.mode === 'steered'
           ? 'steered'
-          : execution.wasLiveBeforeDispatch ? 'already-active' : 'resumed',
+          : execution.wasLiveBeforeDispatch && !execution.contextRestarted
+            ? 'already-active'
+            : 'resumed',
       targetTitle: result.targetTitle ?? target.session.title,
       targetLastUserSendAt: result.targetLastUserSendAt,
     };
@@ -910,10 +1050,117 @@ export function createOrcaTeamService(deps: OrcaTeamServiceDeps): OrcaTeamServic
     message: string;
     mode: 'normal' | 'interrupt';
     delivery?: 'queue' | 'steer';
+    contextPolicy?: OrcaContextPolicy;
+    contextOwner?: OrcaContextOwnerScope | null;
     dispatchMeta: DispatchWorkerTaskParams['dispatchMeta'];
     assertCurrent?: () => Promise<void>;
   }): Promise<ResolvedWorkerDispatchExecution> {
     const { worker: target, link } = params.resolved;
+    const contextPolicy = params.contextPolicy ?? 'keep';
+    // Capture before any capability/prepare await. An account/generation switch
+    // must never let an old owner's worker ids reach the new owner's DB.
+    const contextOwner = params.contextOwner
+      ?? (contextPolicy === 'keep' ? null : captureOrcaContextOwner());
+    let contextOperationToken: symbol | undefined;
+    let contextKeepFence = false;
+    const contextFailureExecution = (
+      errorCode: 'CONTEXT_POLICY_UNSUPPORTED' | 'CONTEXT_PREPARATION_FAILED' | 'BUSY' | 'INVALID_ARGS',
+      message: string,
+    ): ResolvedWorkerDispatchExecution => ({
+      result: {
+        ok: false,
+        dispatchOutcome: {
+          ...createHostSendFailure(errorCode === 'BUSY' ? 'SESSION_RUNNING' : 'SEND_FAILED', message),
+          source: params.dispatchMeta.source,
+          context: params.dispatchMeta.context,
+        },
+      },
+      wasLiveBeforeDispatch: false,
+      contextFailure: { errorCode, message },
+    });
+    if (contextPolicy !== 'keep' && contextPolicy !== 'clear' && contextPolicy !== 'compact') {
+      return contextFailureExecution('INVALID_ARGS', 'unknown context policy');
+    }
+    if (contextPolicy !== 'keep') {
+      try {
+        contextOwner?.assertCurrent();
+      } catch {
+        return contextFailureExecution(
+          'CONTEXT_PREPARATION_FAILED',
+          'context owner changed before dispatch; no task was dispatched',
+        );
+      }
+      if (params.mode !== 'normal' || params.delivery === 'steer') {
+        return contextFailureExecution(
+          'INVALID_ARGS',
+          'context_policy clear/compact cannot be combined with interrupt or steer delivery',
+        );
+      }
+      const live = deps.getLiveSession(target.sessionId);
+      if (live?.isTurnRunning()) {
+        return contextFailureExecution(
+          'BUSY',
+          'context_policy clear/compact requires an idle worker; the current turn is still running',
+        );
+      }
+      if (contextPolicy === 'compact' && autoBridge.has(target.sessionId)) {
+        // Native compaction is itself a host turn. An undelivered report from
+        // the previous turn must not capture that turn's terminal and bridge
+        // "compaction finished" to the Lead as a worker completion.
+        return contextFailureExecution(
+          'BUSY',
+          'context_policy compact requires the worker completion report to be settled first',
+        );
+      }
+      let support = unsupportedContextSupport();
+      try {
+        support = (await deps.getWorkerContextPolicySupport?.(target)) ?? unsupportedContextSupport();
+      } catch {
+        support = unsupportedContextSupport();
+      }
+      try {
+        contextOwner?.assertCurrent();
+      } catch {
+        return contextFailureExecution(
+          'CONTEXT_PREPARATION_FAILED',
+          'context owner changed during capability lookup; no task was dispatched',
+        );
+      }
+      const capability = support[contextPolicy];
+      if (!capability.supported) {
+        try {
+          if (deps.recordContextAudit) {
+            void deps.recordContextAudit({
+              leadSessionId: link.leadSessionId,
+              workerId: target.id,
+              workerSessionId: target.sessionId,
+              policy: contextPolicy,
+              outcome: 'refused',
+              reason: capability.reason ?? 'unsupported',
+            }, contextOwner).catch(() => undefined);
+          }
+        } catch {
+          // Audit is diagnostic only; a refusal must still be returned.
+        }
+        return contextFailureExecution(
+          'CONTEXT_POLICY_UNSUPPORTED',
+          `context policy ${contextPolicy} is not supported by this worker (${capability.reason ?? 'unsupported'})`,
+        );
+      }
+      try {
+        if (await deps.hasPendingWorkerInput(target.sessionId)) {
+          return contextFailureExecution(
+            'BUSY',
+            'context_policy clear/compact requires an idle worker with an empty input queue',
+          );
+        }
+      } catch {
+        return contextFailureExecution(
+          'BUSY',
+          'context_policy clear/compact could not verify an empty worker input queue',
+        );
+      }
+    }
     await reserveWorkerDispatch(target.id);
     try {
       let acceptedSnapshot:
@@ -926,6 +1173,125 @@ export function createOrcaTeamService(deps: OrcaTeamServiceDeps): OrcaTeamServic
       let currentPending: AutoBridgeState | undefined;
       let currentProvisional: ProvisionalDispatchState | undefined;
       let stopPromise: ReturnType<OrcaTeamServiceDeps['requestWorkerInterrupt']> | undefined;
+      let contextOutcome: OrcaContextOutcome | undefined;
+      let contextFailure:
+        | {
+            errorCode: 'CONTEXT_POLICY_UNSUPPORTED' | 'CONTEXT_PREPARATION_FAILED' | 'BUSY' | 'INVALID_ARGS';
+            message: string;
+          }
+        | undefined;
+      let contextRestarted = false;
+      const auditContext = (
+        outcome: 'kept' | 'cleared' | 'compacted' | 'failed' | 'refused',
+        reason?: string,
+      ): void => {
+        if (contextPolicy === 'keep' || outcome === 'kept') return;
+        if (!deps.recordContextAudit) return;
+        try {
+          void deps
+            .recordContextAudit({
+              leadSessionId: link.leadSessionId,
+              workerId: target.id,
+              workerSessionId: target.sessionId,
+              policy: contextPolicy,
+              outcome,
+              ...(reason ? { reason } : {}),
+            }, contextOwner)
+            .catch((err) => {
+              deps.log.warn('orca context audit write failed', {
+                workerId: target.id,
+                err: err instanceof Error ? err.message : String(err),
+              });
+            });
+        } catch {
+          // Audit is diagnostic only; never change dispatch semantics.
+        }
+      };
+      const prepareContext = contextPolicy === 'keep' ? undefined : async (): Promise<void> => {
+        let prepared: OrcaContextPreparationResult;
+        try {
+          const operation = deps.prepareWorkerContext?.(
+            { worker: target, link, policy: contextPolicy },
+            params.assertCurrent,
+            contextOwner,
+          );
+          if (!operation) {
+            contextFailure = {
+              errorCode: 'CONTEXT_POLICY_UNSUPPORTED',
+              message: `context policy ${contextPolicy} is not supported by this host`,
+            };
+            throw new ContextPreparationAbort(contextFailure.message);
+          }
+          prepared = await operation;
+        } catch (err) {
+          if (err instanceof ContextPreparationAbort) throw err;
+          contextFailure = {
+            errorCode: 'CONTEXT_PREPARATION_FAILED',
+            message: 'context preparation failed before dispatch',
+          };
+          auditContext('failed', 'prepare-threw');
+          throw new ContextPreparationAbort(contextFailure.message);
+        }
+        contextOperationToken = prepared.operationToken;
+        contextKeepFence = prepared.ok ? false : prepared.keepFence === true;
+        if (!prepared.ok) {
+          const errorCode =
+            prepared.errorCode === 'UNSUPPORTED'
+              ? 'CONTEXT_POLICY_UNSUPPORTED'
+              : prepared.errorCode === 'BUSY'
+                ? 'BUSY'
+                : 'CONTEXT_PREPARATION_FAILED';
+          contextFailure = {
+            errorCode,
+            message:
+              prepared.errorCode === 'UNSUPPORTED'
+                ? `context policy ${contextPolicy} is not supported by this worker`
+                : prepared.errorCode === 'BUSY'
+                  ? 'context_policy clear/compact requires an idle worker with an empty input queue'
+                  : `context preparation did not complete (${prepared.errorCode.toLowerCase()})`,
+          };
+          if (prepared.applied === 'cleared') {
+            contextOutcome = { policy: contextPolicy, outcome: 'cleared', applied: true };
+            auditContext('cleared', 'post-clear-failed');
+          } else {
+            auditContext('failed', prepared.errorCode.toLowerCase());
+          }
+          throw new ContextPreparationAbort(contextFailure.message);
+        }
+        contextOutcome = {
+          policy: contextPolicy,
+          outcome: prepared.outcome,
+          applied: true,
+          ...(prepared.compactNoop ? { compactNoop: true } : {}),
+        };
+        contextOperationToken ??= prepared.operationToken;
+        if (contextPolicy === 'clear') {
+          await params.assertCurrent?.();
+          // The clear primitive retires the old runtime. Rehydrate through the
+          // Worker-specific path so stored permissions/extra dirs survive, then
+          // let the dispatcher's own live check see the fresh session.
+          try {
+            await deps.resumeWorkerSession(target, link);
+          } catch {
+            contextFailure = {
+              errorCode: 'CONTEXT_PREPARATION_FAILED',
+              message: 'context was cleared but the worker runtime could not resume',
+            };
+            auditContext('cleared', 'resume-failed');
+            throw new ContextPreparationAbort(contextFailure.message);
+          }
+          contextRestarted = true;
+        }
+        await params.assertCurrent?.();
+      };
+      const contextExecutionFields = (): Pick<
+        ResolvedWorkerDispatchExecution,
+        'contextOutcome' | 'contextFailure' | 'contextRestarted'
+      > => ({
+        ...(contextOutcome ? { contextOutcome } : {}),
+        ...(contextFailure ? { contextFailure } : {}),
+        ...(contextRestarted ? { contextRestarted } : {}),
+      });
       const rollbackAccepted = async (): Promise<void> => {
         if (!acceptedSnapshot) return;
         const snapshot = acceptedSnapshot;
@@ -1043,6 +1409,9 @@ export function createOrcaTeamService(deps: OrcaTeamServiceDeps): OrcaTeamServic
             message: params.message,
             workerId: link.workerId,
             ...(params.delivery ? { delivery: params.delivery } : {}),
+            ...(prepareContext ? { prepareContext } : {}),
+            ...(contextPolicy !== 'keep' ? { requireIdle: true } : {}),
+            ...(contextOperationToken ? { contextOperationToken } : {}),
             dispatchMeta: params.dispatchMeta,
             onAccepted,
             onAcceptedRollback: rollbackAccepted,
@@ -1075,25 +1444,33 @@ export function createOrcaTeamService(deps: OrcaTeamServiceDeps): OrcaTeamServic
         }
       } catch (err) {
         await rollbackAccepted();
+        if (contextOutcome) auditContext(contextOutcome.outcome, 'dispatch-failed');
+        else if (!contextFailure) auditContext('failed', 'dispatch-threw');
         return {
           result: {
             ok: false,
             dispatchOutcome: dispatchFailureFromThrown(err, params.dispatchMeta),
           },
           wasLiveBeforeDispatch,
+          ...contextExecutionFields(),
         };
       }
 
       if (!result.ok) {
         await rollbackAccepted();
-        return { result, wasLiveBeforeDispatch };
+        if (contextOutcome) auditContext(contextOutcome.outcome, 'dispatch-failed');
+        else if (!contextFailure) auditContext('failed', 'dispatch-failed');
+        return { result, wasLiveBeforeDispatch, ...contextExecutionFields() };
       }
       if (result.mode === 'dispatched') {
         // The dependency result is the direct vendor-dispatch settlement. Keep this idempotent
         // fallback even though the dispatcher also reports commit through the callback.
         await commitAccepted();
+        if (contextOutcome) auditContext(contextOutcome.outcome);
       }
-      if (params.mode === 'normal') return { result, wasLiveBeforeDispatch };
+      if (params.mode === 'normal') {
+        return { result, wasLiveBeforeDispatch, ...contextExecutionFields() };
+      }
 
       let stopResult: ResolvedWorkerDispatchExecution['stopResult'];
       try {
@@ -1117,6 +1494,9 @@ export function createOrcaTeamService(deps: OrcaTeamServiceDeps): OrcaTeamServic
       return { result, wasLiveBeforeDispatch, stopResult };
     } finally {
       await releaseWorkerDispatch(target.id);
+      if (contextOperationToken && !contextKeepFence) {
+        releaseOrcaContextOperation(contextOperationToken);
+      }
     }
   }
 
@@ -1125,6 +1505,7 @@ export function createOrcaTeamService(deps: OrcaTeamServiceDeps): OrcaTeamServic
     targetSessionId: string;
     message: string;
     delivery?: 'queue' | 'steer';
+    contextPolicy?: OrcaContextPolicy;
   }, assertCurrent?: () => Promise<void>): Promise<SendToWorkerResult> {
     return dispatchToWorker({ ...params, mode: 'normal' }, assertCurrent) as Promise<SendToWorkerResult>;
   }
@@ -1144,7 +1525,11 @@ export function createOrcaTeamService(deps: OrcaTeamServiceDeps): OrcaTeamServic
     message: string;
     mode: 'normal' | 'interrupt';
     delivery?: 'queue' | 'steer';
+    contextPolicy?: OrcaContextPolicy;
   }, captured?: () => Promise<void>): Promise<SendToWorkerResult | InterruptWorkerResult> {
+    const contextOwner = params.contextPolicy && params.contextPolicy !== 'keep'
+      ? captureOrcaContextOwner()
+      : null;
     const assertCurrent = captured ?? await deps.captureControlAuthority?.(params.callerLeadSessionId);
     const resolved = await resolveWorkerRef(params.callerLeadSessionId, params.targetSessionId);
     if (!resolved.ok) {
@@ -1162,6 +1547,8 @@ export function createOrcaTeamService(deps: OrcaTeamServiceDeps): OrcaTeamServic
       message: params.message,
       mode: params.mode,
       ...(params.delivery ? { delivery: params.delivery } : {}),
+      ...(params.contextPolicy ? { contextPolicy: params.contextPolicy } : {}),
+      contextOwner,
       assertCurrent,
       dispatchMeta: {
         source: 'maker-ipc/collab',
@@ -1173,7 +1560,7 @@ export function createOrcaTeamService(deps: OrcaTeamServiceDeps): OrcaTeamServic
     });
     if (params.mode === 'interrupt') {
       if (!execution.result.ok) {
-        return sendToWorkerFailureFromDispatchOutcome(execution.result.dispatchOutcome);
+        return sendToWorkerFailureFromExecution(execution);
       }
       return {
         ok: true,
@@ -1187,7 +1574,7 @@ export function createOrcaTeamService(deps: OrcaTeamServiceDeps): OrcaTeamServic
     }
     const dispatchResult = mapNormalDispatchResult(resolved.worker, execution);
     if (!dispatchResult.dispatched && dispatchResult.queued !== true) {
-      return sendToWorkerFailureFromDispatchOutcome(dispatchResult.dispatchOutcome);
+      return sendToWorkerFailureFromExecution(execution);
     }
 
     return {
@@ -1196,6 +1583,7 @@ export function createOrcaTeamService(deps: OrcaTeamServiceDeps): OrcaTeamServic
       wakeKind: dispatchResult.wakeKind,
       targetTitle: dispatchResult.targetTitle,
       targetLastUserSendAt: dispatchResult.targetLastUserSendAt,
+      ...(execution.contextOutcome ? { contextOutcome: execution.contextOutcome } : {}),
       ...(dispatchResult.queued === true
         ? {
             queuedMessageId: dispatchResult.queuedMessageId,
