@@ -380,6 +380,8 @@ export interface AgentInputClearReceipt {
   status: 'pending' | 'committed' | 'superseded' | 'failed' | 'unknown';
   native?: boolean;
   boundaryMs?: number;
+  /** failed status only: the durable generation boundary was nevertheless committed. */
+  applied?: boolean;
 }
 
 export interface AgentInputProjection {
