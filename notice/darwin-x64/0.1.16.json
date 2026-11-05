@@ -1,0 +1,181 @@
+{
+  "version": "0.1.16",
+  "date": "2026-11-05",
+  "contentByLocale": {
+    "zh-CN": {
+      "intro": "Lex 0.1.16 新增任务上下文窗口与原生区域截图，并带来 Orca 派单上下文策略和更稳的供应商设置。",
+      "topics": [
+        {
+          "id": "context-window",
+          "title": "任务上下文窗口",
+          "text": "任务状态栏新增上下文窗口预算与用量控制，可按任务查看和调整可用窗口；模型限制在刷新模型列表后仍会保留。"
+        },
+        {
+          "id": "screenshot",
+          "title": "原生区域截图",
+          "text": "新增系统级区域截图流程，截图窗口可保存或复制到任务；账号切换与窗口归属变化时会取消或隔离未完成的截图。"
+        },
+        {
+          "id": "providers",
+          "title": "供应商设置",
+          "text": "自定义模型连接改为按协议分页，并支持逐条设置模型 ID；渠道探测与连接测试更稳定，刷新后不会丢失已选模型限制。"
+        },
+        {
+          "id": "orca-context",
+          "title": "Orca 派单上下文",
+          "text": "派发 Worker 时可选择保留、清空或压缩上下文。目标正在清空或压缩时，新派发会得到明确的“操作完成后重试”提示，不再静默排队；清空后的历史可在派发对话框内以可读文本查看。"
+        },
+        {
+          "id": "stability",
+          "title": "稳定性修复",
+          "text": "附件下载停滞会明确失败而不是一直等待；改进 Windows 项目路径处理、容量类错误分类、Claude Code 在已有输出后不再静默停止，以及弹窗路由。"
+        },
+        {
+          "id": "upgrade",
+          "title": "安装须知",
+          "text": "Android 使用完整 APK 覆盖安装，不要先卸载。iOS 仍需自行签名安装，签名到期独立于版本更新；更换签名身份、bundle ID 或卸载可能影响数据，请先备份。桌面签名与公证状态以发行页为准。"
+        }
+      ]
+    },
+    "zh-TW": {
+      "intro": "Lex 0.1.16 新增任務上下文視窗與原生區域截圖，並帶來 Orca 派單上下文策略和更穩定的供應商設定。",
+      "topics": [
+        {
+          "id": "context-window",
+          "title": "任務上下文視窗",
+          "text": "任務狀態列新增上下文視窗預算與用量控制，可依任務檢視和調整可用視窗；模型限制在重新整理模型清單後仍會保留。"
+        },
+        {
+          "id": "screenshot",
+          "title": "原生區域截圖",
+          "text": "新增系統級區域截圖流程，截圖視窗可儲存或複製到任務；帳號切換與視窗歸屬變化時會取消或隔離未完成的截圖。"
+        },
+        {
+          "id": "providers",
+          "title": "供應商設定",
+          "text": "自訂模型連線改為依協定分頁，並支援逐條設定模型 ID；通道探測與連線測試更穩定，重新整理後不會遺失已選模型限制。"
+        },
+        {
+          "id": "orca-context",
+          "title": "Orca 派單上下文",
+          "text": "派發 Worker 時可選擇保留、清空或壓縮上下文。目標正在清空或壓縮時，新派發會得到明確的「操作完成後重試」提示，不再靜默排隊；清空後的歷史可在派發對話框內以可讀文字檢視。"
+        },
+        {
+          "id": "stability",
+          "title": "穩定性修正",
+          "text": "附件下載停滯會明確失敗而不是一直等待；改進 Windows 專案路徑處理、容量類錯誤分類、Claude Code 在已有輸出後不再靜默停止，以及彈窗路由。"
+        },
+        {
+          "id": "upgrade",
+          "title": "安裝須知",
+          "text": "Android 使用完整 APK 覆蓋安裝，不要先解除安裝。iOS 仍需自行簽章安裝，簽章到期獨立於版本更新；更換簽章身分、bundle ID 或解除安裝可能影響資料，請先備份。桌面簽章與公證狀態以發行頁為準。"
+        }
+      ]
+    },
+    "en": {
+      "intro": "Lex 0.1.16 adds task context windows and native region screenshots, plus Orca dispatch context policies and more reliable provider settings.",
+      "topics": [
+        {
+          "id": "context-window",
+          "title": "Task context window",
+          "text": "The task status bar now shows context window budgets and usage controls, so you can review and adjust the available window per task. Model limits are preserved after refreshing the model list."
+        },
+        {
+          "id": "screenshot",
+          "title": "Native region screenshot",
+          "text": "A new system-level region screenshot flow lets you save or copy captures into a task. Unfinished captures are cancelled or isolated when the account or window ownership changes."
+        },
+        {
+          "id": "providers",
+          "title": "Provider settings",
+          "text": "Custom model connections are grouped by protocol with per-row model IDs. Channel probing and connection tests are more reliable, and selected model limits survive a refresh."
+        },
+        {
+          "id": "orca-context",
+          "title": "Orca dispatch context",
+          "text": "When dispatching a worker, choose whether to keep, clear, or compact context. If the target is already clearing or compacting, a new dispatch returns an explicit retry-after-completion message instead of queueing silently. Cleared history is shown as readable text in the dispatch dialog."
+        },
+        {
+          "id": "stability",
+          "title": "Stability fixes",
+          "text": "Stalled attachment downloads now fail explicitly instead of waiting indefinitely. Windows project paths, capacity error classification, Claude Code silent stops after visible output, and popup routing are improved."
+        },
+        {
+          "id": "upgrade",
+          "title": "Installation notes",
+          "text": "On Android, install the full APK over the existing app; do not uninstall first. On iOS, signing and installation remain your responsibility, and signature expiry is independent of version updates. Changing the signing identity, bundle ID, or uninstalling may affect data, so back up first. Desktop signing and notarization status are shown on the release page."
+        }
+      ]
+    },
+    "ja": {
+      "intro": "Lex 0.1.16 ではタスクのコンテキストウィンドウとネイティブ領域スクリーンショット、Orca の派遣コンテキストポリシー、より安定したプロバイダー設定を追加しました。",
+      "topics": [
+        {
+          "id": "context-window",
+          "title": "タスクのコンテキストウィンドウ",
+          "text": "タスクのステータスバーにコンテキストウィンドウの予算と使用量のコントロールを追加し、タスクごとに確認・調整できます。モデル一覧を更新してもモデル制限は保持されます。"
+        },
+        {
+          "id": "screenshot",
+          "title": "ネイティブ領域スクリーンショット",
+          "text": "システムレベルの領域スクリーンショットを追加し、撮影結果をタスクへ保存またはコピーできます。アカウントやウィンドウの所有権が変わると、未完了の撮影はキャンセルまたは分離されます。"
+        },
+        {
+          "id": "providers",
+          "title": "プロバイダー設定",
+          "text": "カスタムモデル接続をプロトコル別のタブに分け、モデル ID を個別に設定できるようにしました。チャネル検出と接続テストが安定し、更新後も選択したモデル制限が保持されます。"
+        },
+        {
+          "id": "orca-context",
+          "title": "Orca 派遣コンテキスト",
+          "text": "Worker への派遣時にコンテキストを保持・クリア・圧縮から選べます。対象がクリアまたは圧縮中の場合、新しい派遣は暗黙にキューされず、「完了後に再試行」という明確なメッセージを返します。クリア後の履歴は派遣ダイアログで読みやすいテキストとして確認できます。"
+        },
+        {
+          "id": "stability",
+          "title": "安定性の修正",
+          "text": "添付ファイルのダウンロードが停滞すると、無期限に待たず明確に失敗します。Windows のプロジェクトパス処理、容量系エラーの分類、Claude Code が出力後に静かに停止する問題、ポップアップのルーティングを改善しました。"
+        },
+        {
+          "id": "upgrade",
+          "title": "インストール時の注意",
+          "text": "Android は既存アプリへ完全な APK を上書きインストールしてください。アンインストールは不要です。iOS は引き続きご自身での署名とインストールが必要で、署名の有効期限はバージョン更新とは独立しています。署名 ID、bundle ID の変更やアンインストールはデータに影響する場合があるため、事前にバックアップしてください。デスクトップの署名と公証の状態はリリースページをご確認ください。"
+        }
+      ]
+    },
+    "ko": {
+      "intro": "Lex 0.1.16은 작업 컨텍스트 창과 네이티브 영역 스크린샷을 추가하고, Orca 디스패치 컨텍스트 정책과 더 안정적인 공급자 설정을 제공합니다.",
+      "topics": [
+        {
+          "id": "context-window",
+          "title": "작업 컨텍스트 창",
+          "text": "작업 상태 표시줄에 컨텍스트 창 예산과 사용량 제어가 추가되어 작업별로 확인하고 조정할 수 있습니다. 모델 목록을 새로 고쳐도 모델 제한이 유지됩니다."
+        },
+        {
+          "id": "screenshot",
+          "title": "네이티브 영역 스크린샷",
+          "text": "시스템 수준의 영역 스크린샷 흐름을 추가하여 캡처를 작업에 저장하거나 복사할 수 있습니다. 계정이나 창 소유권이 바뀌면 완료되지 않은 캡처는 취소되거나 분리됩니다."
+        },
+        {
+          "id": "providers",
+          "title": "공급자 설정",
+          "text": "사용자 지정 모델 연결을 프로토콜별 탭으로 나누고 모델 ID를 개별 설정할 수 있습니다. 채널 탐색과 연결 테스트가 더 안정적이며 새로 고친 후에도 선택한 모델 제한이 유지됩니다."
+        },
+        {
+          "id": "orca-context",
+          "title": "Orca 디스패치 컨텍스트",
+          "text": "Worker에 작업을 보낼 때 컨텍스트 유지, 지우기, 압축을 선택할 수 있습니다. 대상이 이미 지우기나 압축 중이면 새 디스패치는 조용히 대기하지 않고 “작업 완료 후 다시 시도”라는 명확한 메시지를 반환합니다. 지운 기록은 디스패치 대화상자에서 읽기 쉬운 텍스트로 확인할 수 있습니다."
+        },
+        {
+          "id": "stability",
+          "title": "안정성 수정",
+          "text": "첨부 파일 다운로드가 멈추면 무한히 기다리지 않고 명확히 실패합니다. Windows 프로젝트 경로 처리, 용량 관련 오류 분류, Claude Code가 출력 후 조용히 멈추는 문제, 팝업 라우팅을 개선했습니다."
+        },
+        {
+          "id": "upgrade",
+          "title": "설치 안내",
+          "text": "Android는 기존 앱 위에 전체 APK를 덮어 설치하고 먼저 삭제하지 마세요. iOS는 계속 직접 서명하여 설치해야 하며 서명 만료는 버전 업데이트와 별개입니다. 서명 ID, bundle ID 변경이나 앱 삭제는 데이터에 영향을 줄 수 있으므로 먼저 백업하세요. 데스크톱 서명 및 공증 상태는 릴리스 페이지에서 확인하세요."
+        }
+      ]
+    }
+  }
+}
