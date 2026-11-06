@@ -21,6 +21,7 @@ import { ChevronDown, ChevronRight, KeyRound, UserRound } from 'lucide-react';
 import { presetDisplayName } from '@cindy/model-providers';
 
 import { localCliDisplayName } from '../../../shared/localCliDetect';
+import { LEX_SERVER_MANAGED_PROVIDER_ID } from '../../../shared/lexServerManagedModels';
 import { cn } from '@/lib/utils';
 import { hasProviderLogo, ProviderLogoMark } from '@/components/icons/ProviderLogoMark';
 import { providerMonogram } from '@/lib/providerModels';
@@ -125,6 +126,14 @@ export function ConnectProviderCard({ className, dismissible = true }: {
           badge={t('onboarding.connectProvider.recommendedLabel')}
           onClick={() => (cloudMode ? goConnect('xd') : void signInToCindy())}
         />}
+        {service?.kind === 'lex-server' && (
+          <ProviderRow
+            icon={<UserRound size={16} />}
+            label={t('onboarding.connectProvider.lexManaged.title')}
+            sub={t('onboarding.connectProvider.lexManaged.desc')}
+            onClick={() => goConnect(LEX_SERVER_MANAGED_PROVIDER_ID)}
+          />
+        )}
         {primaryRows.map(renderRow)}
 
         {moreRows.length > 0 && (

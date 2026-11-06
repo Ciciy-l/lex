@@ -63,6 +63,10 @@ import {
 import { providerDisplayName } from '@/lib/providerDisplayName';
 import { providerMonogram } from '@/lib/providerModels';
 import { isBuiltinApiKeyProviderId } from '../../../shared/providerSecrets';
+import {
+  LEX_SERVER_MANAGED_PROVIDER_ID,
+  lexServerManagedErrorKey,
+} from '../../../shared/lexServerManagedModels';
 import type { CustomProviderUpdateOptions, CustomProviderUpdateResult } from '../../../shared/customProviderUpdate';
 
 import {
@@ -469,7 +473,10 @@ function DetailHeader({
                 className="flex min-w-0 flex-wrap items-center gap-2"
               >
                 <span
-                  className="min-w-0 truncate text-14 font-medium leading-tight"
+                  // Keep a readable minimum width so the identity badge wraps to
+                  // the next line instead of clipping the provider name at the
+                  // narrow settings width (800px window / 224px list).
+                  className="min-w-[6rem] break-words text-14 font-medium leading-tight"
                   style={{ color: 'var(--settings-section-title)' }}
                 >
                   {provider ? providerDisplayName(provider, t) : title}
@@ -1779,6 +1786,137 @@ function CustomProviderHeader({
   );
 }
 
+/**
+ * Read-only header for the host-owned Lex Server managed provider.
+ *
+ * No rename/edit/delete/disable actions: the row has no persisted config or
+ * safeStorage credential. The only action is an explicit catalog/credential
+ * retry when the row is not ready.
+ */
+function LexManagedHeader({
+  provider,
+  refreshing,
+  onRefresh,
+}: {
+  provider: ProviderView;
+  refreshing: boolean;
+  onRefresh: () => void;
+}) {
+  const { t } = useTranslation();
+  const info = provider.managed;
+  const stateKey = lexServerManagedErrorKey(info);
+  return (
+    <div className="flex shrink-0 flex-col">
+      <div className="flex flex-col gap-3 px-5 py-4">
+        <div className="flex flex-wrap items-center gap-3 gap-y-2">
+          <div className="flex min-w-0 items-center gap-3">
+            <div
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border"
+              style={{
+                borderColor: 'var(--settings-theme-card-border)',
+                color: 'var(--text-secondary)',
+              }}
+            >
+              {providerIcon(provider, 18)}
+            </div>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className="min-w-[6rem] break-words text-15 font-medium"
+                  style={{ color: 'var(--text-primary)' }}
+                >
+                  {provider.name}
+                </span>
+                <span
+                  className="shrink-0 rounded-full border px-2 py-0.5 text-11"
+                  style={{
+                    borderColor: 'var(--settings-theme-card-border)',
+                    color: 'var(--text-tertiary)',
+                  }}
+                >
+                  {t('settings.providers.lexManaged.badge')}
+                </span>
+              </div>
+              <span
+                className="block truncate text-12"
+                style={{ color: 'var(--settings-integration-subtitle)' }}
+              >
+                {info?.host ?? ''}
+              </span>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2.5">
+            {info?.state === 'ready' ? (
+              <ConnectedPill />
+            ) : (
+              <span role="status" className="text-12 text-[var(--text-tertiary)]">
+                {t(stateKey)}
+              </span>
+            )}
+            {info && info.state !== 'ready' && info.state !== 'loading' && (
+              <PillButton
+                label={t(
+                  refreshing
+                    ? 'settings.providers.lexManaged.retrying'
+                    : 'settings.providers.lexManaged.retry',
+                )}
+                onClick={onRefresh}
+                disabled={refreshing}
+              />
+            )}
+          </div>
+        </div>
+        <p className="text-12 leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+          {t('settings.providers.lexManaged.desc')}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** Empty state for the managed row: localized, actionable, never a raw code. */
+function LexManagedEmptyState({
+  provider,
+  refreshing,
+  onRefresh,
+}: {
+  provider: ProviderView;
+  refreshing: boolean;
+  onRefresh: () => void;
+}) {
+  const { t } = useTranslation();
+  const info = provider.managed;
+  return (
+    <div
+      data-testid="lex-managed-empty"
+      className="flex flex-col items-start gap-3 rounded-xl border px-5 py-5"
+      style={{ borderColor: 'var(--settings-theme-card-border)' }}
+    >
+      <div className="flex flex-col gap-1">
+        <p className="text-13 font-medium" style={{ color: 'var(--text-primary)' }}>
+          {t(lexServerManagedErrorKey(info))}
+        </p>
+        <p className="text-12 leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+          {info?.state === 'not-entitled'
+            ? t('settings.providers.lexManaged.empty.notEntitled')
+            : t('settings.providers.lexManaged.empty.retryHint')}
+        </p>
+      </div>
+      {info?.state !== 'loading' && (
+        <PillButton
+          label={t(
+            refreshing
+              ? 'settings.providers.lexManaged.retrying'
+              : 'settings.providers.lexManaged.retry',
+          )}
+          onClick={onRefresh}
+          disabled={refreshing}
+        />
+      )}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // 左栏列表
 // ---------------------------------------------------------------------------
@@ -1892,7 +2030,11 @@ function ListRow({
         <button
           type="button"
           onClick={onSelect}
-          onDoubleClick={provider.id === 'xd' ? undefined : () => void management.rename()}
+          onDoubleClick={
+            provider.id === 'xd' || provider.id === LEX_SERVER_MANAGED_PROVIDER_ID || provider.managed
+              ? undefined
+              : () => void management.rename()
+          }
           aria-current={selected}
           className="flex min-w-0 flex-1 items-center gap-2.5 py-2 pl-3 pr-2.5 text-left"
         >
@@ -1982,7 +2124,7 @@ function SuggestionRow({
           : 'settings.providers.detect.hintInstalled',
         { cli: cliName },
       )}
-      className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-[var(--settings-menu-bg-hover)]"
+      className="flex w-full flex-wrap items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-[var(--settings-menu-bg-hover)]"
     >
       <div
         className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg opacity-70"
@@ -1994,11 +2136,14 @@ function SuggestionRow({
       >
         {providerIcon(provider, 14)}
       </div>
-      <span className="min-w-0 flex-1 truncate text-13" style={{ color: 'var(--text-secondary)' }}>
+      <span
+        className="min-w-[6rem] flex-1 break-words text-13"
+        style={{ color: 'var(--text-secondary)' }}
+      >
         {title}
       </span>
       <span
-        className="flex h-[22px] shrink-0 items-center rounded-full border px-2.5 text-11 font-medium"
+        className="ml-auto flex h-[22px] shrink-0 items-center rounded-full border px-2.5 text-11 font-medium"
         style={{
           borderColor: 'var(--settings-btn-secondary-border)',
           color: 'var(--text-secondary)',
@@ -2018,7 +2163,7 @@ export function ProvidersSection() {
   const { t } = useTranslation();
   const reducedMotion = useReducedMotion();
   const signInToCindy = useSignInToCindy();
-  const { dataOwnerId } = useAuth();
+  const { dataOwnerId, service } = useAuth();
   const { confirm } = useConfirmDialog();
   const confirmProviderChange = useProviderChangeConfirmation();
   const { providers, providerOrder, ownerGeneration, loading, refetch } = useProviders();
@@ -2086,6 +2231,24 @@ export function ProvidersSection() {
     refreshingProviderIdRef.current = null;
     setRefreshingProviderId(null);
   }, []);
+  const [managedRefreshing, setManagedRefreshing] = useState(false);
+  const managedRefreshingRef = useRef(false);
+  const refreshManagedProvider = useCallback(async (): Promise<void> => {
+    if (managedRefreshingRef.current) return;
+    managedRefreshingRef.current = true;
+    setManagedRefreshing(true);
+    try {
+      await window.electronAPI.maker.refreshBuiltinProviderModels(
+        LEX_SERVER_MANAGED_PROVIDER_ID,
+      );
+      await refetch();
+    } catch {
+      toast.error(t('settings.providers.lexManaged.retryFailed'));
+    } finally {
+      managedRefreshingRef.current = false;
+      setManagedRefreshing(false);
+    }
+  }, [refetch, t]);
 
   // 进入「模型供应商」页时只上报一个静默刷新提示。是否真正访问上游由 Main
   // 根据连接状态、30 分钟冷却和全局 in-flight 决定，失败不打扰用户。
@@ -2160,6 +2323,7 @@ export function ProvidersSection() {
         (p.id === MANAGED_OLLAMA_PROVIDER_ID ||
           p.id === MANAGED_LLAMACPP_PROVIDER_ID ||
           p.id === MANAGED_LMSTUDIO_PROVIDER_ID ||
+          p.id === LEX_SERVER_MANAGED_PROVIDER_ID ||
           providerHasModels(p) ||
           (p.auth.method === 'oauth' && (!!p.auth.oauth || !!p.auth.native)))
       ) {
@@ -2342,9 +2506,13 @@ export function ProvidersSection() {
         setFocusedModel(
           model ? { providerId: connect, modelId: model, ...(agent ? { agent } : {}) } : null,
         );
+      } else if (connect === LEX_SERVER_MANAGED_PROVIDER_ID) {
+        // The managed row exists even before its catalog settles; select it so
+        // the right pane can show loading / empty / retry instead of a wizard.
+        setSelectedId(LEX_SERVER_MANAGED_PROVIDER_ID);
       } else if (connect === 'xd') {
         // 无账号会话目录不含 xd → 落到登录引导行(不能当 preset 交给向导)。
-        setSelectedId(CINDY_SIGNIN_ID);
+        setSelectedId(service?.kind === 'lex-server' ? LEX_SERVER_MANAGED_PROVIDER_ID : CINDY_SIGNIN_ID);
       } else if (connect === MANAGED_OLLAMA_PROVIDER_ID) {
         setWizard({});
       } else if (target && target.source === 'builtin') {
@@ -2362,11 +2530,13 @@ export function ProvidersSection() {
     next.delete('agent');
     next.delete('import');
     setSearchParams(next, { replace: true });
-  }, [loading, searchParams, setSearchParams, byId, listProviders]);
+  }, [loading, searchParams, setSearchParams, byId, listProviders, service?.kind]);
 
   // Cindy AI 登录引导:无账号会话目录不含 xd(见 CindySigninRow 头注释),置顶
   // 引导行;列表为空时默认选中它(右栏直接展示登录引导,不留「点击添加」空态)。
-  const showCindySignin = !byId.has('xd');
+  // A Lex Server member must never be steered to Cindy sign-in: managed models
+  // are provisioned by that server, not by a Cindy account.
+  const showCindySignin = !byId.has('xd') && service?.kind !== 'lex-server';
   const cindySigninActive =
     showCindySignin &&
     (selectedId === CINDY_SIGNIN_ID || (selectedId == null && listProviders.length === 0));
@@ -2386,6 +2556,9 @@ export function ProvidersSection() {
         }
       : selected;
   }, [selectedId, listProviders, providers, codexAuth.state]);
+
+  const isLexManagedSelected =
+    effectiveSelected?.id === LEX_SERVER_MANAGED_PROVIDER_ID || Boolean(effectiveSelected?.managed);
 
   const handleDelete = useCallback(
     async (p: ProviderView) => {
@@ -2568,6 +2741,15 @@ export function ProvidersSection() {
 
   // 详情头部按供应商类型分派(鉴权逻辑与重构前一致)。
   const renderDetailHeader = (p: ProviderView): ReactNode => {
+    if (p.id === LEX_SERVER_MANAGED_PROVIDER_ID || p.managed) {
+      return (
+        <LexManagedHeader
+          provider={p}
+          refreshing={managedRefreshing}
+          onRefresh={() => void refreshManagedProvider()}
+        />
+      );
+    }
     if (p.id === 'xd') return <XdGatewayHeader provider={p} onChanged={refetch} />;
     if (p.id === 'anthropic') return <AnthropicHeader provider={p} onChanged={refetch} />;
     if (p.id === 'openai') return <OpenAiHeader provider={p} onChanged={refetch} />;
@@ -2844,8 +3026,9 @@ export function ProvidersSection() {
                       </div>
                     )}
                   {!effectiveSelected.suspended &&
+                    (!isLexManagedSelected || providerHasModels(effectiveSelected)) &&
                     (providerHasModels(effectiveSelected) ||
-                      effectiveSelected.source === 'user' ||
+                      (effectiveSelected.source === 'user' && !isLexManagedSelected) ||
                       (isBuiltinRefreshableProviderId(effectiveSelected.id) &&
                         !effectiveSelected.modelDiscoveryFailure) ||
                       isManagedLocalProvider(effectiveSelected.id)) && (
@@ -2885,22 +3068,38 @@ export function ProvidersSection() {
                           }
                           compactWhenEmpty={isManagedLocalProvider(effectiveSelected.id)}
                           compact={isManagedLocalProvider(effectiveSelected.id)}
-                          {...(isBuiltinRefreshableProviderId(effectiveSelected.id)
+                          {...(isLexManagedSelected
                             ? {
-                                onRefresh: () => void handleRefreshBuiltinModels(effectiveSelected),
-                                refreshing: refreshingProviderId === effectiveSelected.id,
-                                refreshDisabled: refreshingProviderId !== null,
+                                onRefresh: () => void refreshManagedProvider(),
+                                refreshing: managedRefreshing,
+                                refreshDisabled: managedRefreshing,
                                 refreshIdleLabel: t('settings.providers.models.refreshBuiltinAria'),
                               }
-                            : effectiveSelected.source === 'user' && effectiveSelected.id !== MANAGED_LLAMACPP_PROVIDER_ID
+                            : isBuiltinRefreshableProviderId(effectiveSelected.id)
                               ? {
-                                  onRefresh: () => void handleRefreshModels(effectiveSelected),
+                                  onRefresh: () => void handleRefreshBuiltinModels(effectiveSelected),
                                   refreshing: refreshingProviderId === effectiveSelected.id,
                                   refreshDisabled: refreshingProviderId !== null,
+                                  refreshIdleLabel: t('settings.providers.models.refreshBuiltinAria'),
                                 }
-                              : {})}
+                              : effectiveSelected.source === 'user' && effectiveSelected.id !== MANAGED_LLAMACPP_PROVIDER_ID
+                                ? {
+                                    onRefresh: () => void handleRefreshModels(effectiveSelected),
+                                    refreshing: refreshingProviderId === effectiveSelected.id,
+                                    refreshDisabled: refreshingProviderId !== null,
+                                  }
+                                : {})}
                         />
                       </>
+                    )}
+                  {!effectiveSelected.suspended &&
+                    isLexManagedSelected &&
+                    !providerHasModels(effectiveSelected) && (
+                      <LexManagedEmptyState
+                        provider={effectiveSelected}
+                        refreshing={managedRefreshing}
+                        onRefresh={() => void refreshManagedProvider()}
+                      />
                     )}
                   {!effectiveSelected.suspended &&
                     !providerHasModels(effectiveSelected) &&
