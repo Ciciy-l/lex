@@ -56,6 +56,39 @@ describe('serverApiFetch', () => {
     expect(mocks.refresh).not.toHaveBeenCalled();
   });
 
+  it('allows only the managed-model routes on the Lex origin', async () => {
+    mocks.getActiveAuthService.mockReturnValue({ kind: 'lex-server', origin: 'https://lex.example' } as never);
+    mocks.getAccessToken.mockReturnValue('synthetic-token');
+    mocks.netFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ enabled: true, models: [] }),
+    });
+    for (const route of [
+      '/api/managed-models/catalog',
+      '/api/managed-models/credentials',
+      '/api/managed-models/usage',
+    ]) {
+      await expect(
+        serverApiFetch(route, { baseUrl: 'https://lex.example' }),
+      ).resolves.toMatchObject({ enabled: true });
+    }
+    expect(mocks.netFetch).toHaveBeenCalledTimes(3);
+    // Prefix alone, sibling routes and a second origin stay closed.
+    for (const [baseUrl, route] of [
+      ['https://lex.example', '/api/managed-models'],
+      ['https://lex.example', '/api/managed-models/../models'],
+      ['https://lex.example', '/api/managed-models/usage?page=1'],
+      ['https://lex.example', '/api/managed-models/catalog#frag'],
+      ['https://attacker.example', '/api/managed-models/catalog'],
+    ]) {
+      await expect(serverApiFetch(route, { baseUrl })).rejects.toMatchObject({
+        code: 'SERVICE_CAPABILITY_UNAVAILABLE',
+      });
+    }
+    expect(mocks.netFetch).toHaveBeenCalledTimes(3);
+  });
+
   it('binds same-member responses to the captured deployment as well as the owner', async () => {
     mocks.getActiveAuthService.mockReturnValue({ kind: 'lex-server', origin: 'https://a.example' } as never);
     mocks.getAccessToken.mockReturnValue('synthetic-a');

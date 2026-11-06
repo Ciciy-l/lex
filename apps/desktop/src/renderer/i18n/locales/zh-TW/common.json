@@ -2647,6 +2647,24 @@
         "restartHint": "下載模型或修改上下文後，在「管理服務」中重新啟動以套用變更。重新啟動會中斷正在進行的生成。",
         "applyModels": "使用已下載模型",
         "startOnUse": "按需啟動"
+      },
+      "lexManaged": {
+        "badge": "伺服器託管",
+        "desc": "此來源由 {{appName}} Server 統一管理，模型目錄會隨伺服器帳戶自動更新。",
+        "retry": "重試",
+        "retrying": "正在重試…",
+        "retryFailed": "重新整理伺服器模型失敗，請稍後再試。",
+        "state": {
+          "ready": "已連線",
+          "loading": "正在載入伺服器模型…",
+          "notEntitled": "伺服器未為目前成員開通模型",
+          "rateLimited": "伺服器模型用量已達上限",
+          "unavailable": "暫時無法連線伺服器模型服務"
+        },
+        "empty": {
+          "notEntitled": "請聯絡伺服器管理員為目前成員開通模型權限；開通後可在此頁重試。",
+          "retryHint": "檢查網路或伺服器狀態後重試；無需重新登入。"
+        }
       }
     },
     "experimental": {
@@ -8679,8 +8697,8 @@
       "desc": "登入帳號服務，或連接你自己的模型 API。",
       "cta": "登入",
       "cloudTitle": "使用 Cindy 繼續",
-      "lexDesc": "此伺服器提供帳號與遠端服務，模型需自行連接。",
-      "lexCta": "設定模型",
+      "lexDesc": "此伺服器提供帳號與遠端服務，託管模型會自動接入；未顯示模型時請聯絡管理員。",
+      "lexCta": "查看伺服器模型",
       "cloudDesc": "你還未設定任何模型，開通官方服務即可使用數十種頂級大模型。",
       "cloudCta": "開始使用",
       "ownApi": "我有自己的模型 API 設定"
@@ -8706,7 +8724,11 @@
         "dismissAria": "關閉引導"
       },
       "detectedLabel": "已檢測到",
-      "oauthSub": "在瀏覽器開啟授權頁，登入後自動連線"
+      "oauthSub": "在瀏覽器開啟授權頁，登入後自動連線",
+      "lexManaged": {
+        "title": "{{appName}} Server 託管模型",
+        "desc": "由伺服器為目前成員自動開通，無需填寫金鑰。"
+      }
     },
     "inheritedSubscription": {
       "title": "已沿用這臺電腦上的 {{products}} 登入",

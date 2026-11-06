@@ -42,7 +42,7 @@ export function HomeZeroModelAction({
           data-testid="home-zero-model-cta"
           onClick={() => {
             if (lexServer) {
-              navigate('/settings?tab=providers&wizard=1');
+              navigate('/settings?tab=providers&connect=lex-server-managed');
               return;
             }
             if (cloud) {

@@ -937,6 +937,10 @@ import {
 import { refreshXaiModelsFromHttp } from '../maker-host/model-discovery/xai.js';
 import { refreshBuiltinProviderModels } from '../maker-host/provider-model-refresh.js';
 import {
+  ensureLexServerManagedModelsFresh,
+  refreshLexServerManagedModels,
+} from '../lex-server-managed/index.js';
+import {
   configureProviderModelAutoRefresh,
   refreshProviderModelsManually,
   requestProviderModelAutoRefresh,
@@ -5915,7 +5919,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   // 便于脱 Electron + 内存 db 单测。CRUD 成功后刷新 active-catalog 并广播 PROVIDER_CHANGED，
   // 让设置页列表 + 对话模型选择器（各 useProviders 实例）live 刷新。
   configureProviderModelAutoRefresh({
-    listProviders: (opts) => getDesktopProviderService().listProviders(opts),
+    listProviders: async (opts) => {
+      const providers = await getDesktopProviderService().listProviders(opts);
+      ensureLexServerManagedModelsFresh();
+      return providers;
+    },
     getScopeKey: () => getActiveAppSession().generation,
     // 通知唯一出口是 active-catalog changedListener(capabilities 先对齐再广播);
     // 这里不再补发 PROVIDER_CHANGED——no-op/拒收刷新就该是 0 次广播。
@@ -5950,7 +5958,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   });
 
   registerProviderHandlers(createElectronIpcHandlerRegistry(), {
-    listProviders: (opts) => getDesktopProviderService().listProviders(opts),
+    listProviders: async (opts) => {
+      const providers = await getDesktopProviderService().listProviders(opts);
+      // Opening the provider page / an empty state may grant a short-TTL retry.
+      ensureLexServerManagedModelsFresh();
+      return providers;
+    },
     getModelVisibilityOverrides: async (providers, trusted) => {
       if (!trusted) await waitForModelVisibilityMirror();
       return getModelVisibilityMirrorSnapshot(providers, trusted);
@@ -6023,6 +6036,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       return getAnthropicModelDiscoveryFailure();
     },
     refreshBuiltinModels: refreshProviderModelsManually,
+    refreshManagedModels: refreshLexServerManagedModels,
     requestModelsAutoRefresh: requestProviderModelAutoRefresh,
     scanLocalCli: () => scanLocalCliAuth(createLocalCliScanDeps()),
     // 「模型 / 供应商停用」override 写入(main 侧持久化,handler 写后广播 PROVIDER_CHANGED)。

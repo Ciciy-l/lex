@@ -33,6 +33,10 @@ import {
   type ProviderErrorClassification,
   type ProviderErrorCode,
 } from '../../shared/providerErrors.js';
+import {
+  isReservedLexServerManagedIdentity,
+  isReservedLexServerManagedProviderId,
+} from '../../shared/lexServerManagedModels.js';
 import { getActiveAppSession, isAppSessionBoundaryPending } from '../appSessionState.js';
 import { getActiveCatalog } from './active-catalog.js';
 import { withOpenCodeGoSessionHeader } from './opencode-go-session.js';
@@ -897,9 +901,17 @@ export function resolveSavedProbeSpec(
       headers: withoutCredentialHeaders(routeHeaders),
     };
   }
-  const apiKey = channelCredential
-    ? keyReader(channelCredential.channelId, agent, channelCredential.protocol)
-    : keyReader(providerId, agent);
+  // Same reserved-identity guard as the routing path: a legacy custom channel
+  // must not borrow the host-managed credential for a probe.
+  const reservedChannelAlias =
+    channelCredential
+    && isReservedLexServerManagedIdentity(channelCredential.channelId)
+    && !isReservedLexServerManagedProviderId(providerId);
+  const apiKey = reservedChannelAlias
+    ? null
+    : channelCredential
+      ? keyReader(channelCredential.channelId, agent, channelCredential.protocol)
+      : keyReader(providerId, agent);
   return {
     agent,
     baseUrl,

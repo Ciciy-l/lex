@@ -1,4 +1,11 @@
 import { appendLexUserAgent } from '@cindy/model-providers';
+import {
+  forceRefreshManagedCredential,
+  isManagedUnauthorizedTarget,
+  managedUnauthorizedRefresh,
+  withManagedUnauthorizedRetry,
+} from '../lex-server-managed/retry.js';
+import { LEX_SERVER_MANAGED_PROVIDER_ID } from '../../shared/lexServerManagedModels.js';
 import { resolveConversationSessionHeaders, withChatBridgeUserAgent, overrideHeadersCaseInsensitive } from '@cindy/responses-chat-bridge';
 import { providerModelRecord, providerCatalogId, isOfficialXaiApiHost, type CatalogModel, type Effort, type Provider } from '@cindy/model-providers';
 import { reconcileOutboundReasoningEffort } from './outbound-reasoning-effort.js';
@@ -1148,10 +1155,16 @@ function createChatBridgeDecision(
     ...(onUpstreamError ? { onUpstreamError } : {}),
     // localHandler 分支的上游请求由 chat bridge 自己发,绕开了 compat-proxy 转发层的
     // 出站代理;显式注入代理感知 fetch(见 outbound-fetch.ts)。
-  }, { logger: log, fetchImpl: async (url, init) => {
-    if (route.isCurrent?.() === false) throw new Error('Provider channel changed before dispatch');
-    return outboundFetch(url, init);
-  } });
+  }, {
+    logger: log,
+    fetchImpl: withManagedUnauthorizedRetry(
+      async (url, init) => {
+        if (route.isCurrent?.() === false) throw new Error('Provider channel changed before dispatch');
+        return outboundFetch(url, init);
+      },
+      () => route.providerId === LEX_SERVER_MANAGED_PROVIDER_ID,
+    ),
+  });
   return {
     localHandler: ({ rawBody, parsedBody, ctx, res }) => {
       const body = prepareLocalBridgeBody({
@@ -1190,12 +1203,15 @@ function createChatBridgeDecision(
             if (route.isCurrent?.() === false || (ctx && !remoteChannelRequestCurrent(ctx.headers, 'codex')))
               throw new Error('Provider channel changed before dispatch');
           },
-          fetchImpl: async (url, init) => {
-            if (route.isCurrent?.() === false) throw new Error('Provider channel changed before dispatch');
-            const response = await outboundFetch(url, init);
-            if (!response.ok && onUpstreamError) onUpstreamError({ status: response.status, body: await readBoundedResponseText(response.clone()) });
-            return response;
-          },
+          fetchImpl: withManagedUnauthorizedRetry(
+            async (url, init) => {
+              if (route.isCurrent?.() === false) throw new Error('Provider channel changed before dispatch');
+              const response = await outboundFetch(url, init);
+              if (!response.ok && onUpstreamError) onUpstreamError({ status: response.status, body: await readBoundedResponseText(response.clone()) });
+              return response;
+            },
+            () => route.providerId === LEX_SERVER_MANAGED_PROVIDER_ID,
+          ),
         });
         return handlePiProviderRequest(nativeFetch, { ...body, model: actualModel } as import('@cindy/responses-chat-bridge').ResponsesRequest, res);
       }
@@ -1424,7 +1440,14 @@ function createAnthropicBridgeDecision(
     if (isAnthropicSubscriptionOAuth) {
       if (token) headers = claudeOAuthHeaders(headers, token);
     } else if (route.routing.authStrategy === 'api-key-header') {
-      if (route.apiKey) {
+      if (providerId === LEX_SERVER_MANAGED_PROVIDER_ID) {
+        // `/messages` accepts either x-api-key or Bearer, never both. The
+        // managed facade uses Bearer everywhere.
+        if (route.apiKey) headers.authorization = `Bearer ${route.apiKey}`;
+        for (const name of Object.keys(headers)) {
+          if (name.toLowerCase() === 'x-api-key') delete headers[name];
+        }
+      } else if (route.apiKey) {
         headers['x-api-key'] = route.apiKey;
       } else if (!headerValue(headers, 'x-api-key')) {
         headers['x-api-key'] = 'cindy-missing-custom-provider-api-key';
@@ -1493,7 +1516,28 @@ function createAnthropicBridgeDecision(
             return token ? buildProviderHeaders(token) : null;
           },
         }
-      : {}),
+      : route.providerId === LEX_SERVER_MANAGED_PROVIDER_ID
+        ? {
+            // Managed facade only: 401 triggers one forced credential refresh.
+            // 403/429/5xx never reach this branch (the bridge only calls it for
+            // 401/403; our service only rotates on 401 via the proxy hook, so
+            // keep the parity here by rejecting non-401 below).
+            refreshHeaders: async ({
+              status,
+              requestHeaders,
+            }: {
+              status: 401 | 403;
+              body: string;
+              requestHeaders: Readonly<Record<string, string>>;
+            }) => {
+              if (status !== 401) return null;
+              const authorization = headerValue(requestHeaders, 'authorization');
+              const staleToken = authorization?.replace(/^Bearer\s+/i, '') ?? null;
+              const credential = await forceRefreshManagedCredential(staleToken);
+              return credential ? { authorization: `Bearer ${credential}` } : null;
+            },
+          }
+        : {}),
     rewriteModel: (model) => rewriteAnthropicBridgeModel(model, stripPrefix),
     promptCaching: supportsPromptCaching,
     automaticPromptCaching: isOfficialAnthropicUpstream(upstreamBase),
@@ -3338,6 +3382,9 @@ async function createCodexProxyHandle(
       routeWithUsageEncoding,
       () => buildCodexGatewayBaseUrl(),
     ),
+    // Managed facade only; ordinary custom providers are rejected by the URL check.
+    refreshHeadersOnUnauthorized: managedUnauthorizedRefresh,
+    shouldRefreshHeadersOnUnauthorized: isManagedUnauthorizedTarget,
     responseObserver: composeResponseObservers(
       (ctx) => {
         const record = pricing.get(ctx.reqId);

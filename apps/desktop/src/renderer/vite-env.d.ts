@@ -5146,7 +5146,7 @@ interface ElectronAPI {
     }>;
     /** 复用各内置供应商既有真源刷新模型清单。 */
     refreshBuiltinProviderModels: (
-      providerId: import('../shared/providerModelRefresh').BuiltinRefreshableProviderId,
+      providerId: string,
     ) => Promise<import('../shared/providerModelRefresh').ProviderModelRefreshResult>;
     /** 静默请求 Main 在冷却允许时刷新已连接内置供应商。 */
     requestProviderModelsAutoRefresh: (

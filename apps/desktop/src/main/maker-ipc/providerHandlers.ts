@@ -34,6 +34,11 @@ import {
 
 import type { LocalCliDetection } from '../../shared/localCliDetect.js';
 import { MANAGED_OLLAMA_PROVIDER_ID, isManagedSidecarProviderId } from '../../shared/localModelRuntime.js';
+import { tryGetDbClient } from '../localDb/client/current.js';
+import {
+  isReservedLexServerManagedIdentity,
+  isReservedLexServerManagedProviderId,
+} from '../../shared/lexServerManagedModels.js';
 import type {
   CodexImageGenerationRestartPolicy,
   CustomProviderUpdateOptions,
@@ -330,6 +335,11 @@ export interface ProviderHandlerDeps {
   fetchModels(spec: ProviderModelsFetchSpec): Promise<ProviderModelsFetchResult>;
   /** 内置四家的模型真源刷新；生产按 providerId 分派到既有 discovery 机制。 */
   refreshBuiltinModels(providerId: BuiltinRefreshableProviderId): Promise<void>;
+  /**
+   * Refresh the host-managed Lex Server catalog. Only the reserved managed id
+   * may reach this path; it never touches the custom-provider store.
+   */
+  refreshManagedModels?(): Promise<void>;
   /** Renderer 自动刷新提示；Main 侧负责静默失败、冷却和跨窗口去重。 */
   requestModelsAutoRefresh(trigger: ProviderModelAutoRefreshRendererTrigger): Promise<void>;
   /**
@@ -1172,6 +1182,17 @@ export function registerProviderHandlers(
     MAKER_INVOKE.PROVIDER_MODELS_REFRESH,
     async (event, providerId: unknown): Promise<ProviderModelRefreshResult> => {
       assertTrustedProviderMutationSender(event);
+      if (isReservedLexServerManagedProviderId(providerId)) {
+        if (!deps.refreshManagedModels) {
+          throwIpcError('INTERNAL', 'managed model refresh is unavailable');
+        }
+        try {
+          await deps.refreshManagedModels();
+        } catch {
+          throwIpcError('INTERNAL', 'managed model refresh failed');
+        }
+        return { ok: true, providerId };
+      }
       if (!isBuiltinRefreshableProviderId(providerId)) {
         throwIpcError(
           'INVALID_PARAMS',
@@ -1411,6 +1432,64 @@ export function registerProviderHandlers(
     deps.assertTrustedSender(event);
   }
 
+  /**
+   * The Lex Server managed row is synthesized by Main and has no persisted
+   * configuration or safeStorage credential. Every custom-provider mutation
+   * channel must reject its reserved id before touching a store.
+   */
+  function rejectReservedManagedProviderId(value: unknown): void {
+    if (isReservedLexServerManagedIdentity(value)) {
+      throwIpcError(
+        'PERMISSION_DENIED',
+        'the Lex Server managed provider is host-owned and cannot be changed',
+      );
+    }
+  }
+
+  /**
+   * A custom channel id must never collide with the reserved provider id:
+   * `routeApiKey` passes the channel id to the key reader, so the collision
+   * would hand the host-managed credential to a user-configured upstream.
+   */
+  function rejectReservedManagedProviderIdentities(config: CustomProviderConfig): void {
+    const identities = [
+      config.id,
+      ...(config.channels?.channels ?? []).flatMap((channel) => [
+        channel.id,
+        ...Object.keys(channel.protocols).map((protocol) =>
+          channelProtocolProviderId(channel.id, protocol as ProviderWireProtocol),
+        ),
+      ]),
+    ];
+    for (const identity of identities) rejectReservedManagedProviderId(identity);
+  }
+
+  /**
+   * Entry guard for supplier-id IPC paths that do not take a full config.
+   * A stale/legacy row may already carry a reserved channel id even though new
+   * create/update requests are rejected.
+   */
+  async function rejectReservedStoredIdentities(providerId: string): Promise<void> {
+    // Startup/logout may have no DB client; the mutation that follows will
+    // fail closed on its own. Skip only the extra stored-config audit.
+    if (!tryGetDbClient()) return;
+    const stored = await getCustomProvider(storedCustomProviderId(providerId));
+    if (stored) rejectReservedManagedProviderIdentities(stored);
+  }
+
+  function rejectReservedProviderViewIdentities(provider: ProviderView | undefined): void {
+    const channel = provider?.channel;
+    if (!channel) return;
+    rejectReservedManagedProviderId(provider.id);
+    rejectReservedManagedProviderId(channel.id);
+    rejectReservedManagedProviderId(channel.supplierId);
+    for (const protocol of channel.protocols) {
+      rejectReservedManagedProviderId(
+        channelProtocolProviderId(channel.id, protocol as ProviderWireProtocol),
+      );
+    }
+  }
+
   async function prepareCodexCustomProviderChange(
     required: boolean,
     options: CustomProviderUpdateOptions,
@@ -1449,9 +1528,11 @@ export function registerProviderHandlers(
     }
     const providerId = value.providerId ?? 'openai';
     if (typeof providerId !== 'string') throwIpcError('INVALID_PARAMS', 'Invalid provider');
+    rejectReservedManagedProviderId(providerId);
     assertRequestedProviderOwner(value.dataOwnerId as string | null, value.ownerGeneration);
     const provider = (await deps.listProviders()).find((p) => p.id === providerId);
     assertRequestedProviderOwner(value.dataOwnerId as string | null, value.ownerGeneration);
+    rejectReservedProviderViewIdentities(provider);
     if (!provider || provider.id === 'xd') {
       throwIpcError('INVALID_PARAMS', 'Provider does not support presentation overrides');
     }
@@ -1968,6 +2049,7 @@ export function registerProviderHandlers(
     const options = parseCustomProviderUpdateOptions(optionsInput);
     if (!options) throwIpcError('INVALID_PARAMS', 'invalid custom provider create options');
     const config = input as CustomProviderConfig;
+    rejectReservedManagedProviderIdentities(config);
     if (isManagedSidecarProviderId(config.id)) {
       throwIpcError(
         'PERMISSION_DENIED',
@@ -2052,6 +2134,7 @@ export function registerProviderHandlers(
     const options = parseCustomProviderUpdateOptions(optionsInput);
     if (!options) throwIpcError('INVALID_PARAMS', 'invalid custom provider update options');
     let config = input as CustomProviderConfig;
+    rejectReservedManagedProviderIdentities(config);
     if (isManagedSidecarProviderId(config.id)) {
       throwIpcError(
         'PERMISSION_DENIED',
@@ -2082,6 +2165,7 @@ export function registerProviderHandlers(
           config = resolveLatest(previous, options);
           const latestValidation = validateCustomProviderConfig(config, { allowLegacyXai: true });
           if (!latestValidation.ok) throwIpcError(latestValidation.code, latestValidation.message);
+          rejectReservedManagedProviderIdentities(config);
           separated = splitCustomProviderHeaders(config);
         }
         // 即便 OAuth 描述符没变，runtime / model 编辑也必须让旧登录尾部的自动发现失效，
@@ -2218,6 +2302,8 @@ export function registerProviderHandlers(
     if (typeof providerId !== 'string' || providerId.length === 0) {
       throwIpcError('INVALID_PARAMS', 'providerId required');
     }
+    rejectReservedManagedProviderId(providerId);
+    await rejectReservedStoredIdentities(providerId);
     const runtimeProviderId = runtimeCustomProviderId(providerId);
     const ownerAtIngress = captureProviderOwnerSession();
     return withProviderConfigMutation(providerId, async (commitRouteMutation) => {
@@ -2368,6 +2454,7 @@ export function registerProviderHandlers(
         const providers = await deps.listProviders({ allowSideEffects: false });
         assertProviderMutationOwner(ownerAtIngress);
         const provider = providers.find((entry) => entry.id === parsed.providerId);
+        rejectReservedProviderViewIdentities(provider);
         mutationKey = provider?.channel?.supplierId ?? parsed.providerId;
         if (providerConfigMutationCounts.has(mutationKey))
           throwIpcError('PRECONDITION_FAILED', 'Provider configuration is being updated');
@@ -2415,6 +2502,7 @@ export function registerProviderHandlers(
         (provider) => provider.id === parsed.savedProviderId,
       );
       assertProviderMutationOwner(owner);
+      rejectReservedProviderViewIdentities(provider);
       if (provider?.channel && !provider.channel.legacy) {
         const revision = providerConfigMutationRevisions.get(provider.channel.supplierId) ?? 0;
         if (providerConfigMutationCounts.has(provider.channel.supplierId))
@@ -2511,6 +2599,8 @@ export function registerProviderHandlers(
     // (PR #548 review)。
     assertTrustedProviderMutationSender(event);
     const providerId = requireProviderId(input);
+    rejectReservedManagedProviderId(providerId);
+    await rejectReservedStoredIdentities(providerId);
     let failure: ProviderModelDiscoveryFailure | null;
     try {
       failure = await deps.rediscoverModels(providerId);
@@ -2545,6 +2635,8 @@ export function registerProviderHandlers(
     async (event, providerId: unknown, rawOptions?: unknown) => {
       assertTrustedProviderMutationSender(event);
       const id = requireProviderId(providerId);
+      rejectReservedManagedProviderId(id);
+      await rejectReservedStoredIdentities(id);
       const { ownerId } = requireProviderOAuthLoginOptions(rawOptions);
       const sender = providerOAuthRendererSender(event);
       if (ownerId && !sender) {
@@ -2622,6 +2714,8 @@ export function registerProviderHandlers(
     const options = parseCustomProviderUpdateOptions(optionsInput);
     if (!options) throwIpcError('INVALID_PARAMS', 'Invalid provider change options');
     const id = storedCustomProviderId(requireProviderId(providerId));
+    rejectReservedManagedProviderId(id);
+    await rejectReservedStoredIdentities(id);
     const owner = captureProviderOwnerSession();
     return withProviderConfigMutation(id, async (commitRouteMutation) => {
       assertProviderMutationOwner(owner);
@@ -2663,6 +2757,8 @@ export function registerProviderHandlers(
     const options = parseCustomProviderUpdateOptions(optionsInput);
     if (!options) throwIpcError('INVALID_PARAMS', 'Invalid provider change options');
     const id = requireProviderId(providerId);
+    rejectReservedManagedProviderId(id);
+    await rejectReservedStoredIdentities(id);
     const ownerAtIngress = captureProviderOwnerSession();
     let generation: symbol | null = null;
     try {
@@ -2712,6 +2808,8 @@ export function registerProviderHandlers(
     async (event, providerId: unknown, rawOptions?: unknown) => {
       assertTrustedProviderMutationSender(event);
       const id = requireProviderId(providerId);
+      rejectReservedManagedProviderId(id);
+      await rejectReservedStoredIdentities(id);
       const { releaseOwner, ownerId } = requireProviderOAuthCancelOptions(rawOptions);
       if (releaseOwner) {
         const sender = providerOAuthRendererSender(event);

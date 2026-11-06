@@ -40,6 +40,10 @@ import type { RoutingDecision } from '@cindy/anthropic-compat-proxy';
 
 import { getActiveCatalog, isXdCodexAnthropicBridgeModel } from './active-catalog.js';
 import { getAppCapabilities } from '../appCapabilities.js';
+import {
+  isReservedLexServerManagedIdentity,
+  isReservedLexServerManagedProviderId,
+} from '../../shared/lexServerManagedModels.js';
 import { getSessionProvider } from './session-provider-store.js';
 
 /**
@@ -94,12 +98,37 @@ export function readHydratedProviderHeaders(
   return customProviderHeaderReader(channelId, agent, protocol);
 }
 
+/** @internal Test seam for the reserved-managed identity guard. */
+export function __testingRouteApiKey(
+  providerId: string,
+  agent: AgentKind,
+  routing: RoutingDescriptor,
+): string | null {
+  return routeApiKey(providerId, agent, routing);
+}
+
 function routeApiKey(
   providerId: string,
   agent: AgentKind,
   routing: RoutingDescriptor,
 ): string | null {
   const credential = routing.channelCredential;
+  const credentialId = credential ? credential.channelId : providerId;
+  // A legacy/custom channel must never alias the reserved managed identity:
+  // the key reader would otherwise return the host-managed credential to a
+  // user-configured upstream. Only the actual managed provider may claim it.
+  if (
+    isReservedLexServerManagedIdentity(credentialId)
+    && !isReservedLexServerManagedProviderId(providerId)
+  ) {
+    return null;
+  }
+  if (isReservedLexServerManagedProviderId(providerId)) {
+    const managedProvider = getActiveCatalog().providers.find(
+      (provider) => provider.id === providerId && provider.managed,
+    );
+    if (!managedProvider) return null;
+  }
   return credential
     ? customProviderKeyReader(credential.channelId, agent, credential.protocol)
     : customProviderKeyReader(providerId, agent);

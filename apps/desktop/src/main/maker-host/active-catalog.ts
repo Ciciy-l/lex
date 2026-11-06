@@ -71,6 +71,7 @@ import type { XaiDiscoveredModel } from './model-discovery/xai-models.js';
 export type { XaiDiscoveredModel } from './model-discovery/xai-models.js';
 
 import { CURRENT_CINDY_REGION } from '../../shared/brandRegion.js';
+import { isReservedLexServerManagedIdentity } from '../../shared/lexServerManagedModels.js';
 import {
   MANAGED_OLLAMA_PROVIDER_ID,
   ollamaModelRefsEqual,
@@ -120,6 +121,14 @@ let baseUnverifiedXdMediaKinds: ReadonlySet<CatalogXdMediaKind> = new Set([
 let trustedCustomProviderRegistry: Catalog['modelRegistry'] = BUNDLED_CATALOG.modelRegistry;
 /** 用户自定义供应商(已 buildUserProvider 展开的标准 Provider),追加在 base 之后。 */
 let custom: Provider[] = [];
+/**
+ * Host-synthesized managed providers (for example Lex Server managed models).
+ *
+ * They are intentionally separate from `custom`: no persisted configuration or
+ * credential backs them, so catalog refreshes must never overwrite them. The
+ * host replaces the whole array atomically (`setManagedProviders`).
+ */
+let managed: Provider[] = [];
 /** 当前 owner 的原始配置；仅用于 Registry 热更新后的运行时重投影。 */
 let customConfigs: CustomProviderConfig[] | null = null;
 /**
@@ -1260,6 +1269,9 @@ function computeMerged(): Catalog {
   // 自定义供应商先追加、再做通用发现 augment——顺序反了的话,自定义 OAuth 供应商
   // 的发现模型永远合不进目录(map 只扫过内置列表)。
   if (custom.length > 0) providers = [...providers, ...custom];
+  // Host-managed providers are authoritative snapshots. Append after custom so a
+  // persisted provider can never shadow the reserved managed identity.
+  if (managed.length > 0) providers = [...providers, ...managed];
 
   // 通用 OAuth 供应商的发现模型(additions-only,per provider × agent;内置与自定义同待遇)。
   if (discoveredByProvider.size > 0) {
@@ -2126,10 +2138,54 @@ export function getModelPlaneWarnings(): readonly ModelPlaneWarning[] {
  * 注入 / 刷新用户自定义供应商(CRUD 后、或换账号 DB 重开后调用)。
  * 传入的是已 `buildUserProvider` 展开的标准 `Provider[]`(**不含 API key**)。
  */
+/**
+ * Legacy or hand-edited custom rows may carry an identity inside the reserved
+ * managed namespace. They must never become selectable routes: a custom
+ * channel id equal to the managed provider id would reach the host key reader.
+ */
+function providerClaimsReservedManagedIdentity(provider: Provider): boolean {
+  if (isReservedLexServerManagedIdentity(provider.id)) return true;
+  const channel = provider.channel;
+  if (!channel) return false;
+  return (
+    isReservedLexServerManagedIdentity(channel.id)
+    || isReservedLexServerManagedIdentity(channel.supplierId)
+  );
+}
+
+function configClaimsReservedManagedIdentity(config: CustomProviderConfig): boolean {
+  if (isReservedLexServerManagedIdentity(config.id)) return true;
+  return (config.channels?.channels ?? []).some(
+    (channel) =>
+      isReservedLexServerManagedIdentity(channel.id)
+      || Object.keys(channel.protocols).some((protocol) =>
+        isReservedLexServerManagedIdentity(`${channel.id}--${protocol}`),
+      ),
+  );
+}
+
 export function setCustomProviders(providers: Provider[]): void {
   customConfigs = null;
-  custom = [...providers];
+  custom = providers.filter((provider) => !providerClaimsReservedManagedIdentity(provider));
   markChanged();
+}
+
+/**
+ * Replace the host-managed provider projection.
+ *
+ * The managed source owns routing and model metadata; credentials stay in the
+ * owning host module. Passing an empty array clears the row on logout/service
+ * switch. Always invalidate the merge cache, even for an empty -> empty call,
+ * so callers that publish a new display state (loading/error) get one revision.
+ */
+export function setManagedProviders(providers: Provider[]): void {
+  managed = [...providers];
+  markChanged();
+}
+
+/** Current host-managed providers (same order as they appear in the catalog). */
+export function getManagedProviders(): readonly Provider[] {
+  return managed;
 }
 
 /**
@@ -2137,7 +2193,7 @@ export function setCustomProviders(providers: Provider[]): void {
  * 可在同一个 revision 内重算 effort 投影。
  */
 export function setCustomProviderConfigs(configs: CustomProviderConfig[]): void {
-  customConfigs = [...configs];
+  customConfigs = configs.filter((config) => !configClaimsReservedManagedIdentity(config));
   custom = customConfigs.flatMap((config) =>
     buildUserProviderChannels(config, {
       modelRegistry: trustedCustomProviderRegistry,
