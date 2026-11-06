@@ -514,8 +514,27 @@ export interface ProviderMediaModel extends Pick<
   defaultEnabled?: boolean;
 }
 
+/**
+ * Host-managed provider metadata (additions-only).
+ *
+ * Used by a provider synthesized by the host from a server-issued catalog (for
+ * example Lex Server managed models). It never carries credentials; `state` and
+ * `errorCode` are safe to project to renderers and remote controllers.
+ */
+export interface ProviderManagedInfo {
+  /** Managed source discriminator, e.g. 'lex-server'. */
+  provider: string;
+  /** Server host for display; never includes credentials or a path. */
+  host: string;
+  state: 'loading' | 'ready' | 'not-entitled' | 'rate-limited' | 'unavailable';
+  /** Non-secret reason code; consumers map it to localized copy. */
+  errorCode?: string;
+}
+
 /** 供应商定义。 */
 export interface Provider {
+  /** Host-managed provider metadata; absent for built-in/user providers. */
+  managed?: ProviderManagedInfo;
   /** Safe channel identity. Supplier grouping must never replace the route ID. */
   channel?: {
     supplierId: string;

@@ -1,4 +1,6 @@
 import { readProviderPresentation } from './provider-presentation-store.js';
+import { readLexServerManagedCredential } from '../lex-server-managed/index.js';
+import { createHostProviderKeyReader } from './hostProviderKey.js';
 import { filterLegacyGptContextProfiles } from './legacy-context-profiles.js';
 import { subscriptionAccountKind, subscriptionAccountState, isXaiSubscriptionProviderId, getValidClaudeAccountOAuth, resetSubscriptionAccountCaches } from './subscription-account-auth.js';
 /**
@@ -449,6 +451,22 @@ async function readXaiProviderOAuthToken(
   return token !== staleToken ? token : null;
 }
 
+/**
+ * Host key reader used by routing, diagnostics and connection state.
+ *
+ * The managed branch matches the exact reserved runtime id only, so real
+ * custom providers keep reading safeStorage. The managed value lives in Main
+ * memory and is never written by this path.
+ */
+const readHostProviderKey = createHostProviderKeyReader({
+  hasManagedProvider: (providerId) =>
+    getActiveCatalog().providers.some(
+      (candidate) => candidate.id === providerId && candidate.managed,
+    ),
+  readManagedCredential: readLexServerManagedCredential,
+  readCustomProviderKey,
+});
+
 /** Set 用稳定函数引用去重，ensureActiveCatalogLoaded 的幂等调用不会重复注册清理副作用。 */
 function handleProviderSecretsCleared(): void {
   resetGenericOAuthMemoryCache();
@@ -468,7 +486,7 @@ function handleProviderSecretsCleared(): void {
 export function ensureActiveCatalogLoaded(): Promise<Catalog> {
   // 接通自定义供应商密钥读取器（idempotent）：provider-route 用 setter 注入避免触电，
   // 这里在路由发生前（splash 早于任何 turn）把真实 safeStorage 读取接进去。
-  setCustomProviderKeyReader(readCustomProviderKey);
+  setCustomProviderKeyReader(readHostProviderKey);
   setCustomProviderCredentialResolver((providerId, agent) => {
     if (agent !== 'claude-code' && agent !== 'codex' && agent !== 'pi' && agent !== 'omp')
       return null;
@@ -495,7 +513,7 @@ export function ensureActiveCatalogLoaded(): Promise<Catalog> {
     return null;
   });
   // 测试连接探测与路由同源读 key（同 setter 模式，见 provider-diagnostics.ts）。
-  setDiagnosticsKeyReader(readCustomProviderKey);
+  setDiagnosticsKeyReader(readHostProviderKey);
   // 通用 OAuth Runner 接线（idempotent）：safeStorage blob IO + 系统浏览器拉起;
   // 路由热路径的同步 token 读取（描述符现查目录,临期后台单飞刷新,不阻塞路由）。
   configureGenericOAuth({
@@ -1099,10 +1117,15 @@ export function getDesktopProviderService(): ProviderService {
     // 内置 API-key 供应商(如 gemini 图像来源):连接态 = key 已存(providerSecretStore)。
     builtinApiKeyConnected: (providerId) =>
       providerId === 'gemini' ? Boolean(getProviderSecretStore().get('gemini')?.trim()) : false,
+    managedProviderConnected: (provider) => provider.managed?.state === 'ready',
     customApiKeyConnected: (provider) =>
-      hasCustomProviderCredential(provider, readCustomProviderKey, providerRoutingForModel),
+      hasCustomProviderCredential(provider, readHostProviderKey, providerRoutingForModel),
     projectConnectionAvailability: (provider) =>
-      projectChannelConnectionAvailability(provider, readCustomProviderKey, providerRoutingForModel),
+      // Managed models share one facade credential; per-model engine-key readiness
+      // is owned by the managed snapshot, not safeStorage.
+      provider.managed
+        ? provider
+        : projectChannelConnectionAvailability(provider, readHostProviderKey, providerRoutingForModel),
     getAvailableMediaModels: () => [
       ...listReadyProviderMediaModels(),
       ...(getAppCapabilities().canUseCindyGateway && readClaudeApiKey() != null

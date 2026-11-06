@@ -32,9 +32,12 @@ Lex Server 地址是设备服务的 **origin**（例如 `https://lex.example.com
 共享邀请为同 origin 的 `/shared-task/join#token`，仅在 Lex 内粘贴；不自动访问外来邀请地址。
 
 首轮范围包括邮箱登录/恢复/刷新/切换/退出、多成员身份、设备目录、基础远程任务与任务共享。
-Lex 不提供模型中转、托管模型、订阅、语音、OSS 云附件、TURN、push 投递、系统凭据交接或自动解锁；
-这些账号服务在 Main 边界不可用，不能将 Lex token 当作 Cindy global token。用户手配模型、CLI、
-本地插件凭据不清除；软件更新与下载信任锚独立。Android/iOS 本轮不新增入口，共享层旧调用兼容。
+Lex 提供服务器托管模型：`GET /api/managed-models/catalog` 下发模型目录，`POST /api/managed-models/credentials`
+下发 15 分钟 credential 与推理 baseUrl。credential 只在 Main 内存中使用，不落盘、不进 renderer/日志；
+provider 行为服务器托管、不可编辑删除，推理按每请求读取当前 credential 路由。模型目录为空或
+无权限时 renderer 显示明确空态。订阅、语音、OSS 云附件、TURN、push 投递、系统凭据交接或自动解锁
+仍不提供；这些账号服务在 Main 边界不可用，不能将 Lex token 当作 Cindy global token。用户手配模型、
+CLI、本地插件凭据不清除；软件更新与下载信任锚独立。Android/iOS 本轮不新增入口，共享层旧调用兼容。
 
 实现与合成定向测试不代替两 Desktop 的真实 OTP、多身份、重启、远程和共享实窗验收；
 交付报告分别记录实际通过、阻断及未验项，不把类型绿当作认证或远程通过。

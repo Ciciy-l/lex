@@ -129,6 +129,11 @@ import {
   resolveBundledPiGatewayModelProfile,
 } from './pi-gateway-model-catalog.js';
 import { isExclusiveXaiModelId } from '../../shared/subscriptionModels.js';
+import {
+  isReservedLexServerManagedIdentity,
+  LEX_SERVER_MANAGED_PROVIDER_ID,
+} from '../../shared/lexServerManagedModels.js';
+import { buildManagedPiProjection } from '../lex-server-managed/piProjection.js';
 import { resolvePiRuntimeModelDescriptor, resolveModelDefaultContextWindow, resolveModelContextProviderId } from './catalog-to-descriptors.js';
 import {
   resolveManagedPiNativePackagePaths,
@@ -1844,7 +1849,13 @@ export async function resolvePiNativeProviders(ctx: {
   }
   let configs: CustomProviderConfig[] = [];
   try {
-    configs = await listCustomProvidersWithSecureHeaders();
+    configs = (await listCustomProvidersWithSecureHeaders()).filter(
+      (config) =>
+        !isReservedLexServerManagedIdentity(config.id)
+        && !(config.channels?.channels ?? []).some((channel) =>
+          isReservedLexServerManagedIdentity(channel.id),
+        ),
+    );
   } catch (err) {
     log.warn(
       'resolvePiNativeProviders: listCustomProviders failed, continuing with subscriptions only',
@@ -1938,6 +1949,29 @@ export async function resolvePiNativeProviders(ctx: {
         }
         Object.assign(custom.env, projected.env);
       }
+    }
+    // Host-managed Lex Server models are not persisted custom configs. Project
+    // the catalog-backed provider onto the same loopback channel route so Pi
+    // never bakes the 15-minute credential into its spawn environment.
+    const managed = getActiveCatalog().providers.find(
+      (provider) =>
+        provider.id === LEX_SERVER_MANAGED_PROVIDER_ID
+        && provider.managed?.state === 'ready'
+        && provider.agents.includes('pi')
+        && (provider.models.pi?.length ?? 0) > 0,
+    );
+    const managedProjection = managed
+      ? buildManagedPiProjection({
+          provider: managed,
+          isRemote,
+          localEndpoint: nativeBase(undefined),
+          placeholderKey: PI_PROVIDER_AUTH_PLACEHOLDER_KEY,
+          headers: piSubscriptionHeaders(managed.id),
+        })
+      : null;
+    if (managedProjection) {
+      custom.env = { ...custom.env, ...managedProjection.env };
+      custom.providers.push(managedProjection.spec);
     }
   }
   // Remote PI cannot use the local native overlay. Preserve upstream's exact

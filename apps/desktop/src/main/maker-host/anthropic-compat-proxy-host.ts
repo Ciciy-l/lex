@@ -140,6 +140,12 @@ import {
 import { createXdToolResultImageNoticeTransform } from './xd-tool-result-image-notice.js';
 import { createPiResponsesVerbosityTransform } from './pi-responses-verbosity.js';
 import { modelSupportsFastMode } from '@cindy/model-providers';
+import {
+  isManagedUnauthorizedTarget,
+  managedUnauthorizedRefresh,
+  withManagedUnauthorizedRetry,
+} from '../lex-server-managed/retry.js';
+import { LEX_SERVER_MANAGED_PROVIDER_ID } from '../../shared/lexServerManagedModels.js';
 
 // scope = 'cc-proxy' → logger.ts 的 emit() 路由把这条流量并入统一 agent 流
 // (agent-*.ndjson, source=proxy)。child(sub) 会继续保持 'cc-proxy/sub' 前缀, routing 一致。
@@ -169,9 +175,17 @@ function attachClaudeProviderBridge(route: RoutingDecision, providerId: string, 
     const requestPath = routing.requestPath ?? (protocol === 'openai-chat' ? '/chat/completions' : '/responses');
     const row = nativeRow ?? providerModelRecord(model.id, base, protocol);
     const thinkingFormat = row?.execution.pi.compat?.thinkingFormat;
+    const bridgeHeaders =
+      provider.id === LEX_SERVER_MANAGED_PROVIDER_ID
+        ? Object.fromEntries(
+            Object.entries(route.headerOverride ?? {}).filter(
+              ([name]) => name.toLowerCase() !== 'x-api-key',
+            ),
+          )
+        : (route.headerOverride ?? {});
     const handler = createClaudeProviderBridge({
       url: `${base.replace(/\/+$/, '')}/${requestPath.replace(/^\/+/, '')}`,
-      protocol, headers: route.headerOverride ?? {}, efforts: model.efforts,
+      protocol, headers: bridgeHeaders, efforts: model.efforts,
       supportsFastMode: modelSupportsFastMode(provider, model.id, 'claude-code'),
       providerId: provider.id,
       catalogPresetId: model.catalogPresetId,
@@ -185,10 +199,13 @@ function attachClaudeProviderBridge(route: RoutingDecision, providerId: string, 
         reasoningField: thinkingFormat === 'qwen' ? 'enable_thinking'
           : thinkingFormat === 'zai' ? 'thinking.type' : 'reasoning_effort',
       },
-      fetchImpl: async (url, init) => {
-        if (route.dispatchGenerationValid?.() === false) throw new Error('Provider channel changed before dispatch');
-        return outboundFetch(url, init);
-      },
+      fetchImpl: withManagedUnauthorizedRetry(
+        async (url, init) => {
+          if (route.dispatchGenerationValid?.() === false) throw new Error('Provider channel changed before dispatch');
+          return outboundFetch(url, init);
+        },
+        () => provider.id === LEX_SERVER_MANAGED_PROVIDER_ID,
+      ),
     });
     return { ...route, localHandler: args => handler.handle({ ...args,
       prefs: { reasoningEffort: (sessionId ? getSessionEffort(sessionId) : null) ?? model.defaultEffort ?? undefined,
@@ -1242,6 +1259,10 @@ export async function ensureAnthropicCompatProxyReady(): Promise<void> {
       routingTransform: createModelRoutingTransform(),
       revalidateBeforeDispatch: (_decision, ctx) =>
         ownerBoundDispatchUnsafe(ctx) ? ownerBoundaryPendingRoute() : null,
+      // Managed models use a short-lived server credential. Only the exact
+      // managed facade is eligible; 403/429/5xx are never replayed.
+      refreshHeadersOnUnauthorized: managedUnauthorizedRefresh,
+      shouldRefreshHeadersOnUnauthorized: isManagedUnauthorizedTarget,
       // 只读响应观察器(组合三个,互不感知):
       //   - fast mode 链路核验:tee SSE 抽上游 usage.speed(debug-gated);
       //   - 订阅余量旁路:读 anthropic-ratelimit-unified-* headers(仅订阅直连响应,

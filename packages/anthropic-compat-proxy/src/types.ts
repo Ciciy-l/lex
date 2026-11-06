@@ -137,6 +137,44 @@ export interface ForwardLifecycleObserver {
   onFailure?(failure: ForwardLifecycleFailure, status?: number): void;
 }
 
+/**
+ * One-shot credential refresh for a managed upstream that answered 401.
+ *
+ * The proxy only invokes this before any response header/body reaches the
+ * client, only once per request, and only for a 401 (never 403/429/5xx). The
+ * callback must decide whether the target belongs to its own managed facade and
+ * return replacement headers; null means pass the original response through.
+ */
+export interface UnauthorizedRefreshInput {
+  readonly upstream: {
+    readonly protocol: 'http:' | 'https:';
+    readonly hostname: string;
+    readonly port: number;
+    readonly basePath: string;
+  };
+  /** Current outbound headers, including the rejected credential. */
+  readonly headers: Readonly<Record<string, string>>;
+  readonly status: 401;
+}
+
+export type UnauthorizedRefresh = (
+  input: UnauthorizedRefreshInput,
+) =>
+  | Promise<Record<string, string> | null>
+  | Record<string, string>
+  | null;
+
+/**
+ * Cheap, synchronous gate evaluated before a 401 response is buffered.
+ *
+ * Hosts with a managed-credential hook must return true only for their own
+ * managed facade; other 401s then keep the normal streaming path (observers
+ * and forward lifecycle included).
+ */
+export type UnauthorizedRefreshPredicate = (
+  input: UnauthorizedRefreshInput,
+) => boolean;
+
 export interface ResponseObserverCtx {
   readonly reqId: number;
   readonly method: string;
@@ -249,6 +287,23 @@ export interface ProxyOptions {
     decision: RoutingDecision | null,
     ctx?: RequestTransformCtx,
   ) => RoutingDecision | null;
+  /**
+   * Optional one-shot 401 replay for a host-managed upstream (for example a
+   * short-lived server credential).
+   *
+   * The callback runs only before response headers are written, only for 401,
+   * and only once per request. Returning replacement headers re-forwards the
+   * same body exactly once; returning null passes the 401 through unchanged.
+   * 403/429/5xx are never replayed. Ordinary custom providers do not install
+   * this hook.
+   */
+  refreshHeadersOnUnauthorized?: UnauthorizedRefresh;
+  /**
+   * Optional synchronous gate for the 401 replay above. When false, the 401
+   * keeps the normal streaming path (responseObserver / forwardLifecycle are
+   * not skipped) and `refreshHeadersOnUnauthorized` is not consulted.
+   */
+  shouldRefreshHeadersOnUnauthorized?: UnauthorizedRefreshPredicate;
   /**
    * 可选响应观察器。默认关闭;开启后只能 tee 响应 chunk 做轻量 metadata 解析,
    * 不能改写响应或阻塞流式 pipe。
