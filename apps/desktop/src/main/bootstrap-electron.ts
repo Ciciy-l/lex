@@ -976,6 +976,7 @@ import {
   noteManualXdKeyRemoved,
   refreshXdGatewayModels,
 } from './model-access/index.js';
+import { initLexServerManagedModels } from './lex-server-managed/index.js';
 import { effectiveXdGatewayBaseUrl } from './model-access/effectiveEndpoint.js';
 import { isLocalDbOwnerCurrent } from './appSessionPolicy.js';
 import { getAppCapabilities, requireAppCapability } from './appCapabilities.js';
@@ -8555,6 +8556,9 @@ app.on('ready', async () => {
   // 用户专属 key)+ 注册 model-access:* IPC。须在 initClientEndpoints 之后
   // (依赖 modelAccessApiBaseUrl 端点)、renderer auth:initialize 之前装订阅。
   initModelAccess();
+  // Lex Server managed models: subscribe to the auth/service lease. The module
+  // owns an in-memory credential and never writes safeStorage.
+  initLexServerManagedModels();
 
   initializeUpdatePresentationRecovery();
 

@@ -5752,7 +5752,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }> => ipcRenderer.invoke('maker:provider:list'),
     /** Refresh one built-in provider through its existing main-process discovery source. */
     refreshBuiltinProviderModels: (
-      providerId: import('../shared/providerModelRefresh').BuiltinRefreshableProviderId,
+      providerId: string,
     ): Promise<import('../shared/providerModelRefresh').ProviderModelRefreshResult> =>
       ipcRenderer.invoke('maker:provider:models-refresh', providerId),
     /** Hint Main to silently refresh connected built-in providers when stale. */

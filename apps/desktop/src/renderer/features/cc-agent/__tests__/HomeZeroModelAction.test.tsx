@@ -51,14 +51,16 @@ afterEach(() => {
 });
 
 describe('HomeZeroModelAction', () => {
-  it('Lex Server opens manual model setup without a Cindy service offer or another login', () => {
+  it('Lex Server opens the host-managed provider without a Cindy service offer or another login', () => {
     auth.service = { kind: 'lex-server', origin: 'http://127.0.0.1:3101' };
     renderCard('cloud');
     expect(screen.queryByText('onboarding.homeZeroModel.cloudTitle')).toBeNull();
     expect(screen.getByText('onboarding.homeZeroModel.lexDesc')).toBeTruthy();
     fireEvent.click(screen.getByTestId('home-zero-model-cta'));
     expect(signInMock).not.toHaveBeenCalled();
-    expect(screen.getByTestId('loc').textContent).toBe('/settings?tab=providers&wizard=1');
+    expect(screen.getByTestId('loc').textContent).toBe(
+      '/settings?tab=providers&connect=lex-server-managed',
+    );
   });
 
   it('signed-out: login copy and CTA calls sign-in', () => {

@@ -4833,3 +4833,162 @@ it('preserves the actual Vertex API through the probe IPC and rejects unknown SD
     { kind: 'adhoc', spec: { ...spec, api: 'invented-sdk' } })).rejects.toThrow(/INVALID_PARAMS/);
   expect(deps.testConnection).toHaveBeenCalledOnce();
 });
+
+describe('reserved Lex Server managed provider id', () => {
+  it('rejects create, update and delete before touching a store', async () => {
+    const harness = new IpcHarness();
+    const deps = makeDeps();
+    registerProviderHandlers(harness, deps);
+    const config = { ...validConfig, id: 'lex-server-managed', name: 'Lex Server' };
+    await expect(
+      harness.invoke(MAKER_INVOKE.PROVIDER_CUSTOM_CREATE, config),
+    ).rejects.toThrow(/PERMISSION_DENIED/);
+    await expect(
+      harness.invoke(MAKER_INVOKE.PROVIDER_CUSTOM_UPDATE, config),
+    ).rejects.toThrow(/PERMISSION_DENIED/);
+    await expect(
+      harness.invoke(MAKER_INVOKE.PROVIDER_CUSTOM_DELETE, 'lex-server-managed'),
+    ).rejects.toThrow(/PERMISSION_DENIED/);
+    // A custom channel id must not alias the reserved provider identity: the
+    // key reader receives channel ids from routeApiKey.
+    await expect(
+      harness.invoke(MAKER_INVOKE.PROVIDER_CUSTOM_CREATE, {
+        ...validConfig,
+        id: 'other-provider',
+        channels: {
+          version: 1,
+          channels: [{
+            id: 'lex-server-managed',
+            name: 'Alias',
+            protocols: {
+              'openai-chat': {
+                baseUrl: 'https://attacker.example/v1',
+                models: [{ id: 'm', name: 'M' }],
+              },
+            },
+          }],
+        },
+      }),
+    ).rejects.toThrow(/PERMISSION_DENIED/);
+    await expect(
+      harness.invoke(MAKER_INVOKE.PROVIDER_MODELS_REDISCOVER, 'lex-server-managed'),
+    ).rejects.toThrow(/PERMISSION_DENIED/);
+    expect(deps.refreshCatalog).not.toHaveBeenCalled();
+    expect(deps.broadcastChanged).not.toHaveBeenCalled();
+  });
+
+  it('rejects rename/remove presentation mutations', async () => {
+    for (const action of ['rename', 'remove'] as const) {
+      const harness = new IpcHarness();
+      const deps = makeDeps({
+        listProviders: async () => [{
+          id: 'lex-server-managed',
+          name: 'Lex Server',
+          source: 'user',
+          connected: true,
+        } as unknown as ProviderView],
+      });
+      registerProviderHandlers(harness, deps);
+      await expect(
+        harness.invoke(MAKER_INVOKE.PROVIDER_PRESENTATION_SET, {
+          providerId: 'lex-server-managed',
+          action,
+          ...(action === 'rename' ? { name: 'Renamed' } : {}),
+          dataOwnerId: null,
+          ownerGeneration: 0,
+        }),
+      ).rejects.toThrow(/PERMISSION_DENIED/);
+      expect(deps.broadcastChanged).not.toHaveBeenCalled();
+    }
+  });
+
+  it('routes managed refresh to its own host refresh, not the built-in refresher', async () => {
+    const harness = new IpcHarness();
+    const refreshManagedModels = vi.fn(async () => {});
+    const deps = makeDeps({ refreshManagedModels });
+    registerProviderHandlers(harness, deps);
+    await expect(
+      harness.invoke(MAKER_INVOKE.PROVIDER_MODELS_REFRESH, 'lex-server-managed'),
+    ).resolves.toEqual({ ok: true, providerId: 'lex-server-managed' });
+    expect(refreshManagedModels).toHaveBeenCalledOnce();
+    expect(deps.refreshBuiltinModels).not.toHaveBeenCalled();
+  });
+});
+
+describe('legacy configs with a reserved managed channel id', () => {
+  const legacyConfig = (): CustomProviderConfig => ({
+    id: 'custom-alias',
+    name: 'Custom Alias',
+    runtimes: {},
+    channels: {
+      version: 1,
+      channels: [{
+        id: 'lex-server-managed',
+        name: 'Alias',
+        protocols: {
+          'openai-chat': {
+            baseUrl: 'https://custom.example/v1',
+            models: [{ id: 'm', name: 'M' }],
+          },
+        },
+      }],
+    },
+  });
+
+  it('rejects OAuth login/logout/cancel and custom disconnect after reading the stored config', async () => {
+    mountDb();
+    await createCustomProvider(legacyConfig());
+    const harness = new IpcHarness();
+    const deps = makeDeps();
+    registerProviderHandlers(harness, deps);
+
+    for (const channel of [
+      MAKER_INVOKE.PROVIDER_OAUTH_LOGIN,
+      MAKER_INVOKE.PROVIDER_OAUTH_LOGOUT,
+      MAKER_INVOKE.PROVIDER_OAUTH_CANCEL,
+      MAKER_INVOKE.PROVIDER_CUSTOM_DISCONNECT,
+      MAKER_INVOKE.PROVIDER_CUSTOM_DELETE,
+    ]) {
+      await expect(harness.invoke(channel, 'custom-alias')).rejects.toThrow(/PERMISSION_DENIED/);
+    }
+    expect(deps.oauthLogin).not.toHaveBeenCalled();
+    expect(deps.oauthLogout).not.toHaveBeenCalled();
+    expect(deps.oauthCancel).not.toHaveBeenCalled();
+  });
+
+  it('rejects presentation mutations for a legacy channel view', async () => {
+    const harness = new IpcHarness();
+    const deps = makeDeps({
+      listProviders: async () => [{
+        id: 'custom-alias',
+        name: 'Custom Alias',
+        source: 'user',
+        connected: true,
+        channel: {
+          supplierId: 'custom-alias',
+          id: 'lex-server-managed',
+          name: 'Alias',
+          protocols: ['openai-chat'],
+        },
+      } as unknown as ProviderView],
+    });
+    registerProviderHandlers(harness, deps);
+    await expect(
+      harness.invoke(MAKER_INVOKE.PROVIDER_PRESENTATION_SET, {
+        providerId: 'custom-alias',
+        action: 'rename',
+        name: 'Renamed',
+        dataOwnerId: null,
+        ownerGeneration: 0,
+      }),
+    ).rejects.toThrow(/PERMISSION_DENIED/);
+    await expect(
+      harness.invoke(MAKER_INVOKE.PROVIDER_MODELS_FETCH, {
+        agent: 'codex',
+        authMethod: 'apiKey',
+        baseUrl: 'https://custom.example/v1',
+        savedProviderId: 'custom-alias',
+      }),
+    ).rejects.toThrow(/PERMISSION_DENIED/);
+  });
+});

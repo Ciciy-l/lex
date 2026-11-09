@@ -58,6 +58,9 @@ import type {
   ResponseObserverSink,
   ResponseTransform,
   RoutingDecision,
+  UnauthorizedRefresh,
+  UnauthorizedRefreshInput,
+  UnauthorizedRefreshPredicate,
 } from './types.js';
 
 // 单条请求最大 body 大小的**默认值** —— Claude Code 请求 body 几 KB 到几百 KB,
@@ -948,6 +951,10 @@ function forward(
   beforeRetry?: () => Promise<boolean>,
   // Optional request-local operational observer. It never receives raw request/response data.
   forwardLifecycle?: ForwardLifecycleObserver | null,
+  // Managed-facade 401 replay. false on the replay itself so it can never loop.
+  unauthorizedRefresh?: UnauthorizedRefresh,
+  canRetryUnauthorized = true,
+  shouldRetryUnauthorized?: UnauthorizedRefreshPredicate,
 ): void {
   // Diagnostics are a strict side channel: callback failures must never change forwarding.
   const notifyForwardLifecycle = (notify: () => void): void => {
@@ -1127,6 +1134,162 @@ function forward(
     }
     const status = upstreamRes.statusCode ?? 502;
 
+    // ── Managed-facade 401 replay (at most once) ─────────────────────────────
+    // Only 401 is eligible: 403/429/5xx are policy/budget/availability results
+    // that a fresh credential must not override. Buffering happens before any
+    // response header reaches the client, so the retry is transparent. A null
+    // refresh passes the original 401 through byte-for-byte.
+    let unauthorizedEligible = false;
+    if (status === 401 && unauthorizedRefresh && canRetryUnauthorized) {
+      unauthorizedEligible = true;
+      if (shouldRetryUnauthorized) {
+        try {
+          unauthorizedEligible = shouldRetryUnauthorized({
+            upstream: {
+              protocol: actualTarget.protocol,
+              hostname: actualTarget.hostname,
+              port: actualTarget.port,
+              basePath: actualTarget.basePath,
+            },
+            headers: actualHeaders,
+            status: 401,
+          });
+        } catch {
+          unauthorizedEligible = false;
+        }
+      }
+    }
+    if (unauthorizedEligible && unauthorizedRefresh) {
+      const unauthorizedInput: UnauthorizedRefreshInput = {
+        upstream: {
+          protocol: actualTarget.protocol,
+          hostname: actualTarget.hostname,
+          port: actualTarget.port,
+          basePath: actualTarget.basePath,
+        },
+        headers: actualHeaders,
+        status: 401,
+      };
+      const chunks: Buffer[] = [];
+      let bytes = 0;
+      const MAX_UNAUTHORIZED_BYTES = 256 * 1024;
+      const failBufferedUnauthorized = (
+        reason: 'error' | 'aborted' | 'close' | 'overflow',
+        rawError?: unknown,
+      ): void => {
+        if (upstreamResponseTerminal !== null) return;
+        upstreamResponseTerminal = reason === 'overflow' ? 'error' : reason;
+        if (clientAborted || clientRes.destroyed) return;
+        const err = rawError instanceof Error
+          ? rawError
+          : new Error(`upstream 401 response ${reason} before completion`);
+        logger.error?.('upstream 401 buffering failed', {
+          reqId,
+          reason,
+          bytes,
+          err: String(err),
+        });
+        finishClientAfterUpstreamFailure(err);
+      };
+      failActiveResponse = (err) => failBufferedUnauthorized('error', err);
+      upstreamRes.on('data', (chunk: Buffer) => {
+        if (upstreamResponseTerminal !== null) return;
+        bytes += chunk.length;
+        if (bytes > MAX_UNAUTHORIZED_BYTES) {
+          failBufferedUnauthorized('overflow');
+          upstreamRes.resume();
+          return;
+        }
+        chunks.push(chunk);
+      });
+      upstreamRes.on('aborted', () => failBufferedUnauthorized('aborted'));
+      upstreamRes.on('error', (err) => failBufferedUnauthorized('error', err));
+      upstreamRes.on('close', () => {
+        if (upstreamRes.complete) return;
+        failBufferedUnauthorized('close');
+      });
+      upstreamRes.on('end', () => {
+        if (upstreamResponseTerminal !== null) return;
+        upstreamResponseTerminal = 'end';
+        if (clientAborted || clientRes.destroyed || upstreamFailureHandled) return;
+        const errBody = Buffer.concat(chunks);
+        const passThrough = (): void => {
+          if (clientRes.headersSent || clientRes.destroyed || upstreamFailureHandled) return;
+          clientRes.writeHead(status, respHeaders);
+          clientRes.end(errBody);
+        };
+        let refreshed:
+          | ReturnType<UnauthorizedRefresh>
+          | Promise<Record<string, string> | null>
+          | null = null;
+        try {
+          refreshed = unauthorizedRefresh(unauthorizedInput);
+        } catch {
+          refreshed = null;
+        }
+        void Promise.resolve(refreshed).then((replacement) => {
+          if (!replacement || Object.keys(replacement).length === 0) {
+            passThrough();
+            return;
+          }
+          const retry = (): void => {
+            forward(
+              target,
+              method,
+              path,
+              headers,
+              body,
+              clientRes,
+              logger,
+              recoveryRules,
+              reqId,
+              canRetry,
+              overrideTarget,
+              { ...headerOverride, ...replacement },
+              headerDelete,
+              responseObserver,
+              transformResponse,
+              clientModel,
+              outboundProxy,
+              pathOverride,
+              responseToolUseIds,
+              threadMintedIdCache,
+              requestDeclaredStream,
+              beforeRetry,
+              forwardLifecycle,
+              unauthorizedRefresh,
+              false,
+              shouldRetryUnauthorized,
+            );
+          };
+          if (!beforeRetry) {
+            retry();
+            return;
+          }
+          void beforeRetry().then((proceed) => {
+            if (!proceed) return;
+            if (clientRes.destroyed) return;
+            retry();
+          }).catch(() => {
+            if (clientRes.destroyed || clientRes.headersSent) return;
+            clientRes.writeHead(503, {
+              'content-type': 'application/json',
+              'cache-control': 'no-store',
+              'retry-after': '1',
+            });
+            clientRes.end(JSON.stringify({
+              error: { type: 'proxy_error', message: 'dispatch revalidation failed' },
+            }));
+          });
+        }).catch(() => {
+          // A rejected refresh must not strand the request: surface the
+          // original 401 body when nothing has been written yet.
+          passThrough();
+        });
+      });
+      return;
+    }
+
     // ── 上游 400/422 的透明重试 ──────────────────────────────────────────────
     // 只对启用恢复规则的客户端错误(400/422)缓冲判定:
     // 先把(很小的) 错误体完整缓冲下来, 在 'end' 找第一条 match 命中且 strip 出东西的规则,
@@ -1247,6 +1410,9 @@ function forward(
               requestDeclaredStream,
               beforeRetry,
               forwardLifecycle,
+              unauthorizedRefresh,
+              true,
+              shouldRetryUnauthorized,
             );
           };
           if (!beforeRetry) {
@@ -2246,6 +2412,9 @@ export async function createAnthropicCompatProxy(opts: ProxyOptions): Promise<Pr
         false,
         beforeRetry,
         guardForwardLifecycleObserver(decision?.forwardLifecycle),
+        opts.refreshHeadersOnUnauthorized,
+        true,
+        opts.shouldRefreshHeadersOnUnauthorized,
       );
       return;
     }
@@ -2616,6 +2785,9 @@ export async function createAnthropicCompatProxy(opts: ProxyOptions): Promise<Pr
       requestDeclaredStream,
       beforeRetry,
       forwardLifecycle,
+      opts.refreshHeadersOnUnauthorized,
+      true,
+      opts.shouldRefreshHeadersOnUnauthorized,
     );
   });
 

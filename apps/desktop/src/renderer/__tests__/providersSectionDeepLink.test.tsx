@@ -23,6 +23,7 @@ const {
   toastError,
   setModelVisibilitiesSpy,
   customDialogSpy,
+  authState,
 } = vi.hoisted(() => ({
   wizardSpy: vi.fn(),
   providersState: { providers: [] as unknown[], order: [] as string[] },
@@ -40,6 +41,12 @@ const {
   toastError: vi.fn(),
   setModelVisibilitiesSpy: vi.fn(() => true),
   customDialogSpy: vi.fn(),
+  authState: {
+    mode: 'local' as 'local' | 'cloud' | 'signed-out',
+    dataOwnerId: 'owner' as string | null,
+    service: undefined as { kind: 'lex-server'; origin: string } | undefined,
+    exitLocalMode: vi.fn(async () => undefined),
+  },
 }));
 
 vi.mock('react-i18next', () => ({
@@ -57,7 +64,7 @@ vi.mock('@/hooks/useProviders', () => ({
 }));
 
 vi.mock('@/contexts/AuthContext', () => ({
-  useAuth: () => ({ mode: 'local', exitLocalMode: vi.fn(async () => undefined) }),
+  useAuth: () => authState,
 }));
 
 vi.mock('@/hooks/useCodexAuth', () => ({
@@ -178,6 +185,8 @@ beforeEach(() => {
   codexAuthState.state = { kind: 'unauthenticated' };
   codexAuthState.reconnectCredentialScope = undefined;
   codexAuthState.recoveryCheck = 'idle';
+  authState.mode = 'local';
+  authState.service = undefined;
   providersState.order = [];
   providersState.providers = [
     makeProvider('anthropic', { name: 'Anthropic' }),
@@ -200,6 +209,7 @@ beforeEach(() => {
       localModelStatus: vi.fn(async () => ({ kind: 'ready' })),
       onLocalModelStatus: vi.fn(() => () => undefined),
       requestProviderModelsAutoRefresh: vi.fn(async () => ({ ok: true })),
+      refreshBuiltinProviderModels: vi.fn(async (providerId: string) => ({ ok: true, providerId })),
       setProviderOrder: vi.fn(async () => ({ ok: true })),
     },
     openChatGPTApp: vi.fn(async () => ({ success: true })),
@@ -884,4 +894,129 @@ describe('ProvidersSection — 深链定位', () => {
       ownerId,
     });
   });
+
+  it('Lex Server keeps the managed row visible with an empty catalog and hides Cindy sign-in', async () => {
+    authState.mode = 'cloud';
+    authState.service = { kind: 'lex-server', origin: 'http://127.0.0.1:3101' };
+    providersState.providers = [
+      managedProvider({ state: 'not-entitled' }),
+      makeProvider('anthropic', { name: 'Anthropic' }),
+    ];
+    renderAt('?tab=providers');
+    expect((await screen.findAllByText('Lex Server')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('onboarding.connectProvider.cindy.loginTitle')).toBeNull();
+    expect(screen.getByText('settings.providers.lexManaged.badge')).not.toBeNull();
+    expect(screen.getAllByText('settings.providers.lexManaged.state.notEntitled').length).toBeGreaterThan(0);
+    expect(screen.getByTestId('lex-managed-empty')).not.toBeNull();
+    fireEvent.click(screen.getAllByText('settings.providers.lexManaged.retry')[0]!);
+    await waitFor(() =>
+      expect(window.electronAPI.maker.refreshBuiltinProviderModels).toHaveBeenCalledWith(
+        'lex-server-managed',
+      ),
+    );
+    // No rename/edit/delete/disable menu for a host-owned row.
+    expect(screen.queryByLabelText('settings.providers.detail.moreActionsAria')).toBeNull();
+  });
+
+  it('Lex Server managed row lists server models without an edit or delete action', async () => {
+    authState.mode = 'cloud';
+    authState.service = { kind: 'lex-server', origin: 'http://127.0.0.1:3101' };
+    providersState.providers = [managedProvider({ state: 'ready', withModels: true })];
+    renderAt('?tab=providers');
+    expect((await screen.findAllByText('Lex Server')).length).toBeGreaterThan(0);
+    expect(screen.getByText('Managed One')).not.toBeNull();
+    expect(screen.queryByLabelText('settings.providers.detail.moreActionsAria')).toBeNull();
+    expect(screen.queryByText('settings.providers.custom.editAria')).toBeNull();
+    expect(screen.queryByText('settings.providers.custom.deleteAria')).toBeNull();
+  });
+
+  it('does not truncate identity names at the 224px narrow list width', async () => {
+    authState.mode = 'cloud';
+    authState.service = { kind: 'lex-server', origin: 'http://127.0.0.1:3101' };
+    providersState.providers = [
+      managedProvider({ state: 'ready', withModels: true }),
+      makeProvider('anthropic', { name: 'Anthropic', connected: false }),
+    ];
+    vi.mocked(window.electronAPI.maker.scanLocalCli).mockResolvedValue({
+      detections: [{
+        cli: 'claude-cli',
+        providerId: 'anthropic',
+        installed: true,
+        loggedIn: true,
+        sharedWithCindy: false,
+      }],
+    });
+    renderAt('?tab=providers');
+    const titles = await screen.findAllByText('Lex Server');
+    const detailTitle = titles.find((node) => node.className.includes('min-w-[6rem]'));
+    expect(detailTitle).toBeTruthy();
+    expect(detailTitle!.className).toContain('break-words');
+    expect(detailTitle!.className).not.toContain('truncate');
+    const suggestion = await screen.findByText('Anthropic');
+    expect(suggestion.className).toContain('min-w-[6rem]');
+    expect(suggestion.className).not.toContain('truncate');
+    expect(suggestion.closest('button')?.className).toContain('flex-wrap');
+  });
+
+  it('Lex Server ?connect=xd selects the managed row instead of Cindy sign-in', async () => {
+    authState.mode = 'cloud';
+    authState.service = { kind: 'lex-server', origin: 'http://127.0.0.1:3101' };
+    providersState.providers = [managedProvider({ state: 'loading' })];
+    renderAt('?tab=providers&connect=xd');
+    expect((await screen.findAllByText('Lex Server')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('onboarding.connectProvider.cindy.loginTitle')).toBeNull();
+    expect(screen.getByText('settings.providers.lexManaged.badge')).not.toBeNull();
+    await waitFor(() => expect(screen.getByTestId('search').textContent).toBe('?tab=providers'));
+  });
 });
+
+function managedProvider({
+  state,
+  withModels = false,
+}: {
+  state: 'loading' | 'ready' | 'not-entitled' | 'rate-limited' | 'unavailable';
+  withModels?: boolean;
+}): ProviderView {
+  const models = withModels
+    ? {
+        codex: [
+          {
+            id: '11111111-1111-4111-8111-111111111111',
+            name: 'Managed One',
+            contextWindow: 128_000,
+            efforts: [],
+            defaultEffort: null,
+            route: {
+              baseUrl: 'http://127.0.0.1:3101/v1',
+              wireProtocol: 'openai-chat' as const,
+            },
+          },
+        ],
+      }
+    : {};
+  return {
+    ...makeProvider('lex-server-managed', {
+      name: 'Lex Server',
+      source: 'user',
+      agents: withModels ? ['codex'] : [],
+      auth: { method: 'managed' },
+      access: { kind: 'managed' },
+      routing: withModels
+        ? {
+            codex: {
+              upstream: 'http://127.0.0.1:3101/v1',
+              authStrategy: 'api-key-header',
+              headerDelete: ['x-api-key'],
+            },
+          }
+        : {},
+      models,
+      connected: withModels,
+      managed: {
+        provider: 'lex-server',
+        host: '127.0.0.1:3101',
+        state,
+      },
+    }),
+  } as unknown as ProviderView;
+}

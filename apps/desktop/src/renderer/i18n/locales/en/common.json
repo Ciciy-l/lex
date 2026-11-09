@@ -2648,6 +2648,24 @@
         "restartHint": "After downloading models or changing context, use Manage Service to restart and apply the changes. Restarting interrupts ongoing generation.",
         "applyModels": "Use Downloaded Models",
         "startOnUse": "Starts when needed"
+      },
+      "lexManaged": {
+        "badge": "Server-managed",
+        "desc": "This source is managed by {{appName}} Server. Its model catalog follows your server account automatically.",
+        "retry": "Retry",
+        "retrying": "Retrying…",
+        "retryFailed": "Could not refresh server models. Try again shortly.",
+        "state": {
+          "ready": "Connected",
+          "loading": "Loading server models…",
+          "notEntitled": "No managed models are enabled for this member",
+          "rateLimited": "Server model usage limit reached",
+          "unavailable": "Server model service is temporarily unavailable"
+        },
+        "empty": {
+          "notEntitled": "Ask your server administrator to enable models for this member. Retry on this page after it is enabled.",
+          "retryHint": "Check your network or the server status, then retry. No sign-in is needed."
+        }
       }
     },
     "experimental": {
@@ -8681,8 +8699,8 @@
       "desc": "Sign in to an account service or connect your own model API.",
       "cta": "Sign in",
       "cloudTitle": "Continue with Cindy",
-      "lexDesc": "This server provides account and remote services. Connect your own model.",
-      "lexCta": "Set up a model",
+      "lexDesc": "This server provides account and remote services. Managed models are added automatically; contact your administrator if none appear.",
+      "lexCta": "View server models",
       "cloudDesc": "You don’t have any models yet. Enable the official service to use dozens of top-tier models.",
       "cloudCta": "Get started",
       "ownApi": "I have my own model API"
@@ -8708,7 +8726,11 @@
         "dismissAria": "Dismiss"
       },
       "detectedLabel": "Detected",
-      "oauthSub": "Opens a verification page in your browser — connects automatically"
+      "oauthSub": "Opens a verification page in your browser — connects automatically",
+      "lexManaged": {
+        "title": "{{appName}} Server managed models",
+        "desc": "Provisioned automatically for your server account. No key needed."
+      }
     },
     "inheritedSubscription": {
       "title": "Using the {{products}} sign-in already on this computer",

@@ -15,6 +15,7 @@ import { authServiceScope, type AuthService } from '@cindy/auth-client';
 import { getResolvedMainLocale } from './i18n.js';
 
 import { createLogger } from './logger';
+import { isLexServerManagedApiPath } from '../shared/lexServerManagedModels.js';
 
 const log = createLogger('serverApiClient');
 
@@ -89,7 +90,8 @@ async function rawFetch<T>(apiPath: string, opts: ApiFetchOptions): Promise<RawR
   if (!baseUrl) throw new ServerApiError('SERVICE_CAPABILITY_UNAVAILABLE', 400, 'Service capability unavailable');
   const service = opts.credentialService ?? authManager.getActiveAuthService();
   if (service.kind === 'lex-server' && (baseUrl !== service.origin ||
-      !/^\/api\/(?:auth\/logout$|me(?:\/|$)|device-link(?:\/|$))/u.test(apiPath))) {
+      !/^\/api\/(?:auth\/logout$|me(?:\/|$)|device-link(?:\/|$))/u.test(apiPath) &&
+      !isLexServerManagedApiPath(apiPath))) {
     throw new ServerApiError('SERVICE_CAPABILITY_UNAVAILABLE', 400, 'Service capability unavailable');
   }
   const url = baseUrl + apiPath;

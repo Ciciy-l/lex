@@ -98,4 +98,7 @@ export type {
   RequestTransformCtx,
   RoutingDecision,
   RoutingTransform,
+  UnauthorizedRefresh,
+  UnauthorizedRefreshInput,
+  UnauthorizedRefreshPredicate,
 } from './types.js';

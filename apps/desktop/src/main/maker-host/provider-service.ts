@@ -94,6 +94,12 @@ export interface ProviderServiceDeps {
   builtinApiKeyConnected?: (providerId: string) => boolean;
   /** Saved custom configuration is not evidence that its credential still exists. */
   customApiKeyConnected?: (provider: Provider) => boolean;
+  /**
+   * Host-managed providers (currently Lex Server managed models) own their
+   * credential lifecycle; their connection state comes from the managed
+   * snapshot, never from safeStorage.
+   */
+  managedProviderConnected?: (provider: Provider) => boolean;
   projectConnectionAvailability?: (provider: ProviderView) => ProviderView;
   /** Runtime-owned media readiness, not inferred from chat authentication. */
   getAvailableMediaModels?: () => readonly { providerId: string; id: string }[];
@@ -168,6 +174,8 @@ export function createProviderService(deps: ProviderServiceDeps): ProviderServic
         connected[p.id] = deps.codexAccountConnected?.(p.id) ?? false;
       } else if (p.auth.method === 'oauth' && p.auth.oauth && !(p.id in connected)) {
         connected[p.id] = deps.genericOAuthConnected?.(p.id) ?? false;
+      } else if (p.managed) {
+        connected[p.id] = deps.managedProviderConnected?.(p) ?? false;
       } else if (p.source === 'user') {
         connected[p.id] = deps.customApiKeyConnected?.(p) ?? false;
       }

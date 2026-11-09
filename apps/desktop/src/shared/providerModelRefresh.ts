@@ -18,7 +18,8 @@ export function isBuiltinRefreshableProviderId(
 
 export interface ProviderModelRefreshResult {
   ok: true;
-  providerId: BuiltinRefreshableProviderId;
+  /** Built-in id, or the host-owned Lex Server managed provider id. */
+  providerId: string;
 }
 
 /** Renderer 只能上报明确的用户界面时机；前台恢复由 Main 自己判断。 */

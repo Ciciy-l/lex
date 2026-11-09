@@ -153,6 +153,15 @@ describe('ConnectProviderCard', () => {
     await renderCardSettled();
     expect(screen.queryByText('Cindy AI')).toBeNull();
     expect(screen.queryByText('onboarding.connectProvider.cindy.loginTitle')).toBeNull();
+    // The server-managed row replaces the Cindy offer and deep-links to the
+    // read-only managed provider, not to the custom-provider wizard.
+    expect(screen.getByText('onboarding.connectProvider.lexManaged.title')).not.toBeNull();
+    fireEvent.click(
+      screen.getByText('onboarding.connectProvider.lexManaged.title').closest('button')!,
+    );
+    expect(screen.getByTestId('location').textContent).toBe(
+      '/settings?tab=providers&connect=lex-server-managed',
+    );
     fireEvent.click(screen.getByText('onboarding.connectProvider.haveApiKey'));
     expect(screen.getByTestId('location').textContent).toBe('/settings?tab=providers&wizard=1');
   });
