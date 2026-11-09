@@ -37,6 +37,7 @@ import {
   materializeDirectSendOssAttachments,
   materializeQueuedOssAttachmentsDeferred,
   normalizeUserMessage,
+  tempAttachmentRootPath,
 } from '../normalizeAttachments.js';
 import * as imageCacheStore from '../../imageCacheStore.js';
 import * as cindyMediaBlobStore from '../../cindy-media/blobStore.js';
@@ -414,7 +415,7 @@ describe('inline attachment temporary files', () => {
 
     await cleanupOrphanedTempAttachments({
       currentOwner: { instanceId: 'restarted-main', processId: process.pid },
-      root: path.join(tempRoot.value, 'cindy-attachments'),
+      root: tempAttachmentRootPath(tempRoot.value),
     });
 
     await expect(fs.lstat(ownerRoot)).rejects.toMatchObject({ code: 'ENOENT' });
@@ -473,7 +474,7 @@ describe('inline attachment temporary files', () => {
     const record = JSON.parse(
       await fs.readFile(path.join(ownerRoot, '.cindy-owner.json'), 'utf8'),
     ) as { expiresAt: number };
-    const sharedRoot = path.join(tempRoot.value, 'cindy-attachments');
+    const sharedRoot = tempAttachmentRootPath(tempRoot.value);
     const currentOwner = { instanceId: 'other-live-main', processId: process.pid + 100_000 };
 
     await cleanupOrphanedTempAttachments({
@@ -534,7 +535,7 @@ describe('inline attachment temporary files', () => {
     const ownerLivenessProbe = vi.fn(() => 'alive' as const);
     await cleanupOrphanedTempAttachments({
       currentOwner: { instanceId: 'other-main', processId: process.pid + 100_000 },
-      root: path.join(tempRoot.value, 'cindy-attachments'),
+      root: tempAttachmentRootPath(tempRoot.value),
       processIsAlive: () => true,
       ownerLivenessProbe,
       now: () => record.expiresAt + 1,
@@ -550,7 +551,7 @@ describe('inline attachment temporary files', () => {
       if (process.platform === 'win32') return;
       const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'cindy-review-inline-outside-'));
       tempDirs.push(outside);
-      const sharedRoot = path.join(tempRoot.value, 'cindy-attachments');
+      const sharedRoot = tempAttachmentRootPath(tempRoot.value);
       if (target === 'shared root') {
         await fs.symlink(outside, sharedRoot);
       } else {
@@ -589,4 +590,37 @@ describe('inline attachment temporary files', () => {
       }
     },
   );
+
+  it('scopes the attachment root by OS account when uid is available', () => {
+    const base = path.join(os.tmpdir(), 'cindy-attachment-root-scope');
+    expect(tempAttachmentRootPath(base, 1000)).toBe(path.join(base, 'cindy-attachments-1000'));
+    expect(tempAttachmentRootPath(base, 1000)).toBe(tempAttachmentRootPath(base, 1000));
+    expect(tempAttachmentRootPath(base, 1001)).not.toBe(tempAttachmentRootPath(base, 1000));
+    expect(tempAttachmentRootPath(base, null)).toBe(path.join(base, 'cindy-attachments'));
+  });
+
+  // Unit: issue #9021. /tmp is shared by every Linux account; one account's
+  // 0700 root must not block another account's Desktop on the same machine.
+  it('writes attachments when another account already holds the legacy root', async () => {
+    if (typeof process.getuid !== 'function') return;
+    // Stand-in for another account's root: unusable as this account's directory.
+    await fs.writeFile(path.join(tempRoot.value, 'cindy-attachments'), 'held by another account');
+
+    const normalized = await normalizeUserMessage('other-account-session', {
+      type: 'user',
+      content: [{
+        type: 'file',
+        base64: Buffer.from('bytes').toString('base64'),
+        mimeType: 'text/plain',
+      }],
+    });
+    if (typeof normalized === 'string' || typeof normalized.content === 'string') {
+      throw new Error('expected block message');
+    }
+    const filePath = normalized.content[0]?.path;
+    if (typeof filePath !== 'string') throw new Error('expected materialized file path');
+    expect(filePath.startsWith(tempAttachmentRootPath(tempRoot.value) + path.sep)).toBe(true);
+    await expect(fs.readFile(filePath, 'utf8')).resolves.toBe('bytes');
+    await cleanupSessionTempAttachments('other-account-session');
+  });
 });
