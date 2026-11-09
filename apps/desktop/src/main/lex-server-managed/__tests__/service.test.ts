@@ -165,6 +165,100 @@ describe('createManagedModelsService', () => {
     expect(h.service.readCredential(LEX_SERVER_MANAGED_PROVIDER_ID)).toBe('cred-1');
   });
 
+  it('does not amplify a credential 403 from the routing hot path', async () => {
+    const fetchCredential = vi
+      .fn<() => Promise<unknown>>()
+      .mockRejectedValue(Object.assign(new Error('forbidden'), {
+        code: 'MODEL_DENIED',
+        statusCode: 403,
+      }));
+    const h = harness({ credential: fetchCredential });
+    h.service.setLease(lease());
+    await settle(h.service);
+    expect(h.service.getProvider()?.managed?.state).toBe('not-entitled');
+    expect(fetchCredential).toHaveBeenCalledOnce();
+
+    for (let i = 0; i < 5; i += 1) {
+      expect(h.service.readCredential(LEX_SERVER_MANAGED_PROVIDER_ID)).toBeNull();
+    }
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fetchCredential).toHaveBeenCalledOnce();
+
+    h.advance(30_001);
+    expect(h.service.readCredential(LEX_SERVER_MANAGED_PROVIDER_ID)).toBeNull();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fetchCredential).toHaveBeenCalledTimes(2);
+  });
+
+  it('lets a real 401 refresh immediately during a credential 403 cooldown', async () => {
+    const fetchCredential = vi
+      .fn<() => Promise<unknown>>()
+      .mockResolvedValueOnce(credentialPayload({ credential: 'cred-1' }))
+      .mockRejectedValueOnce(Object.assign(new Error('forbidden'), {
+        code: 'MODEL_DENIED',
+        statusCode: 403,
+      }))
+      .mockResolvedValueOnce(credentialPayload({ credential: 'cred-2' }));
+    const h = harness({ credential: fetchCredential });
+    h.service.setLease(lease());
+    await settle(h.service);
+    expect(h.service.readCredential(LEX_SERVER_MANAGED_PROVIDER_ID)).toBe('cred-1');
+
+    await expect(h.service.forceRefreshCredential('cred-1')).resolves.toBeNull();
+    expect(fetchCredential).toHaveBeenCalledTimes(2);
+    expect(h.service.readCredential(LEX_SERVER_MANAGED_PROVIDER_ID)).toBeNull();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fetchCredential).toHaveBeenCalledTimes(2);
+
+    // A real 401 still goes through forceRefreshCredential and bypasses the
+    // credential-failure cooldown.
+    await expect(h.service.forceRefreshCredential('cred-1')).resolves.toBe('cred-2');
+    expect(fetchCredential).toHaveBeenCalledTimes(3);
+  });
+
+  it('resets the credential failure cooldown when the account lease changes', async () => {
+    const fetchCredential = vi
+      .fn<() => Promise<unknown>>()
+      .mockRejectedValueOnce(Object.assign(new Error('forbidden'), {
+        code: 'MODEL_DENIED',
+        statusCode: 403,
+      }))
+      .mockResolvedValueOnce(credentialPayload({ credential: 'cred-1' }));
+    const h = harness({ credential: fetchCredential });
+    h.service.setLease(lease('owner-a'));
+    await settle(h.service);
+    expect(h.service.getProvider()?.managed?.state).toBe('not-entitled');
+    expect(h.service.readCredential(LEX_SERVER_MANAGED_PROVIDER_ID)).toBeNull();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fetchCredential).toHaveBeenCalledOnce();
+
+    h.service.setLease(lease('owner-b'));
+    await settle(h.service);
+    expect(h.service.readCredential(LEX_SERVER_MANAGED_PROVIDER_ID)).toBe('cred-1');
+    expect(fetchCredential).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps credential 429 mapped to rate-limited', async () => {
+    const h = harness({
+      credential: async () => {
+        throw Object.assign(new Error('slow down'), {
+          code: 'RATE_LIMITED',
+          statusCode: 429,
+        });
+      },
+    });
+    h.service.setLease(lease());
+    await settle(h.service);
+    expect(h.service.getProvider()?.managed?.state).toBe('rate-limited');
+    expect(h.service.getProvider()?.managed?.errorCode).toBe('RATE_LIMITED');
+  });
+
   it('settles a never-resolving catalog request via timeout and stays retryable', async () => {
     const deferred: { resolve?: (value: unknown) => void } = {};
     const fetchCatalog = vi.fn<() => Promise<unknown>>()
