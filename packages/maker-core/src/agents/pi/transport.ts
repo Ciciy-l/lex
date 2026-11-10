@@ -41,6 +41,7 @@ export interface PiTransportCloseInfo {
 
 export type PiLineHandler = (line: string) => void;
 export type PiCloseHandler = (info: PiTransportCloseInfo) => void;
+export type PiOversizedFrameHandler = () => void;
 export type PiDisconnectReason = 'stdout-ended' | 'stdout-closed' | 'stdout-error' | 'stdin-error';
 
 /**
@@ -61,6 +62,12 @@ export interface PiTransport {
 
   /** RPC loss is not proof of executor exit; close() must still confirm termination. */
   onDisconnect?(handler: (reason: PiDisconnectReason) => void): () => void;
+
+  /**
+   * (可选) 一行 JSONL 超过 16MiB 被丢弃时通知。transport 仍保持可用;
+   * 调用方只应结算可能返回超大载荷的读取命令,不能据此关闭会话。
+   */
+  onOversizedFrame?(handler: PiOversizedFrameHandler): () => void;
 
   /** 主动关闭。幂等; resolve 后内部资源已释放。 */
   close(reason?: string): Promise<void>;
@@ -145,6 +152,7 @@ export function createPiStdioTransport(opts: PiStdioTransportOptions): PiTranspo
   const lineHandlers = new Set<PiLineHandler>();
   const closeHandlers = new Set<PiCloseHandler>();
   const disconnectHandlers = new Set<(reason: PiDisconnectReason) => void>();
+  const oversizedFrameHandlers = new Set<PiOversizedFrameHandler>();
   const stderrHandlers = new Set<(line: string) => void>();
   const stderrBuffer: string[] = [];
 
@@ -175,6 +183,12 @@ export function createPiStdioTransport(opts: PiStdioTransportOptions): PiTranspo
       return;
     }
     for (const handler of stderrHandlers) handler(line);
+  };
+  const fireOversizedFrame = (): void => {
+    if (closed || disconnectNotified) return;
+    for (const handler of oversizedFrameHandlers) {
+      try { handler(); } catch { /* handler must not break framing */ }
+    }
   };
   const armStderr = (handler: (line: string) => void): (() => void) => {
     stderrHandlers.add(handler);
@@ -213,7 +227,7 @@ export function createPiStdioTransport(opts: PiStdioTransportOptions): PiTranspo
   attachJsonlReader(child.stdout, (line) => {
     if (closed || disconnectNotified) return;
     for (const handler of lineHandlers) handler(line);
-  });
+  }, fireOversizedFrame);
   attachJsonlReader(child.stderr, (line) => {
     if (line.trim().length === 0) return;
     // 轮 40-w3 HIGH:本地 stderr 进日志前做凭证脱敏 —— spawnEnv 合入了 gateway/
@@ -340,6 +354,11 @@ export function createPiStdioTransport(opts: PiStdioTransportOptions): PiTranspo
       return () => { disconnectHandlers.delete(handler); };
     },
 
+    onOversizedFrame(handler): () => void {
+      oversizedFrameHandlers.add(handler);
+      return () => { oversizedFrameHandlers.delete(handler); };
+    },
+
     onStderr(handler): () => void {
       return armStderr(handler);
     },
@@ -399,39 +418,82 @@ const MAX_JSONL_BUFFER_CHARS = 16 * 1024 * 1024;
 export function attachJsonlReader(
   stream: NodeJS.ReadableStream,
   onLine: (line: string) => void,
+  onOversizedFrame?: () => void,
 ): void {
   let decoder = new StringDecoder('utf8');
   let buffer = '';
+  let discardingOversizedLine = false;
 
-  stream.on('data', (chunk: Buffer | string) => {
-    buffer += typeof chunk === 'string' ? chunk : decoder.write(chunk);
-    // OOM 守卫:超限丢弃缓冲(与 pi-manager 的 NDJSONDecoder 同策略)。
-    // 轮 40-w4-t9 HIGH:丢弃时**必须重建 StringDecoder** —— 否则被丢帧末尾
-    // 残留的半个多字节字符会留在 decoder 内, 污染后续合法帧(JSONL 内容
-    // 损坏或解析失败)。
-    if (buffer.length > MAX_JSONL_BUFFER_CHARS) {
-      console.warn(
-        `[pi] JSONL line buffer exceeded ${MAX_JSONL_BUFFER_CHARS} chars without newline — discarding (corrupt stream?)`,
-      );
-      buffer = '';
-      decoder = new StringDecoder('utf8');
-      return;
+  const notifyOversizedFrame = (): void => {
+    try {
+      onOversizedFrame?.();
+    } catch {
+      /* handler must not break framing */
     }
+  };
+
+  const emitCompleteLines = (): void => {
     while (true) {
       const newlineIndex = buffer.indexOf('\n');
-      if (newlineIndex === -1) break;
+      if (newlineIndex === -1) {
+        // 已在丢弃模式:这段没有 \n,整段丢掉;等下一块里的行尾。
+        if (discardingOversizedLine) {
+          buffer = '';
+          decoder = new StringDecoder('utf8');
+          return;
+        }
+        // OOM 守卫:无换行且超限。丢弃时**必须重建 StringDecoder** —— 否则
+        // 被丢帧末尾残留的半个多字节字符会留在 decoder 内, 污染后续合法帧。
+        if (buffer.length > MAX_JSONL_BUFFER_CHARS) {
+          discardingOversizedLine = true;
+          console.warn(
+            `[pi] JSONL line buffer exceeded ${MAX_JSONL_BUFFER_CHARS} chars without newline — discarding through next newline (corrupt stream?)`,
+          );
+          notifyOversizedFrame();
+          buffer = '';
+          decoder = new StringDecoder('utf8');
+        }
+        return;
+      }
+      if (discardingOversizedLine) {
+        // 丢弃超限行的残余,含这个 newline;之后恢复正常分帧。
+        buffer = buffer.slice(newlineIndex + 1);
+        discardingOversizedLine = false;
+        continue;
+      }
+      // 带 newline 的完整超限行:只丢这一行,不进入丢弃模式(下一行可直接解析)。
+      if (newlineIndex > MAX_JSONL_BUFFER_CHARS) {
+        console.warn(
+          `[pi] JSONL line exceeded ${MAX_JSONL_BUFFER_CHARS} chars — discarding oversized frame`,
+        );
+        buffer = buffer.slice(newlineIndex + 1);
+        notifyOversizedFrame();
+        continue;
+      }
       let line = buffer.slice(0, newlineIndex);
       buffer = buffer.slice(newlineIndex + 1);
       if (line.endsWith('\r')) line = line.slice(0, -1);
       onLine(line);
     }
+  };
+
+  stream.on('data', (chunk: Buffer | string) => {
+    buffer += typeof chunk === 'string' ? chunk : decoder.write(chunk);
+    emitCompleteLines();
   });
 
   stream.on('end', () => {
     buffer += decoder.end();
-    if (buffer.length > 0) {
+    emitCompleteLines();
+    // 仍在丢弃模式时,残余半帧不是合法 JSONL;end 也不得把它交给 onLine。
+    if (discardingOversizedLine) {
+      buffer = '';
+      return;
+    }
+    if (buffer.length > 0 && buffer.length <= MAX_JSONL_BUFFER_CHARS) {
       onLine(buffer.endsWith('\r') ? buffer.slice(0, -1) : buffer);
     }
+    buffer = '';
   });
 
   // 轮 21 M-1:未处理 'error' 事件会让 Readable 抛未捕获异常崩进程 —— 传输层
