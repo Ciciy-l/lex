@@ -7889,7 +7889,9 @@ export class PiAgent extends BaseAgent {
       },
       async readSessionTree(): Promise<NavigateSessionTreeResult> {
         const after = await proc.request({ type: 'get_tree' });
-        if (!after.success) throw new Error('Pi current history could not be read');
+        if (!after.success) {
+          throw new Error(`Pi current history could not be read: ${after.error ?? 'unknown'}`);
+        }
         const tree = normalizePiSessionTree(after.data);
         const stats = await proc.request({ type: 'get_session_stats' });
         const usage = (stats.data as { contextUsage?: { tokens?: number | null; contextWindow?: number | null } } | undefined)?.contextUsage;

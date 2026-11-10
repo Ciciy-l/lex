@@ -9,6 +9,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  PI_RPC_OVERSIZED_FRAME_ERROR,
   PiRpcProcess,
   PiRpcRequestTimeoutError,
   type PiRpcSpawnOptions,
@@ -20,6 +21,7 @@ function makeFakeTransport() {
   const written: Array<{ line: string; resolve: () => void; reject: (e: Error) => void }> = [];
   let lineHandler: PiLineHandler | undefined;
   let closeHandler: PiCloseHandler | undefined;
+  let oversizedHandler: (() => void) | undefined;
   const transport = {
     writeLine: vi.fn((line: string) => {
       return new Promise<void>((resolve, reject) => {
@@ -29,15 +31,20 @@ function makeFakeTransport() {
     onLine: vi.fn((h: PiLineHandler) => { lineHandler = h; return () => { lineHandler = undefined; }; }),
     onClose: vi.fn((h: PiCloseHandler) => { closeHandler = h; return () => { closeHandler = undefined; }; }),
     onStderr: vi.fn(() => () => undefined),
+    onOversizedFrame: vi.fn((h: () => void) => {
+      oversizedHandler = h;
+      return () => { oversizedHandler = undefined; };
+    }),
     close: vi.fn(async () => { closeHandler?.({ code: 0, signal: null, reason: 'test close' }); }),
     isClosed: vi.fn(() => false),
     get pid() { return 1234; },
   } satisfies PiTransport;
   const emitLine = (line: string) => lineHandler?.(line);
+  const emitOversized = () => oversizedHandler?.();
   const drain = () => {
     for (const w of written.splice(0)) w.resolve();
   };
-  return { transport, emitLine, drain, written };
+  return { transport, emitLine, emitOversized, drain, written };
 }
 
 function makeProc(overrides: Partial<PiRpcSpawnOptions> = {}) {
@@ -183,6 +190,175 @@ describe('PiRpcProcess response envelope validation', () => {
     // 防止测试悬挂:关掉 proc 触发 failAllPending。
     await proc.close();
     await expect(p).rejects.toThrow(/pi process exited/);
+  });
+});
+
+describe('PiRpcProcess oversized frame handling', () => {
+  function sentFrames(written: Array<{ line: string }>) {
+    return written.map((entry) => JSON.parse(entry.line) as { id: string; type: string });
+  }
+
+  it('fails only pending get_entries/get_tree, leaves other pending untouched, and keeps the transport open', async () => {
+    const { transport, emitLine, emitOversized, written } = makeFakeTransport();
+    const { proc, logger, onExit } = makeProc({ transport });
+
+    const entriesPending = proc.request({ type: 'get_entries' });
+    const treePending = proc.request({ type: 'get_tree' });
+    const statePending = proc.request({ type: 'get_state' });
+    const steerPending = proc.request({ type: 'steer' });
+    const sent = sentFrames(written);
+
+    emitOversized();
+
+    await expect(entriesPending).resolves.toEqual({
+      type: 'response',
+      id: sent[0].id,
+      command: 'get_entries',
+      success: false,
+      error: PI_RPC_OVERSIZED_FRAME_ERROR,
+    });
+    await expect(treePending).resolves.toEqual({
+      type: 'response',
+      id: sent[1].id,
+      command: 'get_tree',
+      success: false,
+      error: PI_RPC_OVERSIZED_FRAME_ERROR,
+    });
+    expect(proc.isClosed).toBe(false);
+    expect(transport.close).not.toHaveBeenCalled();
+    expect(onExit).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      'pi rpc: failed pending history reads after oversized JSONL frame',
+      { count: 2, commands: ['get_entries', 'get_tree'] },
+    );
+
+    // 其他 commandType 的 pending 不受影响, 后续真实响应仍可正常 resolve。
+    emitLine(JSON.stringify({
+      type: 'response', id: sent[2].id, command: 'get_state', success: true, data: { ok: true },
+    }));
+    emitLine(JSON.stringify({
+      type: 'response', id: sent[3].id, command: 'steer', success: true,
+    }));
+    await expect(statePending).resolves.toMatchObject({ success: true, data: { ok: true } });
+    await expect(steerPending).resolves.toMatchObject({ success: true });
+  });
+
+  it('does not reclassify an already resolved get_tree result', async () => {
+    const { transport, emitLine, emitOversized, written } = makeFakeTransport();
+    const { proc } = makeProc({ transport });
+
+    const firstPending = proc.request({ type: 'get_tree' });
+    const firstId = sentFrames(written)[0].id;
+    emitLine(JSON.stringify({
+      type: 'response', id: firstId, command: 'get_tree', success: true,
+      data: { entries: [{ id: 'entry-1' }] },
+    }));
+    const settled = await firstPending;
+
+    const secondPending = proc.request({ type: 'get_tree' });
+    emitOversized();
+    await expect(secondPending).resolves.toEqual({
+      type: 'response',
+      id: sentFrames(written)[1].id,
+      command: 'get_tree',
+      success: false,
+      error: PI_RPC_OVERSIZED_FRAME_ERROR,
+    });
+
+    expect(settled).toEqual({
+      type: 'response', id: firstId, command: 'get_tree', success: true,
+      data: { entries: [{ id: 'entry-1' }] },
+    });
+    await expect(firstPending).resolves.toBe(settled);
+  });
+
+  it('keeps a non-victim pending timer alive and refreshable after an oversized frame', async () => {
+    vi.useFakeTimers();
+    try {
+      const { transport, emitLine, emitOversized, written } = makeFakeTransport();
+      const { proc } = makeProc({ transport });
+
+      const treePending = proc.request({ type: 'get_tree' });
+      const statePending = proc.request(
+        { type: 'get_state' },
+        {
+          timeoutMs: 30_000,
+          refreshTimeoutOnEvent: (event) => event.type === 'compaction_start',
+        },
+      );
+      const stateId = sentFrames(written)[1].id;
+      let stateSettled = false;
+      const stateOutcome = statePending.then(
+        () => { stateSettled = true; },
+        () => { stateSettled = true; },
+      );
+      expect(vi.getTimerCount()).toBe(2);
+
+      emitOversized();
+      await expect(treePending).resolves.toMatchObject({
+        success: false,
+        error: PI_RPC_OVERSIZED_FRAME_ERROR,
+      });
+      expect(vi.getTimerCount()).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(20_000);
+      emitLine(JSON.stringify({ type: 'compaction_start', reason: 'threshold' }));
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(stateSettled).toBe(false);
+      expect(vi.getTimerCount()).toBe(1);
+
+      emitLine(JSON.stringify({
+        type: 'response', id: stateId, command: 'get_state', success: true, data: { ok: true },
+      }));
+      await expect(statePending).resolves.toMatchObject({ success: true, data: { ok: true } });
+      await stateOutcome;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('allows a new get_tree request to succeed after an oversized failure', async () => {
+    const { transport, emitLine, emitOversized, written } = makeFakeTransport();
+    const { proc } = makeProc({ transport });
+
+    const firstPending = proc.request({ type: 'get_tree' });
+    emitOversized();
+    await expect(firstPending).resolves.toMatchObject({
+      success: false,
+      error: PI_RPC_OVERSIZED_FRAME_ERROR,
+    });
+
+    const retryPending = proc.request({ type: 'get_tree' });
+    const retryId = sentFrames(written)[1].id;
+    emitLine(JSON.stringify({
+      type: 'response', id: retryId, command: 'get_tree', success: true, data: { entries: [] },
+    }));
+    await expect(retryPending).resolves.toMatchObject({
+      success: true,
+      data: { entries: [] },
+    });
+  });
+
+  it('clears the request timer and does not settle the failure again after 30s', async () => {
+    vi.useFakeTimers();
+    try {
+      const { transport, emitOversized } = makeFakeTransport();
+      const { proc, logger } = makeProc({ transport });
+
+      const pending = proc.request({ type: 'get_tree' });
+      expect(vi.getTimerCount()).toBe(1);
+      emitOversized();
+      await expect(pending).resolves.toMatchObject({
+        success: false,
+        error: PI_RPC_OVERSIZED_FRAME_ERROR,
+      });
+      expect(vi.getTimerCount()).toBe(0);
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
