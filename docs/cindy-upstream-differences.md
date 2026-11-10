@@ -98,8 +98,20 @@ Claude Code 2.1.296、Codex package 0.162.1、Pi 1.2.0、OMP 18.10.4。
 `apps/desktop/src/main/maker-ipc/binary-version.ts`（About 页版本查询），两者仍使用
 未隔离的 `--version` 探测；作为后续小补丁或独立 PR 处理，本 PR 不声称已覆盖。
 
-本轮暂缓／排除：PR-B 的 bundled ripgrep CI 缓存（`3277176f`）、PR-C 的 Pi 超大
+本轮暂缓／排除：PR-C 的 Pi 超大
 session tree 修复（`2d820967`，先做接线设计评审）、lex-admin 服务端改动、0.1.17 发版、
 MCP 同名注入安全专项、usage-limit 重试持久化。真实服务端持续 403／401 replay、真实
 Codex 首启和 Windows 实机验证不在本 PR 的已验证范围内；客户端 CI 绿也不代表 Server
 已实现或生产已部署。
+
+## PR-B：bundled ripgrep CI 缓存（2026-11-10）
+
+参考 Cindy `3277176f`（ci: 缓存 bundled ripgrep，避免 GitHub Releases 504 让单测分片
+整批变红）。Lex 在 Linux unit tests、Windows unit tests、Desktop Git integration 三处
+`Install bundled ripgrep` 前加入同构缓存步骤，使用固定
+`actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0`，缓存
+`apps/ripgrep-bin`（同时包含 `rg` 与 `.version` 标记），key 为
+`ripgrep-bin-${{ runner.os }}-${{ hashFiles('tools/ripgrep/latest.json') }}`。
+缓存命中后 `install:ripgrep` 仍按 `.version` 标记比对 pin，只有匹配时才跳过下载，不改变
+下载校验。未改任何 `package.json`，未改 `tools/ripgrep/latest.json` 的 `15.1.0` pin，
+未改其他 workflow 或测试代码。
