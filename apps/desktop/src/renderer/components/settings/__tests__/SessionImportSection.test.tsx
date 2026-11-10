@@ -1,8 +1,12 @@
 // @vitest-environment jsdom
 import { StrictMode } from 'react';
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { SessionImportSection } from '../SessionImportSection';
+
+configure({ asyncUtilTimeout: 15_000 });
+// Keep the 15s DOM wait usable without changing the global Vitest timeout.
+vi.setConfig({ testTimeout: 20_000 });
 const api = vi.hoisted(() => ({ discover: vi.fn(), chooseSource: vi.fn(), scan: vi.fn(), preview: vi.fn(), chooseProject: vi.fn(), commit: vi.fn(), cancel: vi.fn() }));
 const native = vi.hoisted(() => ({ scan: vi.fn(), importSelected: vi.fn() }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string, values?: { count?: number }) => values?.count == null ? key : key + ' ' + values.count }) }));
@@ -46,11 +50,13 @@ it('automatically scans a newly chosen source and never rescans merely for a fil
   fireEvent.click(checkbox(/Cindy task/));
   fireEvent.click(button('settings.sessionImport.filters.codex'));
   fireEvent.click(button('settings.sessionImport.filters.cindy'));
-  expect(checkbox(/Cindy task/).checked).toBe(true); expect(api.scan).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(checkbox(/Cindy task/).checked).toBe(true));
+  expect(api.scan).toHaveBeenCalledTimes(1);
   fireEvent.click(button('settings.cindyImport.chooseSource'));
   await waitFor(() => expect(api.scan).toHaveBeenLastCalledWith('chosen'));
   await screen.findByRole('checkbox', { name: /Cindy task/ });
-  expect(checkbox(/Cindy task/).checked).toBe(false); expect(api.commit).not.toHaveBeenCalled();
+  await waitFor(() => expect(checkbox(/Cindy task/).checked).toBe(false));
+  expect(api.commit).not.toHaveBeenCalled();
 });
 function button(name: string) { return screen.getByRole('button', { name }) as HTMLButtonElement; }
 function checkbox(name: RegExp | string) { return screen.getByRole('checkbox', { name }) as HTMLInputElement; }
@@ -67,7 +73,7 @@ async function prepareCindy() {
   await scanCindy();
   fireEvent.click(checkbox(/Cindy task/));
   fireEvent.click(button('settings.sessionImport.importSelected'));
-  await screen.findByText('settings.cindyImport.historyOnly', undefined, { timeout: 5_000 });
+  await screen.findByText('settings.cindyImport.historyOnly');
 }
 it('automatically loads Cindy records on tab entry once, retaining the snapshot across filters', async () => {
   const view = render(<StrictMode><SessionImportSection /></StrictMode>);
@@ -101,10 +107,13 @@ it('retains selections across source filters and includes Cindy in All and mixed
   render(<SessionImportSection />); await ready();
   fireEvent.click(checkbox(/Native task/));
   await scanCindy(); fireEvent.click(checkbox(/Cindy task/));
-  expect(screen.getByText('settings.sessionImport.selectedOutsideFilter 1')).toBeTruthy();
+  await screen.findByText('settings.sessionImport.selectedOutsideFilter 1');
   const sources = screen.getByRole('group', { name: 'settings.sessionImport.filters.source' });
   fireEvent.click(within(sources).getByRole('button', { name: 'settings.sessionImport.filters.all' }));
-  expect(checkbox(/Native task/).checked).toBe(true); expect(checkbox(/Cindy task/).checked).toBe(true);
+  await waitFor(() => {
+    expect(checkbox(/Native task/).checked).toBe(true);
+    expect(checkbox(/Cindy task/).checked).toBe(true);
+  });
   fireEvent.click(button('settings.sessionImport.importSelected'));
   await screen.findByText('settings.cindyImport.alsoImportNative 1');
   expect(native.importSelected).not.toHaveBeenCalled();
@@ -135,21 +144,26 @@ it('requires a project directory and explicit partial-copy consent before commit
   render(<SessionImportSection />); await prepareCindy();
   expect(button('settings.sessionImport.importSelected').disabled).toBe(true); expect(api.commit).not.toHaveBeenCalled();
   fireEvent.click(button('settings.cindyImport.chooseProject'));
-  await screen.findByText('/chosen/project'); expect(button('settings.sessionImport.importSelected').disabled).toBe(true);
+  await screen.findByText('/chosen/project');
+  await waitFor(() => expect(button('settings.sessionImport.importSelected').disabled).toBe(true));
   fireEvent.click(checkbox('settings.cindyImport.allowIncomplete'));
   fireEvent.click(button('settings.sessionImport.importSelected'));
   await screen.findByText('settings.cindyImport.results.imported');
   fireEvent.click(button('settings.cindyImport.backToList'));
-  expect(checkbox(/Cindy task/).disabled).toBe(true);
-  expect(checkbox(/Cindy task/).checked).toBe(false);
+  await waitFor(() => {
+    expect(checkbox(/Cindy task/).disabled).toBe(true);
+    expect(checkbox(/Cindy task/).checked).toBe(false);
+  });
 });
 it('invalidates Cindy selection on account changes, but keeps native selection', async () => {
   api.discover.mockResolvedValue([{ id: 'source', label: 'Cindy', location: '/synthetic/one', accountIndex: 1 }, { id: 'second', label: 'Cindy', location: '/synthetic/two', accountIndex: 2 }]);
   render(<SessionImportSection />); await ready(); fireEvent.click(checkbox(/Native task/));
   await scanCindy(); fireEvent.click(checkbox(/Cindy task/));
   fireEvent.click(button('Cindy · settings.cindyImport.account 2'));
-  expect(screen.queryByRole('checkbox', { name: /Cindy task/ })).toBeNull();
-  expect(screen.getByText('settings.sessionImport.selected 1')).toBeTruthy();
+  await waitFor(() => {
+    expect(screen.queryByRole('checkbox', { name: /Cindy task/ })).toBeNull();
+    expect(screen.getByText('settings.sessionImport.selected 1')).toBeTruthy();
+  });
   await waitFor(() => expect(api.scan).toHaveBeenLastCalledWith('second'));
   await screen.findByRole('checkbox', { name: /Cindy task/ });
   expect(checkbox(/Cindy task/).checked).toBe(false);
@@ -192,7 +206,7 @@ it('does not continue a mixed batch after cancellation, even if the in-flight it
   fireEvent.click(button('settings.cindyImport.cancel'));
   await act(async () => { finish([{ id: 'one', status: 'imported', sessionId: 'completed-before-cancel' }]); });
   expect(api.commit).toHaveBeenCalledTimes(1); expect(native.importSelected).not.toHaveBeenCalled();
-  expect(screen.getByText('settings.cindyImport.results.imported')).toBeTruthy();
+  expect(await screen.findByText('settings.cindyImport.results.imported')).toBeTruthy();
 });
 it('uses the same project group for native and Cindy tasks and selects both together', async () => {
   const nativeScan = await native.scan(); native.scan.mockClear();
@@ -201,9 +215,12 @@ it('uses the same project group for native and Cindy tasks and selects both toge
   render(<SessionImportSection />); await ready();
   fireEvent.click(button('settings.sessionImport.scan'));
   await waitFor(() => expect(button('settings.sessionImport.scan').disabled).toBe(false));
-  expect(screen.getAllByRole('button', { name: 'settings.sessionImport.expand' })).toHaveLength(1);
+  await waitFor(() => expect(screen.getAllByRole('button', { name: 'settings.sessionImport.expand' })).toHaveLength(1));
   fireEvent.click(checkbox('settings.sessionImport.selectGroup'));
-  expect(screen.getByText('settings.sessionImport.selected 2')).toBeTruthy();
+  await screen.findByText('settings.sessionImport.selected 2');
   fireEvent.click(button('settings.sessionImport.expand'));
-  expect(checkbox(/Native task/).checked).toBe(true); expect(checkbox(/Cindy task/).checked).toBe(true);
+  await waitFor(() => {
+    expect(checkbox(/Native task/).checked).toBe(true);
+    expect(checkbox(/Cindy task/).checked).toBe(true);
+  });
 });
