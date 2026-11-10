@@ -158,11 +158,12 @@ it('caps Cindy bulk selection at 100, skips imported rows, and can clear a cappe
   api.scan.mockResolvedValue({ scanId: 'scan', excluded: 0, candidates: Array.from({ length: 102 }, (_, i) => ({ ...candidate, id: String(i), title: 'Cindy task ' + i, imported: i === 101 })) });
   render(<SessionImportSection />); await ready(); fireEvent.click(button('settings.sessionImport.filters.cindy'));
   await screen.findByRole('checkbox', { name: /Cindy task 101/ });
-  const all = checkbox('settings.sessionImport.selectAll 101');
-  fireEvent.click(all);
-  expect(screen.getByText('settings.sessionImport.selected 100')).toBeTruthy();
+  await waitFor(() => expect(checkbox('settings.sessionImport.selectAll 101').disabled).toBe(false));
+  fireEvent.click(checkbox('settings.sessionImport.selectAll 101'));
+  await screen.findByText('settings.sessionImport.selected 100');
   expect(checkbox(/Cindy task 101/).checked).toBe(false);
-  fireEvent.click(all); expect(screen.getByText('settings.sessionImport.selected 0')).toBeTruthy();
+  fireEvent.click(checkbox('settings.sessionImport.selectAll 101'));
+  await screen.findByText('settings.sessionImport.selected 0');
 });
 it('ignores a late scan after cancel and can restart without leaving settings', async () => {
   let finish!: (value: unknown) => void;

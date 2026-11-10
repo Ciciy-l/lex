@@ -261,6 +261,10 @@ export function createManagedModelsService(
   let lastCatalogAt = 0;
   let lastCredentialAt = 0;
   let lastFailureAt = 0;
+  // Credential failures have their own cooldown. `not-entitled` is a terminal
+  // authorization state for the catalog, so reusing `lastFailureAt` here would
+  // disturb catalog retry/refresh timing.
+  let credentialFailureAt = 0;
   let catalogPromise: Promise<void> | null = null;
   let catalogPromiseGeneration = -1;
   let credentialPromise: Promise<ManagedCredentialPayload | null> | null = null;
@@ -335,6 +339,7 @@ export function createManagedModelsService(
     lastCatalogAt = 0;
     lastCredentialAt = 0;
     lastFailureAt = 0;
+    credentialFailureAt = 0;
   }
 
   function scheduleCredentialRefresh(): void {
@@ -477,6 +482,7 @@ export function createManagedModelsService(
         );
         if (generation !== leaseGeneration || !lease) return null;
         credential = payload;
+        credentialFailureAt = 0;
         issuedCredentials = [
           payload.credential,
           ...issuedCredentials.filter((value) => value !== payload.credential),
@@ -490,6 +496,7 @@ export function createManagedModelsService(
       } catch (error) {
         if (generation !== leaseGeneration || !lease) return null;
         clearCredential();
+        credentialFailureAt = now();
         const mapped = stateForError(error);
         deps.log?.warn(`managed credential unavailable: ${mapped.errorCode}`);
         setState(mapped.state, mapped.errorCode);
@@ -570,7 +577,7 @@ export function createManagedModelsService(
       // A real 401 still goes through forceRefreshCredential(), which bypasses
       // this cooldown.
       const coolingDown =
-        lastFailureAt > 0 && now() - lastFailureAt < retryCooldownMs;
+        credentialFailureAt > 0 && now() - credentialFailureAt < retryCooldownMs;
       const current = credential;
       if (!current) {
         if (!coolingDown) {

@@ -75,3 +75,31 @@ Claude Code 2.1.296、Codex package 0.162.1、Pi 1.2.0、OMP 18.10.4。
 - 模型目录：单独核对 Lex 离线目录与服务端目录治理，不随上游模型信息自动同步。上游 62400c804 删除自定义 CC/Codex 的 CUSTOM_EFFORTS 并压缩出站 effort；本轮刻意不合入，Lex 未声明能力的自定义 CC/Codex 模型仍默认提供五档（默认 medium），用户显式 reasoningEfforts 仍优先，避免自定义供应商模型失去可选推理等级。OMP/Pi 仅保留用户显式声明的能力，不套用通用五档。
 - SkillHub 对话管理：目前明确排除。
 - 插件远程授权：远程 OAuth／私密卡目前明确排除；未来先专项审查授权、凭证与执行隔离。
+
+## 下一批 PR-A 选择性移植（2026-11-09）
+
+本轮只做客户端 PR-A，不表示整体追平上游：Cindy 与 Lex 仍有约 7900+ commits 差距，
+后续继续按安全／稳定性／兼容性逐项筛选。
+
+- Codex 版本探测与启动资源：参考 Cindy `d89e484e`（PR #9481）。`probeBinaryVersion`
+  使用唯一临时 `CODEX_HOME` 执行 `--version`，成功、失败、取消后均清理；Maker 装配时
+  只协调已有本机登录，不再预热 Skills／规则／插件等运行资源，资源留给显式登录或
+  `getAuthEnv()`。若本机已有 Codex 登录，reconcile 仍可能创建 `codex-home` 以建立共享
+  链接，因此不是「完全零目录副作用」。
+- 附件临时根按 OS 账号隔离：参考 Cindy `9aba169b`（PR #9041，fix #9021）。
+  POSIX 下使用 `cindy-attachments-<uid>`，Windows 保持 `cindy-attachments`；旧共享根
+  存量文件不迁移、不扩大删除能力，仅保留既有兼容。
+- 托管模型凭据 403 节流：Lex 本地实现债，不是上游移植。`credentialFailureAt` 与
+  catalog 失败计时分离；凭据端点 403 后的冷却窗口不再被路由热路径放大，真实 401 仍经
+  `forceRefreshCredential()` 立即刷新；账号／lease 切换清零。
+
+未纳入本次 PR-A：Cindy `d89e484e` 同一 PR 还改了
+`apps/desktop/src/main/agent-binaries/linux-runtime-fallback.ts`（系统 CLI 版本探测）与
+`apps/desktop/src/main/maker-ipc/binary-version.ts`（About 页版本查询），两者仍使用
+未隔离的 `--version` 探测；作为后续小补丁或独立 PR 处理，本 PR 不声称已覆盖。
+
+本轮暂缓／排除：PR-B 的 bundled ripgrep CI 缓存（`3277176f`）、PR-C 的 Pi 超大
+session tree 修复（`2d820967`，先做接线设计评审）、lex-admin 服务端改动、0.1.17 发版、
+MCP 同名注入安全专项、usage-limit 重试持久化。真实服务端持续 403／401 replay、真实
+Codex 首启和 Windows 实机验证不在本 PR 的已验证范围内；客户端 CI 绿也不代表 Server
+已实现或生产已部署。

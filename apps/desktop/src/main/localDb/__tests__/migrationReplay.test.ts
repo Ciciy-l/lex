@@ -4,11 +4,15 @@ import path from 'node:path';
 import { setImmediate } from 'node:timers/promises';
 
 import type Database from 'better-sqlite3';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createBetterSqliteDatabase } from '../betterSqliteFactory';
 import { listMigrations, runMigrationReplay } from '../migrationRunner';
 import './retiredCompanionRetention.fixture';
+
+// Windows runners can take over 20s to copy/scan migration fixtures; relax the
+// timeout for this file only, without changing the global Vitest configuration.
+vi.setConfig({ testTimeout: process.platform === 'win32' ? 60_000 : 5_000 });
 
 const canRunMigrationReplay = process.platform === 'win32' || process.platform === 'darwin';
 const describeMigrationReplay = canRunMigrationReplay ? describe : describe.skip;
