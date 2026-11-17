@@ -19,7 +19,7 @@ import type { PiDisconnectReason, PiTransport } from './transport.js';
 
 export { attachJsonlReader } from './transport.js';
 export { createPiStdioTransport } from './transport.js';
-export type { PiTransport, PiTransportCloseInfo, PiLineHandler, PiCloseHandler } from './transport.js';
+export type { PiTransport, PiTransportCloseInfo, PiLineHandler, PiCloseHandler, PiOversizedFrameHandler } from './transport.js';
 
 /** pi RPC 响应帧。 */
 export interface PiRpcResponse {
@@ -36,6 +36,13 @@ export interface PiRpcEvent {
   type: string;
   [key: string]: unknown;
 }
+
+/**
+ * transport 丢弃超限 JSONL 行后的稳定错误文本。超限通知不带帧 type/id,
+ * 只能定向结算可能返回超大历史的 get_entries/get_tree。
+ */
+export const PI_RPC_OVERSIZED_FRAME_ERROR =
+  'RPC response exceeded 16 MiB and was discarded.';
 
 export class PiRpcRequestTimeoutError extends Error {
   readonly code = 'PI_RPC_TIMEOUT';
@@ -154,6 +161,7 @@ export class PiRpcProcess {
       this.flushUnsettledFrameDiagnostics();
       opts.onDisconnect?.(reason);
     });
+    this.transport.onOversizedFrame?.(() => this.failOversizedPending());
   }
 
   private flushUnsettledFrameDiagnostics(): void {
@@ -396,6 +404,32 @@ export class PiRpcProcess {
       });
       this.eventFrameCounts.clear();
     }
+  }
+
+  private failOversizedPending(): void {
+    // 超限通知不带帧 type / 响应 id。事件帧(如 message_end)也可能超限;
+    // 只结束可能返回超大历史的读取命令,不能把 pending 的 steer/abort 猜成受害者。
+    const victims = [...this.pending.entries()].filter(([, entry]) =>
+      entry.commandType === 'get_entries' || entry.commandType === 'get_tree');
+    if (victims.length === 0) {
+      this.logger.warn('pi rpc: discarded oversized JSONL frame with no matching pending history read');
+      return;
+    }
+    for (const [id, entry] of victims) {
+      clearTimeout(entry.timer);
+      this.pending.delete(id);
+      entry.resolve({
+        type: 'response',
+        id,
+        command: entry.commandType,
+        success: false,
+        error: PI_RPC_OVERSIZED_FRAME_ERROR,
+      });
+    }
+    this.logger.warn('pi rpc: failed pending history reads after oversized JSONL frame', {
+      count: victims.length,
+      commands: [...new Set(victims.map(([, entry]) => entry.commandType))],
+    });
   }
 
   private failAllPending(err: Error): void {

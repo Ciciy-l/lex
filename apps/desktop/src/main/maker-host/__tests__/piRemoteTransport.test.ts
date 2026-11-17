@@ -31,6 +31,7 @@ import {
   createRemoteOmpFileOps,
   createRemotePiFileOps,
   createSshOmpTransport,
+  createSshPiDaemonTransport,
   createSshPiTransport,
   killRemotePiManagerSession,
   shellQuote,
@@ -42,18 +43,36 @@ import { startOmpRemoteProcess, type PiTransportCloseInfo } from '@cindy/maker-c
 // killRemotePiManagerSession goes through piManagerKill exclusively
 // (python daemon kill is fully retired).
 // ---------------------------------------------------------------------------
-const { mockPiManagerKill } = vi.hoisted(() => ({
+const { mockPiManagerKill, mockPiManagerEnsure } = vi.hoisted(() => ({
   mockPiManagerKill: vi.fn(),
+  mockPiManagerEnsure: vi.fn(),
 }));
 
 vi.mock('../pi-manager-client.js', () => ({
   piManagerKill: mockPiManagerKill,
-  piManagerEnsure: vi.fn(),
+  piManagerEnsure: mockPiManagerEnsure,
   piManagerList: vi.fn(),
   ensurePiManagerInstalled: vi.fn(),
   resolvePiManagerBundlePath: vi.fn(),
   withPiManagerRpc: vi.fn(),
 }));
+
+vi.mock('@cindy/maker-remote-ssh', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@cindy/maker-remote-ssh')>();
+  return {
+    ...actual,
+    probePiManager: vi.fn(async () => ({
+      nodeReady: true,
+      piManagerInstalled: true,
+      piManagerProtocolVersion: 1,
+      piManagerVersion: 'test',
+      piManagerBinaryPath: '/remote/pi-manager/pi-manager.mjs',
+      piManagerSockPath: '/remote/pi-manager/pi-manager.sock',
+      nodeBinaryPath: '/remote/node/bin/node',
+      installDir: '/remote',
+    })),
+  };
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -445,10 +464,9 @@ describe('killRemotePiManagerSession sessionId validation (sync rejection)', () 
 });
 
 // ---------------------------------------------------------------------------
-// 轮 40-w5 HIGH:SSH stdout 分帧缓冲的 OOM 守卫 —— 远端输出无换行字节流超过
-// 16MB(与本地 attachJsonlReader 对齐的硬上限)时必须关闭 transport, 而不是
-// 让主进程内存随远端字节流无界增长。用直连模式 + fake ExecStreamHandle 驱动
-// onStdoutBytes, 不依赖真实 SSH。
+// SSH stdout 分帧缓冲的 OOM 守卫 —— 远端输出单行超过 16MB(与本地
+// attachJsonlReader 对齐的硬上限)时: Pi 只定向通知并继续, OMP 保留 close。
+// 用直连模式 + fake ExecStreamHandle 驱动 onStdoutBytes, 不依赖真实 SSH。
 // ---------------------------------------------------------------------------
 function fakeLogger() {
   const logger = {
@@ -477,7 +495,7 @@ describe('SSH stdout buffer overflow guard', () => {
     return { handlers, handle };
   }
 
-  it('closes the transport when remote streams >16MB without a newline', async () => {
+  it('notifies and keeps the Pi transport open when remote streams >16MB without a newline', async () => {
     const execStream = vi.fn();
     const host = { id: 'test-host', execStream } as unknown as RemoteHost;
     const { handlers, handle } = fakeChannel();
@@ -491,19 +509,112 @@ describe('SSH stdout buffer overflow guard', () => {
       env: {},
       logger: fakeLogger() as never,
     });
+    const lines: string[] = [];
     const closed: PiTransportCloseInfo[] = [];
+    const oversized = vi.fn();
+    transport.onLine((line) => lines.push(line));
     transport.onClose((info) => closed.push(info));
+    transport.onOversizedFrame?.(oversized);
 
     // 等 async IIFE 完成 channel 建立并注册 handlers。
     await vi.waitFor(() => expect(handlers.onStdoutBytes).toBeDefined());
 
-    // 单块无换行字节流超过 16MB 上限。
+    // 单块无换行字节流超过 16MB 上限:只通知,不关闭 channel。
+    handlers.onStdoutBytes!(Buffer.alloc(16 * 1024 * 1024 + 1, 0x61));
+    expect(oversized).toHaveBeenCalledTimes(1);
+    expect(closed).toHaveLength(0);
+    expect(handle.kill).not.toHaveBeenCalled();
+    expect(transport.isClosed()).toBe(false);
+
+    // 超限行残余丢到下一个 \n;后续合法行仍送达,写入仍可用。
+    handlers.onStdoutBytes!(Buffer.from('residual\n{"ok":1}\n'));
+    expect(lines).toEqual(['{"ok":1}']);
+    await expect(transport.writeLine('{"type":"request"}')).resolves.toBeUndefined();
+  });
+
+  it('notifies and keeps the Pi daemon transport open on an oversized frame', async () => {
+    const execStream = vi.fn();
+    const host = { id: 'test-host', execStream } as unknown as RemoteHost;
+    const { handlers, handle } = fakeChannel();
+    execStream.mockResolvedValue(handle);
+    mockPiManagerEnsure.mockResolvedValue({ sockPath: '/remote/pi-manager.sock', isReattach: false });
+
+    const transport = createSshPiDaemonTransport({
+      remoteHost: host,
+      binaryPath: '/remote/pi',
+      args: ['--mode', 'rpc'],
+      cwd: '/remote/workdir',
+      env: {},
+      logger: fakeLogger() as never,
+      daemonSessionId: 'session-1',
+    });
+    const lines: string[] = [];
+    const closed: PiTransportCloseInfo[] = [];
+    const oversized = vi.fn();
+    transport.onLine((line) => lines.push(line));
+    transport.onClose((info) => closed.push(info));
+    transport.onOversizedFrame?.(oversized);
+
+    await vi.waitFor(() => expect(handlers.onStdoutBytes).toBeDefined());
+    handlers.onStdoutBytes!(Buffer.alloc(16 * 1024 * 1024 + 1, 0x61));
+    handlers.onStdoutBytes!(Buffer.from('residual\n{"ok":1}\n'));
+
+    expect(oversized).toHaveBeenCalledTimes(1);
+    expect(closed).toHaveLength(0);
+    expect(handle.kill).not.toHaveBeenCalled();
+    expect(lines).toEqual(['{"ok":1}']);
+    await expect(transport.writeLine('{"type":"request"}')).resolves.toBeUndefined();
+  });
+
+  it('drops a complete oversized SSH line and continues framing', async () => {
+    const execStream = vi.fn();
+    const host = { id: 'test-host', execStream } as unknown as RemoteHost;
+    const { handlers, handle } = fakeChannel();
+    execStream.mockResolvedValue(handle);
+
+    const transport = createSshPiTransport({
+      remoteHost: host,
+      binaryPath: '/remote/pi',
+      args: ['--mode', 'rpc'],
+      cwd: '/remote/workdir',
+      env: {},
+      logger: fakeLogger() as never,
+    });
+    const lines: string[] = [];
+    const closed: PiTransportCloseInfo[] = [];
+    const oversized = vi.fn();
+    transport.onLine((line) => lines.push(line));
+    transport.onClose((info) => closed.push(info));
+    transport.onOversizedFrame?.(oversized);
+
+    await vi.waitFor(() => expect(handlers.onStdoutBytes).toBeDefined());
+    handlers.onStdoutBytes!(Buffer.from(`${'a'.repeat(16 * 1024 * 1024 + 1)}\n{"ok":1}\n`));
+
+    expect(oversized).toHaveBeenCalledTimes(1);
+    expect(closed).toHaveLength(0);
+    expect(handle.kill).not.toHaveBeenCalled();
+    expect(lines).toEqual(['{"ok":1}']);
+  });
+
+  it('keeps OMP close-on-overflow behavior unchanged', async () => {
+    const execStream = vi.fn();
+    const host = { id: 'test-host', execStream } as unknown as RemoteHost;
+    const { handlers, handle } = fakeChannel();
+    execStream.mockResolvedValue(handle);
+
+    const transport = createSshOmpTransport({
+      remoteHost: host,
+      binaryPath: '/remote/omp',
+      args: ['--mode', 'rpc'],
+      cwd: '/remote/workdir',
+      env: {},
+      logger: fakeLogger() as never,
+    });
+
+    await vi.waitFor(() => expect(handlers.onStdoutBytes).toBeDefined());
     handlers.onStdoutBytes!(Buffer.alloc(16 * 1024 * 1024 + 1, 0x61));
 
-    await vi.waitFor(() => expect(closed.length).toBe(1));
-    expect(closed[0].reason).toMatch(/buffer overflow/);
-    expect(handle.kill).toHaveBeenCalled(); // fireClose 关闭 channel
-    // transport 已关闭:后续写入必须 reject。
+    expect(handle.kill).toHaveBeenCalled();
     await expect(transport.writeLine('{"type":"request"}')).rejects.toThrow(/closed/);
   });
 

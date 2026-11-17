@@ -475,18 +475,91 @@ describe('attachJsonlReader', () => {
     expect(lines).toEqual(['{"a":1}']);
   });
 
-  it('discards buffer over OOM guard (round 21 H-3)', () => {
+  it('discards buffer over OOM guard and resyncs at the next newline (round 21 H-3)', () => {
+    const stream = makeStream();
+    const lines: string[] = [];
+    const oversized = vi.fn();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    attachJsonlReader(stream, (l) => lines.push(l), oversized);
+    // 超 16MB 无换行的流
+    const big = 'a'.repeat(16 * 1024 * 1024 + 100);
+    stream.emit('data', big);
+    // 超限行的残余必须整体丢到下一个 \n;之后合法行才恢复解析。
+    stream.emit('data', 'residual-of-oversized-frame\n{"ok":1}\n');
+    expect(lines).toEqual(['{"ok":1}']);
+    expect(oversized).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it('drops a complete oversized line without treating its tail as a new frame', () => {
+    const stream = makeStream();
+    const lines: string[] = [];
+    const oversized = vi.fn();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    attachJsonlReader(stream, (l) => lines.push(l), oversized);
+    stream.emit('data', `${'a'.repeat(16 * 1024 * 1024 + 1)}\n{"ok":1}\n`);
+    expect(lines).toEqual(['{"ok":1}']);
+    expect(oversized).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
+  });
+
+  it('resets decoder after discarding a partial UTF-8 tail', () => {
+    const stream = makeStream();
+    const lines: string[] = [];
+    const oversized = vi.fn();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    attachJsonlReader(stream, (l) => lines.push(l), oversized);
+    stream.emit('data', 'a'.repeat(16 * 1024 * 1024 + 1));
+    // 超限行末尾残留半个“你”的 UTF-8 字节;重新同步后下一个合法行不能损坏。
+    stream.emit('data', Buffer.from([0xe4, 0xbd]));
+    stream.emit('data', Buffer.from('\n{"m":"你好"}\n', 'utf8'));
+    expect(lines).toEqual(['{"m":"你好"}']);
+    expect(oversized).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
+  });
+
+  it('does not emit a skipped tail on end while discarding an oversized line', () => {
+    const stream = makeStream();
+    const lines: string[] = [];
+    const oversized = vi.fn();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    attachJsonlReader(stream, (l) => lines.push(l), oversized);
+    stream.emit('data', 'a'.repeat(16 * 1024 * 1024 + 1));
+    stream.emit('data', 'tail-without-newline');
+    stream.emit('end');
+    expect(lines).toEqual([]);
+    expect(oversized).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
+  });
+
+  it('resyncs safely when no oversized callback is registered', () => {
     const stream = makeStream();
     const lines: string[] = [];
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     attachJsonlReader(stream, (l) => lines.push(l));
-    // 超 16MB 无换行的流
-    const big = 'a'.repeat(16 * 1024 * 1024 + 100);
-    stream.emit('data', big);
-    // 缓冲被丢弃, 后续合法行不受影响
-    stream.emit('data', '{"ok":1}\n');
+    stream.emit('data', 'a'.repeat(16 * 1024 * 1024 + 1));
+    stream.emit('data', 'residual\n{"ok":1}\n');
     expect(lines).toEqual(['{"ok":1}']);
-    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it('notifies only for stdout, never stderr, and keeps the transport usable', () => {
+    const { transport, child } = makeTransport();
+    const lines: string[] = [];
+    const oversized = vi.fn();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    transport.onLine((line) => lines.push(line));
+    transport.onOversizedFrame?.(oversized);
+
+    child.stdout.emit('data', 'a'.repeat(16 * 1024 * 1024 + 1));
+    child.stdout.emit('data', 'residual\n{"after":1}\n');
+    expect(lines).toEqual(['{"after":1}']);
+    expect(oversized).toHaveBeenCalledTimes(1);
+
+    child.stderr.emit('data', 'b'.repeat(16 * 1024 * 1024 + 1));
+    expect(oversized).toHaveBeenCalledTimes(1);
+    expect(transport.isClosed()).toBe(false);
     warnSpy.mockRestore();
   });
 

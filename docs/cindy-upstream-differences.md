@@ -99,7 +99,7 @@ Claude Code 2.1.296、Codex package 0.162.1、Pi 1.2.0、OMP 18.10.4。
 未隔离的 `--version` 探测；作为后续小补丁或独立 PR 处理，本 PR 不声称已覆盖。
 
 本轮暂缓／排除：PR-C 的 Pi 超大
-session tree 修复（`2d820967`，先做接线设计评审）、lex-admin 服务端改动、0.1.17 发版、
+session tree 修复（`2d820967`，PR-A 当时先做接线设计评审；已在下一节实现）、lex-admin 服务端改动、0.1.17 发版、
 MCP 同名注入安全专项、usage-limit 重试持久化。真实服务端持续 403／401 replay、真实
 Codex 首启和 Windows 实机验证不在本 PR 的已验证范围内；客户端 CI 绿也不代表 Server
 已实现或生产已部署。
@@ -115,3 +115,18 @@ Codex 首启和 Windows 实机验证不在本 PR 的已验证范围内；客户�
 缓存命中后 `install:ripgrep` 仍按 `.version` 标记比对 pin，只有匹配时才跳过下载，不改变
 下载校验。未改任何 `package.json`，未改 `tools/ripgrep/latest.json` 的 `15.1.0` pin，
 未改其他 workflow 或测试代码。
+
+## PR-C：Pi 超大 session tree 及时失败（2026-11-10）
+
+参考 Cindy `2d820967`（fix(pi): fail oversized session tree reads promptly）。
+stdout JSONL 单行超过 16MiB 被丢弃时，transport 通过 `onOversizedFrame` 通知
+RPC 层，只把 pending 的 `get_entries` / `get_tree` 结算为
+`success:false`（`PI_RPC_OVERSIZED_FRAME_ERROR`），不关闭 transport、不终止
+Pi 会话，也不影响其他 pending。Lex 额外补齐了上游该 commit 依赖但本仓缺失的
+本地 stdio 与 SSH Pi transport 接线；SSH Pi direct/daemon 使用
+`notify-and-continue`，OMP 共享同一 channel helper 但显式保留 `close`，因为
+OMP 没有等价的 pending 类型映射，继续解析只会让请求空等超时。
+
+已知限制：16MiB 上限与 JS string length 口径不变；不自动重试、不流式解析；
+导航已切换但 after `get_tree` 失败时不回滚、不自动重跑导航；用户仍看到现有
+通用分支读取/切换失败提示，不新增 i18n。

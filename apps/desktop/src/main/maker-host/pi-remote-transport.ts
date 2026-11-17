@@ -38,6 +38,7 @@ import type {
   PiTransportCloseInfo,
   PiLineHandler,
   PiCloseHandler,
+  PiOversizedFrameHandler,
   PiRemoteFileOps,
 } from '@cindy/maker-core';
 
@@ -81,6 +82,13 @@ interface SshJsonlChannelTransport extends PiTransport {
   onPhysicalClose(handler: PiCloseHandler): () => void;
   onTransportClose(handler: PiCloseHandler): () => void;
 }
+
+/**
+ * 单个 JSONL 行超过 SSH buffer 上限时的策略。Pi 需要把超限帧定向通知给
+ * RPC 层并继续使用 channel; OMP 没有对应的 pending 类型映射,继续解析只会
+ * 让请求空等超时,因此保留原有的 close 行为。
+ */
+type SshOversizedFramePolicy = 'notify-and-continue' | 'close';
 
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 15_000;
 
@@ -381,6 +389,7 @@ export function createSshPiTransport(opts: SshPiTransportOptions): PiTransport {
       daemonSessionId: undefined,
     }),
     'pi',
+    'notify-and-continue',
   );
 }
 
@@ -412,10 +421,12 @@ export function createSshOmpTransport(opts: SshOmpTransportOptions): OmpRemoteTr
       daemonSessionId: undefined,
     }),
     'omp',
+    'close',
   );
   return {
     writeLine: (line) => transport.writeLine(line),
     onLine: (handler) => transport.onLine(handler),
+    // Deliberately no onOversizedFrame: OMP keeps the close policy above.
     // OMP must not mistake a local kill request for proof that the remote
     // command exited. The shared JSONL transport still fences writes
     // immediately, but only the SSH channel's close event reaches the OMP
@@ -594,6 +605,7 @@ export function createSshPiDaemonTransport(opts: SshPiTransportOptions & {
       daemonSessionId: opts.daemonSessionId,
     }),
     'pi',
+    'notify-and-continue',
   );
 }
 
@@ -616,6 +628,7 @@ function createSshJsonlChannelTransport(
   buildDirectCmd: (o: SshPiTransportOptions) => string,
   buildChannelOpts: (o: SshPiTransportOptions) => SshJsonlChannelOptions,
   agentLabel: 'pi' | 'omp',
+  oversizedFramePolicy: SshOversizedFramePolicy,
 ): SshJsonlChannelTransport {
   const logger = opts.logger.child(`${agentLabel}-ssh-transport`);
   const handshakeTimeoutMs = opts.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS;
@@ -627,6 +640,7 @@ function createSshJsonlChannelTransport(
   let envWritten = false;
 
   const lineHandlers = new Set<PiLineHandler>();
+  const oversizedFrameHandlers = new Set<PiOversizedFrameHandler>();
   const closeHandlers = new Set<PiCloseHandler>();
   let transportCloseInfo: PiTransportCloseInfo | undefined;
   const transportCloseHandlers = new Set<PiCloseHandler>();
@@ -642,7 +656,9 @@ function createSshJsonlChannelTransport(
   // 轮 8 发现 5:ExecStreamHandle.onStdout 用 chunk.toString('utf8') 逐块解码,
   // 跨 chunk 的多字节 UTF-8 字符会被切成 U+FFFD。改用 onStdoutBytes +
   // StringDecoder(与 attachJsonlReader 同款), 保证 JSONL 帧内中文/emoji 不损坏。
-  const stdoutDecoder = new StringDecoder('utf8');
+  let stdoutDecoder = new StringDecoder('utf8');
+  /** 已丢弃超限行前缀,正在等该行结尾的 \n。 */
+  let discardingOversizedLine = false;
 
   /** stdout 尾部 flush(幂等):channel 关闭/主动 close 前把 stdoutBuffer 里
    *  残留的未换行尾帧(pi 崩溃前输出半行 / 最后一行无 \n)吐给 lineHandlers,
@@ -655,6 +671,9 @@ function createSshJsonlChannelTransport(
     flushedTail = true;
     const tail = stdoutBuffer + stdoutDecoder.end();
     stdoutBuffer = '';
+    // 丢弃模式下的残余只是超限行的一部分,不是合法 JSONL;也不要把超限尾帧
+    // 当成一行交给上层。
+    if (discardingOversizedLine || tail.length > SSH_JSONL_MAX_BUFFER_CHARS) return;
     if (tail.trim().length > 0) {
       fireLine(tail.endsWith('\r') ? tail.slice(0, -1) : tail);
     }
@@ -690,6 +709,12 @@ function createSshJsonlChannelTransport(
 
   const fireLine = (line: string): void => {
     for (const handler of lineHandlers) handler(line);
+  };
+
+  const fireOversizedFrame = (): void => {
+    for (const handler of oversizedFrameHandlers) {
+      try { handler(); } catch { /* handler must not break framing */ }
+    }
   };
 
   const fireStderr = (line: string): void => {
@@ -830,10 +855,10 @@ function createSshJsonlChannelTransport(
         if (closed) return;
         if (handshakeTimer) { clearTimeout(handshakeTimer); handshakeTimer = null; }
         stdoutBuffer += stdoutDecoder.write(chunk);
-        // 轮 40-w1 HIGH:SSH stdout 缓冲无 OOM 上限(本地 attachJsonlReader 有
-        // 16MB guard, 双实现契约不一致)。远端路径更不可信 —— 超限丢弃缓冲并
-        // 关闭(继续解析已无意义, 且防 OOM)。
-        if (stdoutBuffer.length > SSH_JSONL_MAX_BUFFER_CHARS) {
+        // OMP 保留原有 close 语义:它在超限时没有 RPC pending 映射可定向失败,
+        // 继续解析只会让请求空等超时;这里的检查顺序也保持旧行为(先看总 buffer
+        // 是否超限,再分帧)。
+        if (oversizedFramePolicy === 'close' && stdoutBuffer.length > SSH_JSONL_MAX_BUFFER_CHARS) {
           logger.warn(`${agentLabel} ssh stdout buffer exceeded limit — closing transport`, {
             hostId: opts.remoteHost.id,
             bytes: stdoutBuffer.length,
@@ -844,7 +869,39 @@ function createSshJsonlChannelTransport(
         }
         while (true) {
           const newlineIndex = stdoutBuffer.indexOf('\n');
-          if (newlineIndex === -1) break;
+          if (newlineIndex === -1) {
+            if (discardingOversizedLine) {
+              stdoutBuffer = '';
+              stdoutDecoder = new StringDecoder('utf8');
+              break;
+            }
+            if (stdoutBuffer.length > SSH_JSONL_MAX_BUFFER_CHARS) {
+              discardingOversizedLine = true;
+              logger.warn(`${agentLabel} ssh stdout line exceeded limit — discarding through next newline`, {
+                hostId: opts.remoteHost.id,
+                bytes: stdoutBuffer.length,
+              });
+              fireOversizedFrame();
+              // 被丢帧末尾可能残留半个多字节字符;重建 decoder,等下一个 \n 后恢复。
+              stdoutBuffer = '';
+              stdoutDecoder = new StringDecoder('utf8');
+            }
+            break;
+          }
+          if (discardingOversizedLine) {
+            stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
+            discardingOversizedLine = false;
+            continue;
+          }
+          if (newlineIndex > SSH_JSONL_MAX_BUFFER_CHARS) {
+            logger.warn(`${agentLabel} ssh stdout line exceeded limit — discarding oversized frame`, {
+              hostId: opts.remoteHost.id,
+              bytes: newlineIndex,
+            });
+            stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
+            fireOversizedFrame();
+            continue;
+          }
           let line = stdoutBuffer.slice(0, newlineIndex);
           stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
           if (line.endsWith('\r')) line = line.slice(0, -1);
@@ -949,6 +1006,11 @@ function createSshJsonlChannelTransport(
     onLine(handler: PiLineHandler): () => void {
       lineHandlers.add(handler);
       return () => { lineHandlers.delete(handler); };
+    },
+
+    onOversizedFrame(handler: PiOversizedFrameHandler): () => void {
+      oversizedFrameHandlers.add(handler);
+      return () => { oversizedFrameHandlers.delete(handler); };
     },
 
     // 显式类型标注(轮 8 发现 4):与 PiTransport 接口契约对齐, 防重构引入
